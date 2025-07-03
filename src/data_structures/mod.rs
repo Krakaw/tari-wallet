@@ -1,6 +1,3 @@
-// Copyright 2024 The Tari Project
-// SPDX-License-Identifier: BSD-3-Clause
-
 //! Core data structures for lightweight wallets
 //!
 //! This module contains the essential data structures needed for

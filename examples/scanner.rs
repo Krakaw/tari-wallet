@@ -46,11 +46,11 @@ use lightweight_wallet_libs::{
         wallet_transaction::WalletState,
     },
     errors::LightweightWalletResult,
-    extraction::RangeProofRewindService,
+    extraction::{RangeProofRewindService, WalletOutputRecoveryService},
     key_management::{
         key_derivation,
         seed_phrase::{mnemonic_to_bytes, CipherSeed},
-        StealthAddressService,
+        StealthAddressService, KeyStore, ImportedPrivateKey,
     },
     scanning::{BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder},
     wallet::Wallet,
@@ -393,14 +393,12 @@ async fn scan_wallet_across_blocks(
         .try_into()
         .map_err(|_| KeyManagementError::key_derivation_failed("Invalid entropy length"))?;
 
-    let view_key_raw =
-        key_derivation::derive_private_key_from_entropy(&entropy_array, "data encryption", 0)?;
-    let view_key = PrivateKey::new(
-        view_key_raw
-            .as_bytes()
-            .try_into()
-            .expect("Should convert to array"),
-    );
+    // Create an empty key store for the comprehensive recovery service
+    // The new_with_entropy method will derive and add all necessary keys including view key and spend key
+    let key_store = KeyStore::default();
+
+    // Initialize the comprehensive wallet output recovery service with entropy
+    let recovery_service = Arc::new(WalletOutputRecoveryService::new_with_entropy(key_store, &entropy_array)?);
 
     // Initialize range proof rewinding service (wrapped in Arc for sharing across threads)
     let range_proof_service = Arc::new(RangeProofRewindService::new()?);
@@ -596,9 +594,7 @@ async fn scan_wallet_across_blocks(
 
             for chunk in blocks_info.chunks(chunk_size) {
                 let wallet_state_clone = Arc::clone(&wallet_state);
-                let view_key_clone = view_key.clone();
-                let stealth_service_clone = stealth_service.clone();
-                let range_proof_service_clone = Arc::clone(&range_proof_service);
+                let recovery_service_clone = Arc::clone(&recovery_service);
                 let range_proof_cache_clone = Arc::clone(&range_proof_cache);
                 let perf_config_clone = perf_config.clone();
                 let entropy_clone = entropy.clone();
@@ -627,11 +623,7 @@ async fn scan_wallet_across_blocks(
                                 block_info.outputs.chunks(output_chunk_size).enumerate()
                             {
                                 let wallet_state_inner = Arc::clone(&wallet_state_clone);
-                                let view_key_inner = view_key_clone.clone();
-                                let stealth_service_inner = stealth_service_clone.clone();
-                                let range_proof_service_inner =
-                                    Arc::clone(&range_proof_service_clone);
-                                let range_proof_cache_inner = Arc::clone(&range_proof_cache_clone);
+                                let recovery_service_inner = Arc::clone(&recovery_service_clone);
                                 let perf_config_inner = perf_config_clone.clone();
                                 let entropy_inner = entropy_clone.clone();
                                 let chunk_outputs = output_chunk.to_vec();
@@ -650,175 +642,55 @@ async fn scan_wallet_across_blocks(
                                     {
                                         let output_index =
                                             chunk_start_output_idx + output_idx_in_chunk;
-                                        let mut found_output = false;
 
-                                        // STEP 1: Try one-sided detection first (most common output type)
-                                        if let Some((value, payment_id)) =
-                                            try_detect_one_sided_output(
-                                                output,
-                                                &view_key_inner,
-                                                Some(&mut local_chunk_metrics),
-                                            )
-                                        {
-                                            {
-                                                let mut state = wallet_state_inner.lock().unwrap();
-                                                state.add_received_output(
-                                                    block_height_inner,
-                                                    output_index,
-                                                    output.commitment().clone(),
-                                                    value,
-                                                    payment_id,
-                                                    TransactionStatus::OneSidedConfirmed,
-                                                    TransactionDirection::Inbound,
-                                                    true, // One-sided payments are always mature
-                                                );
-                                            }
-                                            found_output = true;
-                                        }
-
-                                        if found_output {
-                                            continue;
-                                        }
-
-                                        // STEP 2: Try regular encrypted data decryption (standard wallet outputs)
-                                        if let Some((value, payment_id)) = try_detect_regular_output(
-                                            output,
-                                            &view_key_inner,
-                                            Some(&mut local_chunk_metrics),
-                                        ) {
-                                            {
-                                                let mut state = wallet_state_inner.lock().unwrap();
-                                                state.add_received_output(
-                                                    block_height_inner,
-                                                    output_index,
-                                                    output.commitment().clone(),
-                                                    value,
-                                                    payment_id,
-                                                    TransactionStatus::MinedConfirmed,
-                                                    TransactionDirection::Inbound,
-                                                    true, // Regular payments are always mature
-                                                );
-                                            }
-                                            found_output = true;
-                                        }
-
-                                        if found_output {
-                                            continue;
-                                        }
-
-                                        // STEP 3: Try stealth address detection (one-sided payments)
-                                        if let Some((value, payment_id)) = try_detect_stealth_output(
-                                            output,
-                                            &view_key_inner,
-                                            &stealth_service_inner,
-                                            Some(&mut local_chunk_metrics),
-                                        ) {
-                                            {
-                                                let mut state = wallet_state_inner.lock().unwrap();
-                                                state.add_received_output(
-                                                    block_height_inner,
-                                                    output_index,
-                                                    output.commitment().clone(),
-                                                    value,
-                                                    payment_id,
-                                                    TransactionStatus::OneSidedConfirmed, // Stealth addresses are one-sided
-                                                    TransactionDirection::Inbound,
-                                                    true, // One-sided payments are always mature
-                                                );
-                                            }
-                                            found_output = true;
-                                        }
-
-                                        if found_output {
-                                            continue;
-                                        }
-
-                                        // STEP 4: Range Proof Rewinding with caching optimization
-                                        if let Some(value) = try_detect_range_proof_output(
-                                            output,
-                                            &entropy_inner,
-                                            &range_proof_service_inner,
-                                            &range_proof_cache_inner,
-                                            &perf_config_inner,
-                                            &mut local_chunk_metrics,
-                                        ) {
-                                            {
-                                                let mut state = wallet_state_inner.lock().unwrap();
-                                                state.add_received_output(
-                                                    block_height_inner,
-                                                    output_index,
-                                                    output.commitment().clone(),
-                                                    value,
-                                                    PaymentId::Empty,
-                                                    TransactionStatus::OneSidedConfirmed,
-                                                    TransactionDirection::Inbound,
-                                                    true,
-                                                );
-                                            }
-                                            found_output = true;
-                                        }
-
-                                        if found_output {
-                                            continue;
-                                        }
-
-                                        // STEP 5: Check for coinbase outputs
-                                        if let Some((coinbase_value, is_mature)) =
-                                            try_detect_coinbase_output(
-                                                output,
-                                                &view_key_inner,
-                                                block_height_inner,
-                                                Some(&mut local_chunk_metrics),
-                                            )
-                                        {
-                                            {
-                                                let mut state = wallet_state_inner.lock().unwrap();
-                                                state.add_received_output(
-                                                    block_height_inner,
-                                                    output_index,
-                                                    output.commitment().clone(),
-                                                    coinbase_value,
-                                                    PaymentId::Empty,
-                                                    if is_mature {
-                                                        TransactionStatus::CoinbaseConfirmed
+                                        // Use comprehensive recovery service with entropy-based imported key detection
+                                        if let Ok(Some(recovered)) = recovery_service_inner.recover_wallet_output_with_entropy(output, block_height_inner, output_index, &entropy_array) {
+                                            let status = match recovered.recovery_method {
+                                                lightweight_wallet_libs::extraction::RecoveryMethod::StandardDecryption => TransactionStatus::MinedConfirmed,
+                                                lightweight_wallet_libs::extraction::RecoveryMethod::OneSidedPayment => TransactionStatus::OneSidedConfirmed,
+                                                lightweight_wallet_libs::extraction::RecoveryMethod::StealthAddress => TransactionStatus::OneSidedConfirmed,
+                                                lightweight_wallet_libs::extraction::RecoveryMethod::RangeProofRewind => TransactionStatus::OneSidedConfirmed,
+                                                lightweight_wallet_libs::extraction::RecoveryMethod::ImportedKey => TransactionStatus::Imported,
+                                                lightweight_wallet_libs::extraction::RecoveryMethod::SpecialOutput => {
+                                                    if matches!(output.features().output_type, lightweight_wallet_libs::data_structures::wallet_output::LightweightOutputType::Coinbase) {
+                                                        let is_mature = block_height_inner >= output.features().maturity;
+                                                        if is_mature {
+                                                            TransactionStatus::CoinbaseConfirmed
+                                                        } else {
+                                                            TransactionStatus::CoinbaseUnconfirmed
+                                                        }
                                                     } else {
-                                                        TransactionStatus::CoinbaseUnconfirmed
-                                                    },
+                                                        TransactionStatus::MinedConfirmed
+                                                    }
+                                                }
+                                            };
+
+                                            let is_mature = !matches!(status, TransactionStatus::CoinbaseUnconfirmed);
+
+                                            {
+                                                let mut state = wallet_state_inner.lock().unwrap();
+                                                state.add_received_output(
+                                                    block_height_inner,
+                                                    output_index,
+                                                    output.commitment().clone(),
+                                                    recovered.wallet_output.value().as_u64(),
+                                                    recovered.wallet_output.payment_id().clone(),
+                                                    status,
                                                     TransactionDirection::Inbound,
                                                     is_mature,
                                                 );
                                             }
-                                            found_output = true;
-                                        }
 
-                                        if found_output {
-                                            continue;
+                                            // Update metrics based on recovery method
+                                            match recovered.recovery_method {
+                                                lightweight_wallet_libs::extraction::RecoveryMethod::StandardDecryption => local_chunk_metrics.regular_attempts += 1,
+                                                lightweight_wallet_libs::extraction::RecoveryMethod::OneSidedPayment => local_chunk_metrics.one_sided_attempts += 1,
+                                                lightweight_wallet_libs::extraction::RecoveryMethod::StealthAddress => local_chunk_metrics.stealth_attempts += 1,
+                                                lightweight_wallet_libs::extraction::RecoveryMethod::RangeProofRewind => local_chunk_metrics.range_proof_attempts += 1,
+                                                lightweight_wallet_libs::extraction::RecoveryMethod::ImportedKey => local_chunk_metrics.imported_attempts += 1,
+                                                lightweight_wallet_libs::extraction::RecoveryMethod::SpecialOutput => local_chunk_metrics.coinbase_attempts += 1,
+                                            }
                                         }
-
-                                        // // STEP 6: Try imported key derivation (for imported outputs)
-                                        // if let Some((value, payment_id)) =
-                                        //     try_detect_imported_output_wrapper(
-                                        //         output,
-                                        //         block_height_inner,
-                                        //         output_index,
-                                        //         &entropy_array,
-                                        //         Some(&mut local_chunk_metrics),
-                                        //     )
-                                        // {
-                                        //     {
-                                        //         let mut state = wallet_state_inner.lock().unwrap();
-                                        //         state.add_received_output(
-                                        //             block_height_inner,
-                                        //             output_index,
-                                        //             output.commitment().clone(),
-                                        //             value,
-                                        //             payment_id,
-                                        //             TransactionStatus::Imported,
-                                        //             TransactionDirection::Inbound,
-                                        //             true, // Imported outputs are always mature
-                                        //         );
-                                        //     }
-                                        // }
                                     }
 
                                     local_chunk_metrics.outputs_analyzed =
@@ -852,173 +724,54 @@ async fn scan_wallet_across_blocks(
                                 .expect("Should convert to array");
 
                             for (output_index, output) in block_info.outputs.iter().enumerate() {
-                                let mut found_output = false;
-
-                                // STEP 1: Try one-sided detection first (most common output type)
-                                if let Some((value, payment_id)) = try_detect_one_sided_output(
-                                    output,
-                                    &view_key_clone,
-                                    Some(&mut chunk_metrics),
-                                ) {
-                                    {
-                                        let mut state = wallet_state_clone.lock().unwrap();
-                                        state.add_received_output(
-                                            block_height,
-                                            output_index,
-                                            output.commitment().clone(),
-                                            value,
-                                            payment_id,
-                                            TransactionStatus::OneSidedConfirmed,
-                                            TransactionDirection::Inbound,
-                                            true, // One-sided payments are always mature
-                                        );
-                                    }
-                                    found_output = true;
-                                }
-
-                                if found_output {
-                                    continue;
-                                }
-
-                                // STEP 2: Try regular encrypted data decryption (standard wallet outputs)
-                                if let Some((value, payment_id)) = try_detect_regular_output(
-                                    output,
-                                    &view_key_clone,
-                                    Some(&mut chunk_metrics),
-                                ) {
-                                    {
-                                        let mut state = wallet_state_clone.lock().unwrap();
-                                        state.add_received_output(
-                                            block_height,
-                                            output_index,
-                                            output.commitment().clone(),
-                                            value,
-                                            payment_id,
-                                            TransactionStatus::MinedConfirmed,
-                                            TransactionDirection::Inbound,
-                                            true, // Regular payments are always mature
-                                        );
-                                    }
-                                    found_output = true;
-                                }
-
-                                if found_output {
-                                    continue;
-                                }
-
-                                // STEP 3: Try stealth address detection (one-sided payments)
-                                if let Some((value, payment_id)) = try_detect_stealth_output(
-                                    output,
-                                    &view_key_clone,
-                                    &stealth_service_clone,
-                                    Some(&mut chunk_metrics),
-                                ) {
-                                    {
-                                        let mut state = wallet_state_clone.lock().unwrap();
-                                        state.add_received_output(
-                                            block_height,
-                                            output_index,
-                                            output.commitment().clone(),
-                                            value,
-                                            payment_id,
-                                            TransactionStatus::OneSidedConfirmed, // Stealth addresses are one-sided
-                                            TransactionDirection::Inbound,
-                                            true, // One-sided payments are always mature
-                                        );
-                                    }
-                                    found_output = true;
-                                }
-
-                                if found_output {
-                                    continue;
-                                }
-
-                                // STEP 4: Range Proof Rewinding with caching optimization
-                                if let Some(value) = try_detect_range_proof_output(
-                                    output,
-                                    &entropy_clone,
-                                    &range_proof_service_clone,
-                                    &range_proof_cache_clone,
-                                    &perf_config_clone,
-                                    &mut chunk_metrics,
-                                ) {
-                                    {
-                                        let mut state = wallet_state_clone.lock().unwrap();
-                                        state.add_received_output(
-                                            block_height,
-                                            output_index,
-                                            output.commitment().clone(),
-                                            value,
-                                            PaymentId::Empty,
-                                            TransactionStatus::OneSidedConfirmed,
-                                            TransactionDirection::Inbound,
-                                            true,
-                                        );
-                                    }
-                                    found_output = true;
-                                }
-
-                                if found_output {
-                                    continue;
-                                }
-
-                                // STEP 5: Check for coinbase outputs
-                                if let Some((coinbase_value, is_mature)) =
-                                    try_detect_coinbase_output(
-                                        output,
-                                        &view_key_clone,
-                                        block_height,
-                                        Some(&mut chunk_metrics),
-                                    )
-                                {
-                                    {
-                                        let mut state = wallet_state_clone.lock().unwrap();
-                                        state.add_received_output(
-                                            block_height,
-                                            output_index,
-                                            output.commitment().clone(),
-                                            coinbase_value,
-                                            PaymentId::Empty,
-                                            if is_mature {
-                                                TransactionStatus::CoinbaseConfirmed
+                                // Use comprehensive recovery service with entropy-based imported key detection
+                                if let Ok(Some(recovered)) = recovery_service_clone.recover_wallet_output_with_entropy(output, block_height, output_index, &entropy_array) {
+                                    let status = match recovered.recovery_method {
+                                        lightweight_wallet_libs::extraction::RecoveryMethod::StandardDecryption => TransactionStatus::MinedConfirmed,
+                                        lightweight_wallet_libs::extraction::RecoveryMethod::OneSidedPayment => TransactionStatus::OneSidedConfirmed,
+                                        lightweight_wallet_libs::extraction::RecoveryMethod::StealthAddress => TransactionStatus::OneSidedConfirmed,
+                                        lightweight_wallet_libs::extraction::RecoveryMethod::RangeProofRewind => TransactionStatus::OneSidedConfirmed,
+                                        lightweight_wallet_libs::extraction::RecoveryMethod::ImportedKey => TransactionStatus::Imported,
+                                        lightweight_wallet_libs::extraction::RecoveryMethod::SpecialOutput => {
+                                            if matches!(output.features().output_type, lightweight_wallet_libs::data_structures::wallet_output::LightweightOutputType::Coinbase) {
+                                                let is_mature = block_height >= output.features().maturity;
+                                                if is_mature {
+                                                    TransactionStatus::CoinbaseConfirmed
+                                                } else {
+                                                    TransactionStatus::CoinbaseUnconfirmed
+                                                }
                                             } else {
-                                                TransactionStatus::CoinbaseUnconfirmed
-                                            },
+                                                TransactionStatus::MinedConfirmed
+                                            }
+                                        }
+                                    };
+
+                                    let is_mature = !matches!(status, TransactionStatus::CoinbaseUnconfirmed);
+
+                                    {
+                                        let mut state = wallet_state_clone.lock().unwrap();
+                                        state.add_received_output(
+                                            block_height,
+                                            output_index,
+                                            output.commitment().clone(),
+                                            recovered.wallet_output.value().as_u64(),
+                                            recovered.wallet_output.payment_id().clone(),
+                                            status,
                                             TransactionDirection::Inbound,
                                             is_mature,
                                         );
                                     }
-                                    found_output = true;
-                                }
 
-                                if found_output {
-                                    continue;
+                                    // Update metrics based on recovery method
+                                    match recovered.recovery_method {
+                                        lightweight_wallet_libs::extraction::RecoveryMethod::StandardDecryption => chunk_metrics.regular_attempts += 1,
+                                        lightweight_wallet_libs::extraction::RecoveryMethod::OneSidedPayment => chunk_metrics.one_sided_attempts += 1,
+                                        lightweight_wallet_libs::extraction::RecoveryMethod::StealthAddress => chunk_metrics.stealth_attempts += 1,
+                                        lightweight_wallet_libs::extraction::RecoveryMethod::RangeProofRewind => chunk_metrics.range_proof_attempts += 1,
+                                        lightweight_wallet_libs::extraction::RecoveryMethod::ImportedKey => chunk_metrics.imported_attempts += 1,
+                                        lightweight_wallet_libs::extraction::RecoveryMethod::SpecialOutput => chunk_metrics.coinbase_attempts += 1,
+                                    }
                                 }
-
-                                // // STEP 6: Try imported key derivation (for imported outputs)
-                                // if let Some((value, payment_id)) =
-                                //     try_detect_imported_output_wrapper(
-                                //         output,
-                                //         block_height,
-                                //         output_index,
-                                //         &entropy_array,
-                                //         Some(&mut chunk_metrics),
-                                //     )
-                                // {
-                                //     {
-                                //         let mut state = wallet_state_clone.lock().unwrap();
-                                //         state.add_received_output(
-                                //             block_height,
-                                //             output_index,
-                                //             output.commitment().clone(),
-                                //             value,
-                                //             payment_id,
-                                //             TransactionStatus::Imported,
-                                //             TransactionDirection::Inbound,
-                                //             true, // Imported outputs are always mature
-                                //         );
-                                //     }
-                                // }
                             }
 
                             chunk_metrics.outputs_analyzed += block_info.outputs.len() as u64;
@@ -1116,175 +869,68 @@ async fn scan_wallet_across_blocks(
                     std::io::Write::flush(&mut std::io::stdout()).unwrap();
                 }
 
-                // PHASE 1: Process outputs for wallet discovery (optimized order)
+                // PHASE 1: Process outputs for wallet discovery using comprehensive recovery
                 for (output_index, output) in block_info.outputs.iter().enumerate() {
-                    let mut found_output = false;
-
-                    // STEP 1: Try one-sided detection first (most common output type)
-                    if let Some((value, payment_id)) =
-                        try_detect_one_sided_output(output, &view_key, Some(&mut local_metrics))
-                    {
-                        {
-                            let mut state = wallet_state.lock().unwrap();
-                            state.add_received_output(
-                                block_height,
-                                output_index,
-                                output.commitment().clone(),
-                                value,
-                                payment_id,
-                                TransactionStatus::OneSidedConfirmed,
-                                TransactionDirection::Inbound,
-                                true, // One-sided payments are always mature
-                            );
-                        }
-                        found_output = true;
-                    }
-
-                    if found_output {
-                        continue;
-                    }
-
-                    // STEP 2: Try regular encrypted data decryption (standard wallet outputs)
-                    if let Some((value, payment_id)) =
-                        try_detect_regular_output(output, &view_key, Some(&mut local_metrics))
-                    {
-                        {
-                            let mut state = wallet_state.lock().unwrap();
-                            state.add_received_output(
-                                block_height,
-                                output_index,
-                                output.commitment().clone(),
-                                value,
-                                payment_id,
-                                TransactionStatus::MinedConfirmed,
-                                TransactionDirection::Inbound,
-                                true, // Regular payments are always mature
-                            );
-                        }
-                        found_output = true;
-                    }
-
-                    if found_output {
-                        continue;
-                    }
-
-                    // STEP 3: Try stealth address detection (one-sided payments)
-                    if let Some((value, payment_id)) = try_detect_stealth_output(
-                        output,
-                        &view_key,
-                        &stealth_service,
-                        Some(&mut local_metrics),
-                    ) {
-                        println!(
-                            "\n🎭 Found STEALTH ADDRESS output in block {}, output {}: {} μT",
-                            block_height, output_index, value
-                        );
-                        {
-                            let mut state = wallet_state.lock().unwrap();
-                            state.add_received_output(
-                                block_height,
-                                output_index,
-                                output.commitment().clone(),
-                                value,
-                                payment_id,
-                                TransactionStatus::OneSidedConfirmed, // Stealth addresses are one-sided
-                                TransactionDirection::Inbound,
-                                true, // One-sided payments are always mature
-                            );
-                        }
-                        found_output = true;
-                    }
-
-                    if found_output {
-                        continue;
-                    }
-
-                    // STEP 4: Range Proof Rewinding with caching optimization
-                    if let Some(value) = try_detect_range_proof_output(
-                        output,
-                        &entropy,
-                        &range_proof_service,
-                        &range_proof_cache,
-                        &perf_config,
-                        &mut local_metrics,
-                    ) {
-                        {
-                            let mut state = wallet_state.lock().unwrap();
-                            state.add_received_output(
-                                block_height,
-                                output_index,
-                                output.commitment().clone(),
-                                value,
-                                PaymentId::Empty,
-                                TransactionStatus::OneSidedConfirmed,
-                                TransactionDirection::Inbound,
-                                true,
-                            );
-                        }
-                        found_output = true;
-                    }
-
-                    if found_output {
-                        continue;
-                    }
-
-                    // STEP 5: Check for coinbase outputs
-                    if let Some((coinbase_value, is_mature)) = try_detect_coinbase_output(
-                        output,
-                        &view_key,
-                        block_height,
-                        Some(&mut local_metrics),
-                    ) {
-                        {
-                            let mut state = wallet_state.lock().unwrap();
-                            state.add_received_output(
-                                block_height,
-                                output_index,
-                                output.commitment().clone(),
-                                coinbase_value,
-                                PaymentId::Empty,
-                                if is_mature {
-                                    TransactionStatus::CoinbaseConfirmed
+                    // Use comprehensive recovery service with entropy-based imported key detection
+                    if let Ok(Some(recovered)) = recovery_service.recover_wallet_output_with_entropy(output, block_height, output_index, &entropy_array) {
+                        let status = match recovered.recovery_method {
+                            lightweight_wallet_libs::extraction::RecoveryMethod::StandardDecryption => TransactionStatus::MinedConfirmed,
+                            lightweight_wallet_libs::extraction::RecoveryMethod::OneSidedPayment => TransactionStatus::OneSidedConfirmed,
+                            lightweight_wallet_libs::extraction::RecoveryMethod::StealthAddress => {
+                                println!(
+                                    "\n🎭 Found STEALTH ADDRESS output in block {}, output {}: {} μT",
+                                    block_height, output_index, recovered.wallet_output.value().as_u64()
+                                );
+                                TransactionStatus::OneSidedConfirmed
+                            },
+                            lightweight_wallet_libs::extraction::RecoveryMethod::RangeProofRewind => TransactionStatus::OneSidedConfirmed,
+                            lightweight_wallet_libs::extraction::RecoveryMethod::ImportedKey => {
+                                println!(
+                                    "\n💎 Found IMPORTED output in block {}, output {}: {} μT",
+                                    block_height, output_index, recovered.wallet_output.value().as_u64()
+                                );
+                                TransactionStatus::Imported
+                            },
+                            lightweight_wallet_libs::extraction::RecoveryMethod::SpecialOutput => {
+                                if matches!(output.features().output_type, lightweight_wallet_libs::data_structures::wallet_output::LightweightOutputType::Coinbase) {
+                                    let is_mature = block_height >= output.features().maturity;
+                                    if is_mature {
+                                        TransactionStatus::CoinbaseConfirmed
+                                    } else {
+                                        TransactionStatus::CoinbaseUnconfirmed
+                                    }
                                 } else {
-                                    TransactionStatus::CoinbaseUnconfirmed
-                                },
+                                    TransactionStatus::MinedConfirmed
+                                }
+                            }
+                        };
+
+                        let is_mature = !matches!(status, TransactionStatus::CoinbaseUnconfirmed);
+
+                        {
+                            let mut state = wallet_state.lock().unwrap();
+                            state.add_received_output(
+                                block_height,
+                                output_index,
+                                output.commitment().clone(),
+                                recovered.wallet_output.value().as_u64(),
+                                recovered.wallet_output.payment_id().clone(),
+                                status,
                                 TransactionDirection::Inbound,
                                 is_mature,
                             );
                         }
-                        found_output = true;
-                    }
 
-                    if found_output {
-                        continue;
+                        // Update metrics based on recovery method
+                        match recovered.recovery_method {
+                            lightweight_wallet_libs::extraction::RecoveryMethod::StandardDecryption => local_metrics.regular_attempts += 1,
+                            lightweight_wallet_libs::extraction::RecoveryMethod::OneSidedPayment => local_metrics.one_sided_attempts += 1,
+                            lightweight_wallet_libs::extraction::RecoveryMethod::StealthAddress => local_metrics.stealth_attempts += 1,
+                            lightweight_wallet_libs::extraction::RecoveryMethod::RangeProofRewind => local_metrics.range_proof_attempts += 1,
+                            lightweight_wallet_libs::extraction::RecoveryMethod::ImportedKey => local_metrics.imported_attempts += 1,
+                            lightweight_wallet_libs::extraction::RecoveryMethod::SpecialOutput => local_metrics.coinbase_attempts += 1,
+                        }
                     }
-
-                    // STEP 6: Try imported key derivation (for imported outputs)
-                    // if let Some((value, payment_id)) = try_detect_imported_output_wrapper(
-                    //     output,
-                    //     block_height,
-                    //     output_index,
-                    //     &entropy_array,
-                    //     Some(&mut local_metrics),
-                    // ) {
-                    //     println!(
-                    //         "\n💎 Found IMPORTED output in block {}, output {}: {} μT",
-                    //         block_height, output_index, value
-                    //     );
-                    //     {
-                    //         let mut state = wallet_state.lock().unwrap();
-                    //         state.add_received_output(
-                    //             block_height,
-                    //             output_index,
-                    //             output.commitment().clone(),
-                    //             value,
-                    //             payment_id,
-                    //             TransactionStatus::Imported,
-                    //             TransactionDirection::Inbound,
-                    //             true, // Imported outputs are always mature
-                    //         );
-                    //     }
-                    // }
                 }
 
                 // PHASE 2: Process inputs for spending detection (in the SAME block scan!)
@@ -1642,7 +1288,6 @@ fn try_detect_imported_output(
     output_index: usize,
     entropy_array: &[u8; 16],
 ) -> Option<(u64, PaymentId, PrivateKey)> {
-    return None;
     // Try multiple import detection strategies
 
     // Strategy 1: Basic imported domain with indices - use IMPORTED_KEY_BRANCH constant
