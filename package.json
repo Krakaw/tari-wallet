@@ -1,0 +1,30 @@
+{
+  "name": "lightweight_wallet_libs",
+  "type": "module",
+  "collaborators": [
+    "Krakaw"
+  ],
+  "description": "Lightweight wallet libraries for Tari",
+  "version": "0.1.1",
+  "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Krakaw/tari-wallet"
+  },
+  "files": [
+    "lightweight_wallet_libs_bg.wasm",
+    "lightweight_wallet_libs.js",
+    "lightweight_wallet_libs.d.ts"
+  ],
+  "main": "lightweight_wallet_libs.js",
+  "types": "lightweight_wallet_libs.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ],
+  "keywords": [
+    "tari",
+    "wallet",
+    "cryptocurrency",
+    "blockchain"
+  ]
+}

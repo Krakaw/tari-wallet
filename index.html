@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="icon.png">
+    <title>Tari Wallet Scanner</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            padding: 30px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+
+        .left-panel, .right-panel {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 25px;
+        }
+
+        .section {
+            margin-bottom: 25px;
+        }
+
+        .section h3 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 5px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #34495e;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin: 5px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #56ab2f 0%, #a8e6cf 100%);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .btn-info {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .logs {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 8px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            display: flex;
+            align-items: flex-start;
+        }
+
+        .log-time {
+            color: #95a5a6;
+            margin-right: 10px;
+            min-width: 80px;
+        }
+
+        .log-level {
+            margin-right: 10px;
+            font-weight: bold;
+            min-width: 20px;
+        }
+
+        .log-level.info { color: #3498db; }
+        .log-level.success { color: #2ecc71; }
+        .log-level.error { color: #e74c3c; }
+        .log-level.warning { color: #f39c12; }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #ecf0f1;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3498db, #2ecc71);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .result-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .result-card h4 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .result-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #3498db;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .container {
+                margin: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌟 Tari Wallet Scanner</h1>
+            <p>Browser-based blockchain scanner for Tari wallets</p>
+        </div>
+
+        <div class="main-content">
+            <div class="left-panel">
+                <div class="section">
+                    <h3>📝 Scanner Configuration</h3>
+                    <div class="form-group">
+                        <label for="scannerData">View Key or Seed Phrase:</label>
+                        <textarea id="scannerData" placeholder="Enter your view key or seed phrase here... (automatically detected)"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="baseNodeUrl">Base Node URL:</label>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <input type="text" id="baseNodeUrl" value="https://rpc.tari.com" placeholder="https://rpc.tari.com" style="flex: 1;">
+                            <div id="connectionStatus" onclick="checkConnection()" style="cursor: pointer; padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; min-width: 100px; text-align: center;" title="Click to refresh connection status">
+                                ⏳ Checking...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>🔍 Scanning Controls</h3>
+                    <div class="form-group">
+                        <label for="startHeight">Start Height:</label>
+                        <input type="number" id="startHeight" value="0" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="endHeight">End Height (optional):</label>
+                        <input type="number" id="endHeight" placeholder="Leave empty for tip">
+                    </div>
+                    <div class="form-group">
+                        <label for="limit">Limit:</label>
+                        <input type="number" id="limit" value="200" min="1" max="1000">
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>🎛️ Actions</h3>
+                    <button class="btn" onclick="toggleScan()" disabled id="scanToggleBtn">🔍 Start Scan</button>
+                    <button class="btn btn-warning" onclick="resetScanner()" disabled id="resetScannerBtn">🔄 Reset Scanner</button>
+                </div>
+
+                <div id="statusArea"></div>
+            </div>
+
+            <div class="right-panel">
+                <div class="section">
+                    <h3>📊 Progress</h3>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div id="progressText">Ready to start...</div>
+                </div>
+
+                <div class="section">
+                    <h3>📈 Results</h3>
+                    <div class="results-grid" id="resultsGrid">
+                        <div class="result-card">
+                            <h4>Blocks Scanned</h4>
+                            <div class="result-value" id="blocksScanned">0</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>Transactions Found</h4>
+                            <div class="result-value" id="transactionsFound">0</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>Total Value (μT)</h4>
+                            <div class="result-value" id="totalValue">0</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>Total Value (T)</h4>
+                            <div class="result-value" id="totalValueT">0.000000</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>📝 Console Logs</h3>
+                    <div class="logs" id="logsContainer"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Global state
+        let wasm = null;
+        let scanner = null;
+        let isScanning = false;
+
+        // HTTP Client for browser
+        class HttpClient {
+            constructor(baseUrl = 'http://127.0.0.1:8080') {
+                this.baseUrl = baseUrl;
+            }
+
+            async request(endpoint, params = {}) {
+                const url = new URL(endpoint, this.baseUrl);
+                
+                Object.keys(params).forEach(key => {
+                    if (params[key] !== undefined && params[key] !== null) {
+                        url.searchParams.append(key, params[key]);
+                    }
+                });
+
+                try {
+                    const response = await fetch(url.toString(), {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json',
+                        }
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                    }
+
+                    return await response.json();
+                } catch (error) {
+                    throw new Error(`Request failed: ${error.message}`);
+                }
+            }
+
+            async getTipInfo() {
+                return await this.request('/get_tip_info');
+            }
+
+            async getHeaderByHeight(blockHeight) {
+                log('info', `📡 Fetching header for block ${blockHeight}...`);
+                try {
+                    const response = await this.request('/get_header_by_height', { height: blockHeight });
+                    log('success', `✅ Header fetched for block ${blockHeight}`);
+                    return response;
+                } catch (error) {
+                    log('error', `❌ Failed to fetch header for block ${blockHeight}: ${error.message}`);
+                    throw error;
+                }
+            }
+
+            async syncUtxosByBlock(startHeaderHash, endHeaderHash, limit = 200, page = 0) {
+                log('info', `📡 Syncing UTXOs from ${startHeaderHash.substring(0, 16)}... to ${endHeaderHash.substring(0, 16)}...`);
+                try {
+                    const response = await this.request('/sync_utxos_by_block', {
+                        start_header_hash: startHeaderHash,
+                        end_header_hash: endHeaderHash,
+                        limit: limit,
+                        page: page
+                    });
+                    log('success', `✅ Synced ${response.blocks?.length || 0} blocks, has_next_page: ${response.has_next_page}`);
+                    return response;
+                } catch (error) {
+                    log('error', `❌ Failed to sync UTXOs: ${error.message}`);
+                    throw error;
+                }
+            }
+
+            convertToScannerFormat(blockUtxoInfo) {
+                return {
+                    height: blockUtxoInfo.height,
+                    hash: this.arrayToHex(blockUtxoInfo.header_hash),
+                    timestamp: blockUtxoInfo.mined_timestamp,
+                    outputs: blockUtxoInfo.outputs.map(output => ({
+                        commitment: this.arrayToHex(output.commitment),
+                        sender_offset_public_key: this.arrayToHex(output.sender_offset_public_key),
+                        encrypted_data: this.arrayToHex(output.encrypted_data),
+                        minimum_value_promise: 0,
+                        features: null,
+                        script: null,
+                        metadata_signature: null,
+                        covenant: null
+                    })),
+                    inputs: []
+                };
+            }
+
+            arrayToHex(array) {
+                return Array.from(new Uint8Array(array))
+                    .map(b => b.toString(16).padStart(2, '0'))
+                    .join('');
+            }
+
+            async* fetchBlockRange(startHeight, endHeight, limit) {
+                log('info', `📡 Fetching block range ${startHeight} to ${endHeight}...`);
+                
+                try {
+                    const startHeader = await this.getHeaderByHeight(startHeight);
+                    const endHeader = await this.getHeaderByHeight(endHeight);
+                    
+                    const startHash = this.arrayToHex(startHeader.hash);
+                    const endHash = this.arrayToHex(endHeader.hash);
+                    
+                    let page = 0;
+                    let hasNextPage = true;
+                    let totalBlocks = 0;
+                    
+                    while (hasNextPage) {
+                        const syncResponse = await this.syncUtxosByBlock(startHash, endHash, limit, page);
+                        hasNextPage = syncResponse.has_next_page;
+                        
+                        if (syncResponse.blocks) {
+                            for (const blockInfo of syncResponse.blocks) {
+                                const block = this.convertToScannerFormat(blockInfo);
+                                totalBlocks++;
+                                yield block;
+                            }
+                        }
+                        
+                        page++;
+                    }
+                    
+                    log('success', `✅ Streamed ${totalBlocks} blocks from base node`);
+                    
+                } catch (error) {
+                    log('error', `❌ Failed to fetch block range: ${error.message}`);
+                    throw error;
+                }
+            }
+        }
+
+        // Logging functions
+        function log(level, message) {
+            // Only keep the last n logs
+            const container = document.getElementById('logsContainer');
+            const entries = container.querySelectorAll('.log-entry');
+            
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            const time = new Date().toLocaleTimeString();
+            const levelIcon = {
+                'info': 'ℹ️',
+                'success': '✅',
+                'error': '❌',
+                'warning': '⚠️'
+            }[level] || 'ℹ️';
+            
+            entry.innerHTML = `
+                <span class="log-time">${time}</span>
+                <span class="log-level ${level}">${levelIcon}</span>
+                <span>${message}</span>
+            `;
+            
+            container.appendChild(entry);
+            container.scrollTop = container.scrollHeight;
+
+            // Also show status for important messages
+            if (level === 'error' || level === 'success') {
+                showStatus(message, level);
+            }
+        }
+
+        function showStatus(message, type) {
+            // Only keep the last n statuses
+            const maxStatuses = 10;
+            const statuses = document.querySelectorAll('.status');
+            
+            if (statuses.length >= maxStatuses) {
+                statuses[0].remove();
+            }
+            
+            const statusArea = document.getElementById('statusArea');
+            const status = document.createElement('div');
+            status.className = `status ${type}`;
+            status.textContent = message;
+            statusArea.appendChild(status);
+            
+            setTimeout(() => {
+                status.remove();
+            }, 5000);
+        }
+
+        function updateProgress(percentage, text) {
+            document.getElementById('progressFill').style.width = `${percentage}%`;
+            document.getElementById('progressText').textContent = text;
+        }
+
+        function updateResults(blocksScanned, transactionsFound, totalValue) {
+            document.getElementById('blocksScanned').textContent = blocksScanned;
+            document.getElementById('transactionsFound').textContent = transactionsFound;
+            document.getElementById('totalValue').textContent = totalValue;
+            document.getElementById('totalValueT').textContent = (totalValue / 1000000).toFixed(6);
+        }
+
+        // WASM Scanner implementation
+        window.initializeWasm = async function() {
+            try {
+                log('info', '🚀 Initializing Tari WASM Scanner...');
+                
+                // Import the WASM module
+                wasm = await import('./pkg/lightweight_wallet_libs.js');
+                await wasm.default();
+                
+                log('success', '✅ WASM module loaded successfully');
+                log('info', `🏷️ Version: ${wasm.get_version()}`);
+                
+                // Enable buttons based on scanner data availability
+                updateScanButtonState();
+                document.getElementById('resetScannerBtn').disabled = false;
+                
+            } catch (error) {
+                console.log(error)
+                log('error', `❌ Failed to initialize WASM module: ${error.message}`);
+                log('info', '💡 Make sure the WASM package is built for web target:');
+                log('info', '   wasm-pack build --target web --out-dir pkg --example wasm_scanner');
+            }
+        };
+
+        // Update connection status indicator
+        function updateConnectionStatus(status, message = '') {
+            const statusElement = document.getElementById('connectionStatus');
+            
+            switch (status) {
+                case 'checking':
+                    statusElement.style.background = '#f39c12';
+                    statusElement.style.color = 'white';
+                    statusElement.textContent = '⏳ Checking...';
+                    break;
+                case 'connected':
+                    statusElement.style.background = '#2ecc71';
+                    statusElement.style.color = 'white';
+                    statusElement.textContent = '✅ Connected';
+                    break;
+                case 'error':
+                    statusElement.style.background = '#e74c3c';
+                    statusElement.style.color = 'white';
+                    statusElement.textContent = '❌ Failed';
+                    break;
+                case 'disconnected':
+                    statusElement.style.background = '#95a5a6';
+                    statusElement.style.color = 'white';
+                    statusElement.textContent = '⚫ Offline';
+                    break;
+            }
+            
+            if (message) {
+                statusElement.title = message;
+            }
+        }
+
+        // Check connection status
+        window.checkConnection = async function() {
+            const baseNodeUrl = document.getElementById('baseNodeUrl').value.trim();
+            
+            if (!baseNodeUrl) {
+                updateConnectionStatus('disconnected', 'No URL provided');
+                return;
+            }
+            
+            updateConnectionStatus('checking');
+            log('info', '📡 Testing base node connection...');
+            
+            const httpClient = new HttpClient(baseNodeUrl);
+            
+            try {
+                log('info', `🔗 Connecting to ${baseNodeUrl}...`);
+                
+                const header = await httpClient.getHeaderByHeight(1);
+                updateConnectionStatus('connected', `Connected to ${baseNodeUrl}`);
+                log('success', '✅ Successfully connected to base node');
+                log('info', `   Genesis block hash: ${httpClient.arrayToHex(header.hash).substring(0, 16)}...`);
+                log('info', `   Timestamp: ${new Date(header.timestamp * 1000).toISOString()}`);
+                
+            } catch (error) {
+                updateConnectionStatus('error', `Failed to connect: ${error.message}`);
+                log('error', `❌ Failed to connect to base node: ${error.message}`);
+                log('info', `   Make sure the Tari base node is running on ${baseNodeUrl}`);
+                console.error(error);
+            }
+        };
+
+        // Helper function to update the scan toggle button
+        function updateScanButton(isScanning) {
+            const button = document.getElementById('scanToggleBtn');
+            if (isScanning) {
+                button.textContent = '⏹️ Stop Scan';
+                button.className = 'btn btn-warning';
+                button.onclick = stopScan;
+            } else {
+                button.textContent = '🔍 Start Scan';
+                button.className = 'btn';
+                button.onclick = startScan;
+            }
+            
+            // Update button state based on current conditions
+            updateScanButtonState();
+        }
+
+        // Toggle function for the scan button
+        window.toggleScan = function() {
+            if (isScanning) {
+                stopScan();
+            } else {
+                startScan();
+            }
+        };
+
+      
+
+        function createScanner() {
+            const scannerData = document.getElementById('scannerData').value;
+            
+            if (!scannerData.trim()) {
+                throw new Error('Scanner data is required');
+            }
+
+            log('info', `🔧 Creating scanner (auto-detecting type)...`);
+            log('info', `   Using data: ${scannerData.substring(0, 20)}...`);
+
+            scanner = wasm.create_wasm_scanner(scannerData);
+            log('success', '✅ Scanner created successfully');
+            
+            return scanner;
+        }
+
+        function scanBlock(blockData) {
+            try {
+                const blockDataJson = JSON.stringify(blockData, null, 2);
+                const resultJson = wasm.scan_block_data(scanner, blockDataJson);
+                const result = JSON.parse(resultJson);
+                
+                if (result.success) {
+                    log('success', `✅ Block ${blockData.height} scanned successfully`);
+                    log('info', `   Transactions found: ${result.transactions.length}`);
+                    log('info', `   Current balance: ${result.current_balance} μT`);
+                } else {
+                    log('warning', `⚠️ Block ${blockData.height} scan completed with error: ${result.error}`);
+                }
+                
+                return result;
+                
+            } catch (error) {
+                log('error', `❌ Failed to scan block ${blockData.height}: ${error.message}`);
+                throw error;
+            }
+        }
+
+        window.stopScan = function() {
+            if (!isScanning) {
+                log('warning', '⚠️ No scan in progress');
+                return;
+            }
+
+            log('info', '⏹️ Stopping scan...');
+            isScanning = false;
+            updateProgress(0, 'Scan stopped by user');
+            
+            // Update button state
+            updateScanButton(false);
+        };
+
+        window.startScan = async function() {
+            if (!wasm) {
+                log('error', '❌ WASM not initialized');
+                return;
+            }
+
+            if (isScanning) {
+                log('warning', '⚠️ Scan already in progress');
+                return;
+            }
+
+            const scannerData = document.getElementById('scannerData').value.trim();
+            if (!scannerData) {
+                log('error', '❌ Scanner data required - please enter a view key or seed phrase');
+                return;
+            }
+
+            try {
+                isScanning = true;
+                
+                // Update button state
+                updateScanButton(true);
+                
+                // Create scanner
+                createScanner();
+                
+                const baseNodeUrl = document.getElementById('baseNodeUrl').value;
+                const startHeight = parseInt(document.getElementById('startHeight').value);
+                const limit = parseInt(document.getElementById('limit').value);
+                let endHeight = document.getElementById('endHeight').value;
+
+                
+                const httpClient = new HttpClient(baseNodeUrl);
+                
+                // Get tip height if endHeight not specified
+                if (!endHeight) {
+                    const tipInfo = await httpClient.getTipInfo();
+                    endHeight = tipInfo.metadata.best_block_height;
+                }
+                endHeight = parseInt(endHeight);
+                
+                log('info', `🔍 Starting blockchain scan from height ${startHeight} to ${endHeight}`);
+                
+                let blockCount = 0;
+                let totalTransactions = 0;
+                let totalValue = 0;
+                const totalBlocks = endHeight - startHeight + 1;
+                
+                updateProgress(0, 'Starting scan...');
+                
+                // Stream and scan blocks
+                for await (const block of httpClient.fetchBlockRange(startHeight, endHeight, limit)) {
+                    if (!isScanning) break; // Allow cancellation
+                    
+                    blockCount++;
+                    const result = scanBlock(block);
+                    
+                    if (result.success) {
+                        totalTransactions += result.transactions.length;
+                        totalValue = result.total_value;
+                    }
+                    
+                    // Update progress
+                    const percentage = (blockCount / totalBlocks) * 100;
+                    updateProgress(percentage, `Scanned ${blockCount}/${totalBlocks} blocks`);
+                    updateResults(blockCount, totalTransactions, totalValue);
+                    
+                    // Allow UI to update
+                    await new Promise(resolve => setTimeout(resolve, 10));
+                }
+                
+                if (blockCount === 0) {
+                    log('warning', '⚠️ No blocks found in range');
+                } else if (isScanning) {
+                    log('success', '📈 SCAN COMPLETED SUCCESSFULLY');
+                    log('info', `═══════════════════════════════`);
+                    log('info', `Blocks processed: ${blockCount}`);
+                    log('info', `Total transactions: ${totalTransactions}`);
+                    log('info', `Total value found: ${totalValue} μT (${(totalValue / 1000000).toFixed(6)} T)`);
+                    updateProgress(100, 'Scan completed!');
+                } else {
+                    log('info', '📈 SCAN STOPPED');
+                    log('info', `═══════════════════════════════`);
+                    log('info', `Blocks processed before stop: ${blockCount}`);
+                    log('info', `Total transactions found: ${totalTransactions}`);
+                    log('info', `Total value found: ${totalValue} μT (${(totalValue / 1000000).toFixed(6)} T)`);
+                }
+                
+            } catch (error) {
+                log('error', `❌ Scan failed: ${error.message || error}`);
+                updateProgress(0, 'Scan failed');
+                throw error;
+            } finally {
+                isScanning = false;
+                
+                // Reset button state
+                updateScanButton(false);
+            }
+        };
+
+        window.resetScanner = function() {
+            if (!wasm || !scanner) {
+                log('error', '❌ No scanner to reset');
+                return;
+            }
+
+            try {
+                log('info', '🔄 Resetting scanner state...');
+                wasm.reset_scanner(scanner);
+                log('success', '✅ Scanner state reset successfully');
+                
+                // Reset UI
+                updateResults(0, 0, 0);
+                updateProgress(0, 'Ready to start...');
+                
+            } catch (error) {
+                log('error', `❌ Failed to reset scanner: ${error.message}`);
+            }
+        };
+
+        // Update scan button state based on scanner data availability
+        function updateScanButtonState() {
+            const scannerData = document.getElementById('scannerData').value.trim();
+            const scanToggleBtn = document.getElementById('scanToggleBtn');
+            
+            if (!wasm) {
+                // WASM not loaded yet
+                scanToggleBtn.disabled = true;
+                scanToggleBtn.title = 'WASM module not loaded yet';
+            } else if (!scannerData) {
+                // No scanner data
+                scanToggleBtn.disabled = true;
+                scanToggleBtn.title = 'Enter a view key or seed phrase to enable scanning';
+            } else if (isScanning) {
+                // Currently scanning
+                scanToggleBtn.disabled = false;
+                scanToggleBtn.title = 'Click to stop the current scan';
+            } else {
+                // Ready to scan
+                scanToggleBtn.disabled = false;
+                scanToggleBtn.title = 'Click to start scanning with the provided data';
+            }
+        }
+
+        // Setup event listeners and initialization
+        function setupEventListeners() {
+            const baseNodeUrlInput = document.getElementById('baseNodeUrl');
+            const scannerDataInput = document.getElementById('scannerData');
+            
+            // Check connection when URL changes (with debounce)
+            let urlChangeTimeout;
+            baseNodeUrlInput.addEventListener('input', () => {
+                clearTimeout(urlChangeTimeout);
+                updateConnectionStatus('disconnected', 'URL changed - click to test');
+                
+                // Auto-check after 1 second of no typing
+                urlChangeTimeout = setTimeout(() => {
+                    if (baseNodeUrlInput.value.trim()) {
+                        checkConnection();
+                    }
+                }, 1000);
+            });
+            
+            // Also check on Enter key
+            baseNodeUrlInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    clearTimeout(urlChangeTimeout);
+                    checkConnection();
+                }
+            });
+            
+            // Update scan button state when scanner data changes
+            scannerDataInput.addEventListener('input', updateScanButtonState);
+            scannerDataInput.addEventListener('paste', () => {
+                // Use setTimeout to wait for paste to complete
+                setTimeout(updateScanButtonState, 10);
+            });
+        }
+
+        // Initialize on page load
+        log('info', '🌟 Tari Wallet Scanner - Browser loaded');
+        setupEventListeners();
+        updateScanButtonState(); // Set initial button state
+        initializeWasm();
+        
+        // Check initial connection after a short delay
+        setTimeout(() => {
+            checkConnection();
+        }, 500);
+    </script>
+</body>
+</html> 
