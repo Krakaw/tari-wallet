@@ -553,7 +553,7 @@
                 log('info', '🚀 Initializing Tari WASM Scanner...');
                 
                 // Import the WASM module
-                wasm = await import('./pkg/lightweight_wallet_libs.js');
+                wasm = await import('./lightweight_wallet_libs.js');
                 await wasm.default();
                 
                 log('success', '✅ WASM module loaded successfully');
