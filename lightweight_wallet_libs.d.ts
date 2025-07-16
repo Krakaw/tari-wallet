@@ -10,11 +10,15 @@ export function derive_public_key_hex(master_key: Uint8Array): string;
  */
 export function create_wasm_scanner(data: string): WasmScanner;
 /**
- * Scan block data (WASM export)
+ * Process HTTP block response (WASM export) - NEW METHOD for HTTP API
+ */
+export function process_http_blocks(scanner: WasmScanner, http_response_json: string): string;
+/**
+ * Scan block data (WASM export) - LEGACY METHOD for backward compatibility
  */
 export function scan_block_data(scanner: WasmScanner, block_data_json: string): string;
 /**
- * Scan single block and return only block-specific data (WASM export)
+ * Scan single block and return only block-specific data (WASM export) - LEGACY METHOD  
  */
 export function scan_single_block(scanner: WasmScanner, block_data_json: string): string;
 /**
@@ -48,6 +52,7 @@ export interface InitOutput {
   readonly derive_public_key_hex: (a: number, b: number) => [number, number, number, number];
   readonly __wbg_wasmscanner_free: (a: number, b: number) => void;
   readonly create_wasm_scanner: (a: number, b: number) => [number, number, number];
+  readonly process_http_blocks: (a: number, b: number, c: number) => [number, number, number, number];
   readonly scan_block_data: (a: number, b: number, c: number) => [number, number, number, number];
   readonly scan_single_block: (a: number, b: number, c: number) => [number, number, number, number];
   readonly get_scanner_stats: (a: number) => [number, number, number, number];

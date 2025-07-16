@@ -4,6 +4,7 @@ export const memory: WebAssembly.Memory;
 export const derive_public_key_hex: (a: number, b: number) => [number, number, number, number];
 export const __wbg_wasmscanner_free: (a: number, b: number) => void;
 export const create_wasm_scanner: (a: number, b: number) => [number, number, number];
+export const process_http_blocks: (a: number, b: number, c: number) => [number, number, number, number];
 export const scan_block_data: (a: number, b: number, c: number) => [number, number, number, number];
 export const scan_single_block: (a: number, b: number, c: number) => [number, number, number, number];
 export const get_scanner_stats: (a: number) => [number, number, number, number];
