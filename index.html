@@ -510,7 +510,7 @@
             container.scrollTop = container.scrollHeight;
 
             // Also show status for important messages
-            if (level === 'error' || level === 'success') {
+            if (level === 'error') {
                 showStatus(message, level);
             }
         }
@@ -772,7 +772,7 @@
                     const result = scanBlock(block);
                     
                     if (result.success) {
-                        totalTransactions += result.transactions.length;
+                        totalTransactions = result.transactions.length;
                         totalValue = result.total_value;
                     }
                     
