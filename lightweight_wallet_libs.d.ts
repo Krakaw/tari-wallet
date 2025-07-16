@@ -14,6 +14,14 @@ export function create_wasm_scanner(data: string): WasmScanner;
  */
 export function scan_block_data(scanner: WasmScanner, block_data_json: string): string;
 /**
+ * Scan single block and return only block-specific data (WASM export)
+ */
+export function scan_single_block(scanner: WasmScanner, block_data_json: string): string;
+/**
+ * Get cumulative scanner statistics (WASM export)
+ */
+export function get_scanner_stats(scanner: WasmScanner): string;
+/**
  * Get scanner state (WASM export)
  */
 export function get_scanner_state(scanner: WasmScanner): string;
@@ -41,6 +49,8 @@ export interface InitOutput {
   readonly __wbg_wasmscanner_free: (a: number, b: number) => void;
   readonly create_wasm_scanner: (a: number, b: number) => [number, number, number];
   readonly scan_block_data: (a: number, b: number, c: number) => [number, number, number, number];
+  readonly scan_single_block: (a: number, b: number, c: number) => [number, number, number, number];
+  readonly get_scanner_stats: (a: number) => [number, number, number, number];
   readonly get_scanner_state: (a: number) => [number, number];
   readonly reset_scanner: (a: number) => void;
   readonly get_version: () => [number, number];

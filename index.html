@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -53,7 +54,8 @@
             gap: 30px;
         }
 
-        .left-panel, .right-panel {
+        .left-panel,
+        .right-panel {
             background: #f8f9fa;
             border-radius: 10px;
             padding: 25px;
@@ -82,7 +84,9 @@
             color: #34495e;
         }
 
-        input, select, textarea {
+        input,
+        select,
+        textarea {
             width: 100%;
             padding: 12px;
             border: 2px solid #ddd;
@@ -91,7 +95,9 @@
             transition: border-color 0.3s;
         }
 
-        input:focus, select:focus, textarea:focus {
+        input:focus,
+        select:focus,
+        textarea:focus {
             outline: none;
             border-color: #3498db;
         }
@@ -192,10 +198,21 @@
             min-width: 20px;
         }
 
-        .log-level.info { color: #3498db; }
-        .log-level.success { color: #2ecc71; }
-        .log-level.error { color: #e74c3c; }
-        .log-level.warning { color: #f39c12; }
+        .log-level.info {
+            color: #3498db;
+        }
+
+        .log-level.success {
+            color: #2ecc71;
+        }
+
+        .log-level.error {
+            color: #e74c3c;
+        }
+
+        .log-level.warning {
+            color: #f39c12;
+        }
 
         .progress-bar {
             width: 100%;
@@ -247,21 +264,37 @@
             display: none;
         }
 
+        .trace-log {
+            display: none;
+        }
+
+        .log-controls {
+            margin-bottom: 10px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+        }
+
         @media (max-width: 768px) {
             .main-content {
                 grid-template-columns: 1fr;
             }
-            
+
             .header h1 {
                 font-size: 2em;
             }
-            
+
             .container {
                 margin: 10px;
             }
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <div class="header">
@@ -275,13 +308,17 @@
                     <h3>📝 Scanner Configuration</h3>
                     <div class="form-group">
                         <label for="scannerData">View Key or Seed Phrase:</label>
-                        <textarea id="scannerData" placeholder="Enter your view key or seed phrase here... (automatically detected)"></textarea>
+                        <textarea id="scannerData"
+                            placeholder="Enter your view key or seed phrase here... (automatically detected)"></textarea>
                     </div>
                     <div class="form-group">
                         <label for="baseNodeUrl">Base Node URL:</label>
                         <div style="display: flex; align-items: center; gap: 10px;">
-                            <input type="text" id="baseNodeUrl" value="https://rpc.tari.com" placeholder="https://rpc.tari.com" style="flex: 1;">
-                            <div id="connectionStatus" onclick="checkConnection()" style="cursor: pointer; padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; min-width: 100px; text-align: center;" title="Click to refresh connection status">
+                            <input type="text" id="baseNodeUrl" value="https://rpc.tari.com"
+                                placeholder="https://rpc.tari.com" style="flex: 1;">
+                            <div id="connectionStatus" onclick="checkConnection()"
+                                style="cursor: pointer; padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; min-width: 100px; text-align: center;"
+                                title="Click to refresh connection status">
                                 ⏳ Checking...
                             </div>
                         </div>
@@ -291,12 +328,27 @@
                 <div class="section">
                     <h3>🔍 Scanning Controls</h3>
                     <div class="form-group">
-                        <label for="startHeight">Start Height:</label>
-                        <input type="number" id="startHeight" value="0" min="0">
+                        <label for="scanMode">Scan Mode:</label>
+                        <select id="scanMode">
+                            <option value="range">Height Range</option>
+                            <option value="specific">Specific Heights</option>
+                        </select>
                     </div>
-                    <div class="form-group">
-                        <label for="endHeight">End Height (optional):</label>
-                        <input type="number" id="endHeight" placeholder="Leave empty for tip">
+                    <div id="rangeMode">
+                        <div class="form-group">
+                            <label for="startHeight">Start Height:</label>
+                            <input type="number" id="startHeight" value="0" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label for="endHeight">End Height (optional):</label>
+                            <input type="number" id="endHeight" placeholder="Leave empty for tip">
+                        </div>
+                    </div>
+                    <div id="specificMode" class="hidden">
+                        <div class="form-group">
+                            <label for="specificHeights">Block Heights (comma-separated):</label>
+                            <textarea id="specificHeights" placeholder="e.g., 100, 200, 300, 1000"></textarea>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="limit">Limit:</label>
@@ -307,7 +359,8 @@
                 <div class="section">
                     <h3>🎛️ Actions</h3>
                     <button class="btn" onclick="toggleScan()" disabled id="scanToggleBtn">🔍 Start Scan</button>
-                    <button class="btn btn-warning" onclick="resetScanner()" disabled id="resetScannerBtn">🔄 Reset Scanner</button>
+                    <button class="btn btn-warning" onclick="resetScanner()" disabled id="resetScannerBtn">🔄 Reset
+                        Scanner</button>
                 </div>
 
                 <div id="statusArea"></div>
@@ -326,6 +379,10 @@
                     <h3>📈 Results</h3>
                     <div class="results-grid" id="resultsGrid">
                         <div class="result-card">
+                            <h4>Current Block Height</h4>
+                            <div class="result-value" id="currentBlockHeight">-</div>
+                        </div>
+                        <div class="result-card">
                             <h4>Blocks Scanned</h4>
                             <div class="result-value" id="blocksScanned">0</div>
                         </div>
@@ -342,6 +399,13 @@
 
                 <div class="section">
                     <h3>📝 Console Logs</h3>
+                    <div class="log-controls">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="showTrace" onchange="toggleTraceLogs()">
+                            Show Trace Logs
+                        </label>
+                    </div>
+
                     <div class="logs" id="logsContainer"></div>
                 </div>
             </div>
@@ -362,7 +426,7 @@
 
             async request(endpoint, params = {}) {
                 const url = new URL(endpoint, this.baseUrl);
-                
+
                 Object.keys(params).forEach(key => {
                     if (params[key] !== undefined && params[key] !== null) {
                         url.searchParams.append(key, params[key]);
@@ -392,10 +456,10 @@
             }
 
             async getHeaderByHeight(blockHeight) {
-                log('info', `📡 Fetching header for block ${blockHeight}...`);
+                log('info', `📡 Fetching header for block ${blockHeight}...`, true);
                 try {
                     const response = await this.request('/get_header_by_height', { height: blockHeight });
-                    log('success', `✅ Header fetched for block ${blockHeight}`);
+                    log('success', `✅ Header fetched for block ${blockHeight}`, true);
                     return response;
                 } catch (error) {
                     log('error', `❌ Failed to fetch header for block ${blockHeight}: ${error.message}`);
@@ -404,7 +468,7 @@
             }
 
             async syncUtxosByBlock(startHeaderHash, endHeaderHash, limit = 10, page = 0) {
-                log('info', `📡 Syncing UTXOs from ${startHeaderHash.substring(0, 16)}... to ${endHeaderHash.substring(0, 16)}...`);
+                log('info', `📡 Syncing UTXOs from ${startHeaderHash.substring(0, 16)}... to ${endHeaderHash.substring(0, 16)}...`, true);
                 try {
                     const response = await this.request('/sync_utxos_by_block', {
                         start_header_hash: startHeaderHash,
@@ -412,7 +476,7 @@
                         limit,
                         page
                     });
-                    log('success', `✅ Synced ${response.blocks?.length || 0} blocks, has_next_page: ${response.has_next_page}`);
+                    log('info', `✅ Synced ${response.blocks?.length || 0} blocks, has_next_page: ${response.has_next_page}`, true);
                     return response;
                 } catch (error) {
                     log('error', `❌ Failed to sync UTXOs: ${error.message}`);
@@ -446,23 +510,23 @@
             }
 
             async* fetchBlockRange(startHeight, endHeight, limit) {
-                log('info', `📡 Fetching block range ${startHeight} to ${endHeight}...`);
-                
+                log('info', `📡 Fetching block range ${startHeight} to ${endHeight}...`, true);
+
                 try {
                     const startHeader = await this.getHeaderByHeight(startHeight);
                     const endHeader = await this.getHeaderByHeight(endHeight);
-                    
+
                     const startHash = this.arrayToHex(startHeader.hash);
                     const endHash = this.arrayToHex(endHeader.hash);
-                    
+
                     let page = 0;
                     let hasNextPage = true;
                     let totalBlocks = 0;
-                    
+
                     while (hasNextPage) {
                         const syncResponse = await this.syncUtxosByBlock(startHash, endHash, limit, page);
                         hasNextPage = syncResponse.has_next_page;
-                        
+
                         if (syncResponse.blocks) {
                             for (const blockInfo of syncResponse.blocks) {
                                 const block = this.convertToScannerFormat(blockInfo);
@@ -470,12 +534,12 @@
                                 yield block;
                             }
                         }
-                        
+
                         page++;
                     }
-                    
-                    log('success', `✅ Streamed ${totalBlocks} blocks from base node`);
-                    
+
+                    log('success', `✅ Streamed ${totalBlocks} blocks from base node`, true);
+
                 } catch (error) {
                     log('error', `❌ Failed to fetch block range: ${error.message}`);
                     throw error;
@@ -483,29 +547,36 @@
             }
         }
 
+        window.toggleTraceLogs = function() {
+            const showTrace = document.getElementById('showTrace').checked;
+            const traceLogs = document.querySelectorAll('.trace-log');
+            console.log(traceLogs);
+            traceLogs.forEach(log => {
+                log.style.display = showTrace ? 'block' : 'none';
+            });
+        }
         // Logging functions
-        function log(level, message) {
-            // Only keep the last n logs
+        function log(level, message, isTrace = false) {
             const container = document.getElementById('logsContainer');
             const entries = container.querySelectorAll('.log-entry');
-            
+
             const entry = document.createElement('div');
-            entry.className = 'log-entry';
-            
+            entry.className = `log-entry ${isTrace ? 'trace-log' : ``} ${level}-log`;
+
             const time = new Date().toLocaleTimeString();
             const levelIcon = {
                 'info': 'ℹ️',
                 'success': '✅',
                 'error': '❌',
-                'warning': '⚠️'
+                'warning': '⚠️',
             }[level] || 'ℹ️';
-            
+
             entry.innerHTML = `
                 <span class="log-time">${time}</span>
                 <span class="log-level ${level}">${levelIcon}</span>
                 <span>${message}</span>
             `;
-            
+
             container.appendChild(entry);
             container.scrollTop = container.scrollHeight;
 
@@ -519,17 +590,17 @@
             // Only keep the last n statuses
             const maxStatuses = 10;
             const statuses = document.querySelectorAll('.status');
-            
+
             if (statuses.length >= maxStatuses) {
                 statuses[0].remove();
             }
-            
+
             const statusArea = document.getElementById('statusArea');
             const status = document.createElement('div');
             status.className = `status ${type}`;
             status.textContent = message;
             statusArea.appendChild(status);
-            
+
             setTimeout(() => {
                 status.remove();
             }, 5000);
@@ -540,29 +611,33 @@
             document.getElementById('progressText').textContent = text;
         }
 
-        function updateResults(blocksScanned, transactionsFound, totalValue) {
+        function updateResults(blocksScanned, transactionsFound, totalValue, currentBlockHeight = null) {
             document.getElementById('blocksScanned').textContent = blocksScanned.toLocaleString();
             document.getElementById('transactionsFound').textContent = transactionsFound.toLocaleString();
             const totalValueT = (totalValue / 1000000);
             document.getElementById('totalValueT').textContent = totalValueT.toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+
+            if (currentBlockHeight !== null) {
+                document.getElementById('currentBlockHeight').textContent = currentBlockHeight.toLocaleString();
+            }
         }
 
         // WASM Scanner implementation
-        window.initializeWasm = async function() {
+        window.initializeWasm = async function () {
             try {
                 log('info', '🚀 Initializing Tari WASM Scanner...');
-                
+
                 // Import the WASM module
                 wasm = await import('./lightweight_wallet_libs.js');
                 await wasm.default();
-                
+
                 log('success', '✅ WASM module loaded successfully');
                 log('info', `🏷️ Version: ${wasm.get_version()}`);
-                
+
                 // Enable buttons based on scanner data availability
                 updateScanButtonState();
                 document.getElementById('resetScannerBtn').disabled = false;
-                
+
             } catch (error) {
                 console.log(error)
                 log('error', `❌ Failed to initialize WASM module: ${error.message}`);
@@ -574,7 +649,7 @@
         // Update connection status indicator
         function updateConnectionStatus(status, message = '') {
             const statusElement = document.getElementById('connectionStatus');
-            
+
             switch (status) {
                 case 'checking':
                     statusElement.style.background = '#f39c12';
@@ -597,35 +672,35 @@
                     statusElement.textContent = '⚫ Offline';
                     break;
             }
-            
+
             if (message) {
                 statusElement.title = message;
             }
         }
 
         // Check connection status
-        window.checkConnection = async function() {
+        window.checkConnection = async function () {
             const baseNodeUrl = document.getElementById('baseNodeUrl').value.trim();
-            
+
             if (!baseNodeUrl) {
                 updateConnectionStatus('disconnected', 'No URL provided');
                 return;
             }
-            
+
             updateConnectionStatus('checking');
             log('info', '📡 Testing base node connection...');
-            
+
             const httpClient = new HttpClient(baseNodeUrl);
-            
+
             try {
                 log('info', `🔗 Connecting to ${baseNodeUrl}...`);
-                
+
                 const header = await httpClient.getHeaderByHeight(1);
                 updateConnectionStatus('connected', `Connected to ${baseNodeUrl}`);
                 log('success', '✅ Successfully connected to base node');
                 log('info', `   Genesis block hash: ${httpClient.arrayToHex(header.hash).substring(0, 16)}...`);
                 log('info', `   Timestamp: ${new Date(header.timestamp * 1000).toISOString()}`);
-                
+
             } catch (error) {
                 updateConnectionStatus('error', `Failed to connect: ${error.message}`);
                 log('error', `❌ Failed to connect to base node: ${error.message}`);
@@ -646,13 +721,13 @@
                 button.className = 'btn';
                 button.onclick = startScan;
             }
-            
+
             // Update button state based on current conditions
             updateScanButtonState();
         }
 
         // Toggle function for the scan button
-        window.toggleScan = function() {
+        window.toggleScan = function () {
             if (isScanning) {
                 stopScan();
             } else {
@@ -660,11 +735,11 @@
             }
         };
 
-      
+
 
         function createScanner() {
             const scannerData = document.getElementById('scannerData').value;
-            
+
             if (!scannerData.trim()) {
                 throw new Error('Scanner data is required');
             }
@@ -674,33 +749,59 @@
 
             scanner = wasm.create_wasm_scanner(scannerData);
             log('success', '✅ Scanner created successfully');
-            
+
             return scanner;
         }
 
         function scanBlock(blockData) {
             try {
                 const blockDataJson = JSON.stringify(blockData, null, 2);
-                const resultJson = wasm.scan_block_data(scanner, blockDataJson);
+                const resultJson = wasm.scan_single_block(scanner, blockDataJson);
                 const result = JSON.parse(resultJson);
-                
+
                 if (result.success) {
-                    log('success', `✅ Block ${blockData.height} scanned successfully`);
-                    log('info', `   Transactions found: ${result.transactions.length}`);
-                    log('info', `   Current balance: ${(result.current_balance / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
+                    // Only log when transactions are found
+                    if (result.transactions.length > 0) {
+                        log('success', `💰 Found ${result.transactions.length} transaction(s) in block ${blockData.height}!`);
+                        result.transactions.forEach((tx, index) => {
+                            log('info', `   Transaction ${index + 1}: ${(tx.value / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T (${tx.direction})`);
+                        });
+                        if (result.value_found > 0) {
+                            log('info', `   Value found in block: ${(result.value_found / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
+                        }
+                        if (result.value_spent > 0) {
+                            log('info', `   Value spent in block: ${(result.value_spent / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
+                        }
+                    }
                 } else {
                     log('warning', `⚠️ Block ${blockData.height} scan completed with error: ${result.error}`);
                 }
-                
+
                 return result;
-                
+
             } catch (error) {
                 log('error', `❌ Failed to scan block ${blockData.height}: ${error.message}`);
                 throw error;
             }
         }
 
-        window.stopScan = function() {
+        function getCumulativeStats() {
+            try {
+                const statsJson = wasm.get_scanner_stats(scanner);
+                return JSON.parse(statsJson);
+            } catch (error) {
+                log('error', `❌ Failed to get scanner stats: ${error.message}`);
+                return {
+                    total_outputs: 0,
+                    total_spent: 0,
+                    total_value: 0,
+                    current_balance: 0,
+                    total_transactions: 0
+                };
+            }
+        }
+
+        window.stopScan = function () {
             if (!isScanning) {
                 log('warning', '⚠️ No scan in progress');
                 return;
@@ -709,12 +810,34 @@
             log('info', '⏹️ Stopping scan...');
             isScanning = false;
             updateProgress(0, 'Scan stopped by user');
-            
+
             // Update button state
             updateScanButton(false);
         };
 
-        window.startScan = async function() {
+        async function* fetchSpecificBlocks(httpClient, heights) {
+            log('info', `📡 Fetching ${heights.length} specific blocks...`);
+
+            for (const height of heights) {
+                try {
+                    const header = await httpClient.getHeaderByHeight(height);
+                    const startHash = httpClient.arrayToHex(header.hash);
+                    const endHash = startHash; // Same block
+
+                    const syncResponse = await httpClient.syncUtxosByBlock(startHash, endHash, 1, 0);
+
+                    if (syncResponse.blocks && syncResponse.blocks.length > 0) {
+                        const block = httpClient.convertToScannerFormat(syncResponse.blocks[0]);
+                        yield block;
+                    }
+                } catch (error) {
+                    log('error', `❌ Failed to fetch block ${height}: ${error.message}`);
+                    // Continue with other blocks
+                }
+            }
+        }
+
+        window.startScan = async function () {
             if (!wasm) {
                 log('error', '❌ WASM not initialized');
                 return;
@@ -733,88 +856,126 @@
 
             try {
                 isScanning = true;
-                
+
                 // Update button state
                 updateScanButton(true);
-                
+
                 // Create scanner
                 createScanner();
-                
-                const baseNodeUrl = document.getElementById('baseNodeUrl').value;
-                const startHeight = parseInt(document.getElementById('startHeight').value);
-                const limit = parseInt(document.getElementById('limit').value);
-                let endHeight = document.getElementById('endHeight').value;
 
-                
+                const baseNodeUrl = document.getElementById('baseNodeUrl').value;
+                const scanMode = document.getElementById('scanMode').value;
+                const limit = parseInt(document.getElementById('limit').value);
+
                 const httpClient = new HttpClient(baseNodeUrl);
-                
-                // Get tip height if endHeight not specified
-                if (!endHeight) {
-                    const tipInfo = await httpClient.getTipInfo();
-                    endHeight = tipInfo.metadata.best_block_height;
-                }
-                endHeight = parseInt(endHeight);
-                
-                log('info', `🔍 Starting blockchain scan from height ${startHeight} to ${endHeight}`);
-                
-                let blockCount = 0;
-                let totalTransactions = 0;
-                let totalValue = 0;
-                const totalBlocks = endHeight - startHeight + 1;
-                
-                updateProgress(0, 'Starting scan...');
-                
-                // Stream and scan blocks
-                for await (const block of httpClient.fetchBlockRange(startHeight, endHeight, limit)) {
-                    if (!isScanning) break; // Allow cancellation
-                    
-                    blockCount++;
-                    const result = scanBlock(block);
-                    
-                    if (result.success) {
-                        totalTransactions = result.transactions.length;
-                        totalValue = result.total_value;
+
+                let blockIterator;
+                let totalBlocks;
+                let scanDescription;
+
+                if (scanMode === 'specific') {
+                    // Parse specific heights
+                    const specificHeightsText = document.getElementById('specificHeights').value.trim();
+                    if (!specificHeightsText) {
+                        log('error', '❌ Please enter comma-separated block heights');
+                        return;
                     }
-                    
+
+                    const heights = specificHeightsText
+                        .split(',')
+                        .map(h => parseInt(h.trim()))
+                        .filter(h => !isNaN(h) && h >= 0)
+                        .sort((a, b) => a - b); // Sort for better progress tracking
+
+                    if (heights.length === 0) {
+                        log('error', '❌ No valid block heights found');
+                        return;
+                    }
+
+                    totalBlocks = heights.length;
+                    blockIterator = fetchSpecificBlocks(httpClient, heights);
+                    scanDescription = `specific blocks: ${heights.join(', ')}`;
+                    log('info', `🔍 Starting scan of ${totalBlocks} specific blocks`);
+
+                } else {
+                    // Range mode
+                    const startHeight = parseInt(document.getElementById('startHeight').value);
+                    let endHeight = document.getElementById('endHeight').value;
+
+                    // Get tip height if endHeight not specified
+                    if (!endHeight) {
+                        const tipInfo = await httpClient.getTipInfo();
+                        endHeight = tipInfo.metadata.best_block_height;
+                    }
+                    endHeight = parseInt(endHeight);
+
+                    totalBlocks = endHeight - startHeight + 1;
+                    blockIterator = httpClient.fetchBlockRange(startHeight, endHeight, limit);
+                    scanDescription = `height range ${startHeight} to ${endHeight}`;
+                    log('info', `🔍 Starting blockchain scan from height ${startHeight} to ${endHeight}`);
+                }
+
+                let blockCount = 0;
+                updateProgress(0, 'Starting scan...');
+
+                // Stream and scan blocks
+                for await (const block of blockIterator) {
+                    if (!isScanning) break; // Allow cancellation
+
+                    blockCount++;
+                    const blockResult = scanBlock(block);
+
+                    // Get cumulative stats from scanner
+                    const cumulativeStats = getCumulativeStats();
+
                     // Update progress
                     const percentage = (blockCount / totalBlocks) * 100;
                     updateProgress(percentage, `Scanned ${blockCount}/${totalBlocks} blocks`);
-                    updateResults(blockCount, totalTransactions, totalValue);
-                    
+                    updateResults(blockCount, cumulativeStats.total_transactions, cumulativeStats.total_value, block.height);
+
                     // Allow UI to update
                     await new Promise(resolve => setTimeout(resolve, 10));
                 }
-                
+
                 if (blockCount === 0) {
-                    log('warning', '⚠️ No blocks found in range');
-                } else if (isScanning) {
-                    log('success', '📈 SCAN COMPLETED SUCCESSFULLY');
-                    log('info', `═══════════════════════════════`);
-                    log('info', `Blocks processed: ${blockCount.toLocaleString()}`);
-                    log('info', `Total transactions: ${totalTransactions.toLocaleString()}`);
-                    log('info', `Total value found: ${(totalValue / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
-                    updateProgress(100, 'Scan completed!');
+                    log('warning', '⚠️ No blocks found');
                 } else {
-                    log('info', '📈 SCAN STOPPED');
-                    log('info', `═══════════════════════════════`);
-                    log('info', `Blocks processed before stop: ${blockCount.toLocaleString()}`);
-                    log('info', `Total transactions found: ${totalTransactions.toLocaleString()}`);
-                    log('info', `Total value found: ${(totalValue / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
+                    // Get final cumulative stats
+                    const finalStats = getCumulativeStats();
+
+                    if (isScanning) {
+                        log('success', '📈 SCAN COMPLETED SUCCESSFULLY');
+                        log('info', `═══════════════════════════════`);
+                        log('info', `Scan type: ${scanDescription}`);
+                        log('info', `Blocks processed: ${blockCount.toLocaleString()}`);
+                        log('info', `Total transactions: ${finalStats.total_transactions.toLocaleString()}`);
+                        log('info', `Total value found: ${(finalStats.total_value / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
+                        log('info', `Current balance: ${(finalStats.current_balance / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
+                        updateProgress(100, 'Scan completed!');
+                    } else {
+                        log('info', '📈 SCAN STOPPED');
+                        log('info', `═══════════════════════════════`);
+                        log('info', `Scan type: ${scanDescription}`);
+                        log('info', `Blocks processed before stop: ${blockCount.toLocaleString()}`);
+                        log('info', `Total transactions found: ${finalStats.total_transactions.toLocaleString()}`);
+                        log('info', `Total value found: ${(finalStats.total_value / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
+                        log('info', `Current balance: ${(finalStats.current_balance / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
+                    }
                 }
-                
+
             } catch (error) {
                 log('error', `❌ Scan failed: ${error.message || error}`);
                 updateProgress(0, 'Scan failed');
                 throw error;
             } finally {
                 isScanning = false;
-                
+
                 // Reset button state
                 updateScanButton(false);
             }
         };
 
-        window.resetScanner = function() {
+        window.resetScanner = function () {
             if (!wasm || !scanner) {
                 log('error', '❌ No scanner to reset');
                 return;
@@ -824,11 +985,12 @@
                 log('info', '🔄 Resetting scanner state...');
                 wasm.reset_scanner(scanner);
                 log('success', '✅ Scanner state reset successfully');
-                
+
                 // Reset UI
                 updateResults(0, 0, 0);
+                document.getElementById('currentBlockHeight').textContent = '-';
                 updateProgress(0, 'Ready to start...');
-                
+
             } catch (error) {
                 log('error', `❌ Failed to reset scanner: ${error.message}`);
             }
@@ -838,7 +1000,7 @@
         function updateScanButtonState() {
             const scannerData = document.getElementById('scannerData').value.trim();
             const scanToggleBtn = document.getElementById('scanToggleBtn');
-            
+
             if (!wasm) {
                 // WASM not loaded yet
                 scanToggleBtn.disabled = true;
@@ -858,17 +1020,89 @@
             }
         }
 
+        // Local storage functions
+        function saveToLocalStorage(key, value) {
+            try {
+                localStorage.setItem(`tariScanner_${key}`, value);
+            } catch (error) {
+                console.warn('Failed to save to localStorage:', error);
+            }
+        }
+
+        function loadFromLocalStorage(key, defaultValue = '') {
+            try {
+                return localStorage.getItem(`tariScanner_${key}`) || defaultValue;
+            } catch (error) {
+                console.warn('Failed to load from localStorage:', error);
+                return defaultValue;
+            }
+        }
+
+        function loadSavedValues() {
+            // Load all saved values except scannerData
+            const fieldsToLoad = ['baseNodeUrl', 'startHeight', 'endHeight', 'limit', 'scanMode', 'specificHeights'];
+
+            fieldsToLoad.forEach(fieldId => {
+                const element = document.getElementById(fieldId);
+                if (element) {
+                    const savedValue = loadFromLocalStorage(fieldId);
+                    if (savedValue) {
+                        element.value = savedValue;
+                    }
+                }
+            });
+
+            // Handle scan mode change after loading
+            toggleScanMode();
+        }
+
+        function setupInputSaving() {
+            // Fields to save (excluding scannerData)
+            const fieldsToSave = ['baseNodeUrl', 'startHeight', 'endHeight', 'limit', 'scanMode', 'specificHeights'];
+
+            fieldsToSave.forEach(fieldId => {
+                const element = document.getElementById(fieldId);
+                if (element) {
+                    const saveValue = () => {
+                        saveToLocalStorage(fieldId, element.value);
+                    };
+
+                    // Save on input change
+                    element.addEventListener('input', saveValue);
+                    element.addEventListener('change', saveValue);
+                }
+            });
+        }
+
+        function toggleScanMode() {
+            const scanMode = document.getElementById('scanMode').value;
+            const rangeMode = document.getElementById('rangeMode');
+            const specificMode = document.getElementById('specificMode');
+
+            if (scanMode === 'specific') {
+                rangeMode.classList.add('hidden');
+                specificMode.classList.remove('hidden');
+            } else {
+                rangeMode.classList.remove('hidden');
+                specificMode.classList.add('hidden');
+            }
+        }
+
         // Setup event listeners and initialization
         function setupEventListeners() {
             const baseNodeUrlInput = document.getElementById('baseNodeUrl');
             const scannerDataInput = document.getElementById('scannerData');
-            
+            const scanModeSelect = document.getElementById('scanMode');
+
+            // Setup scan mode toggle
+            scanModeSelect.addEventListener('change', toggleScanMode);
+
             // Check connection when URL changes (with debounce)
             let urlChangeTimeout;
             baseNodeUrlInput.addEventListener('input', () => {
                 clearTimeout(urlChangeTimeout);
                 updateConnectionStatus('disconnected', 'URL changed - click to test');
-                
+
                 // Auto-check after 1 second of no typing
                 urlChangeTimeout = setTimeout(() => {
                     if (baseNodeUrlInput.value.trim()) {
@@ -876,7 +1110,7 @@
                     }
                 }, 1000);
             });
-            
+
             // Also check on Enter key
             baseNodeUrlInput.addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') {
@@ -884,25 +1118,30 @@
                     checkConnection();
                 }
             });
-            
+
             // Update scan button state when scanner data changes
             scannerDataInput.addEventListener('input', updateScanButtonState);
             scannerDataInput.addEventListener('paste', () => {
                 // Use setTimeout to wait for paste to complete
                 setTimeout(updateScanButtonState, 10);
             });
+
+            // Setup input saving for persistent values
+            setupInputSaving();
         }
 
         // Initialize on page load
         log('info', '🌟 Tari Wallet Scanner - Browser loaded');
+        loadSavedValues(); // Load saved values from localStorage
         setupEventListeners();
         updateScanButtonState(); // Set initial button state
         initializeWasm();
-        
+
         // Check initial connection after a short delay
         setTimeout(() => {
             checkConnection();
         }, 500);
     </script>
 </body>
-</html> 
+
+</html>
