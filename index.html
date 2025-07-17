@@ -245,7 +245,7 @@
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
         }
 
-        .result-card:has(#totalValueT) {
+        .result-card:has(#currentBalanceT) {
             grid-column: 1 / -1;
         }
 
@@ -466,8 +466,8 @@
                             <div class="result-value" id="downloadSize">0 B</div>
                         </div>
                         <div class="result-card">
-                            <h4>Total Value (T)</h4>
-                            <div class="result-value" id="totalValueT">0.000000</div>
+                            <h4>Current Balance (T)</h4>
+                            <div class="result-value" id="currentBalanceT">0.000000</div>
                         </div>
                     </div>
                 </div>
@@ -599,16 +599,17 @@
                     inputs: []
                 };
 
-                // Check if inputs data is provided and convert it
+                // Handle simplified inputs structure - inputs are now just arrays of 32-byte hashes
                 if (blockUtxoInfo.inputs && Array.isArray(blockUtxoInfo.inputs)) {
-                    blockData.inputs = blockUtxoInfo.inputs.map(input => ({
-                        commitment: this.arrayToHex(input.commitment),
-                        script: input.script ? this.arrayToHex(input.script) : null,
-                        input_data: input.input_data ? this.arrayToHex(input.input_data) : null,
-                        script_signature: input.script_signature ? this.arrayToHex(input.script_signature) : null,
-                        sender_offset_public_key: input.sender_offset_public_key ? this.arrayToHex(input.sender_offset_public_key) : null,
+                    // The new API returns inputs as arrays of byte arrays (commitment hashes)
+                    blockData.inputs = blockUtxoInfo.inputs.map(inputHash => ({
+                        commitment: this.arrayToHex(inputHash),
+                        script: null,
+                        input_data: null,
+                        script_signature: null,
+                        sender_offset_public_key: null,
                     }));
-                    log('info', `✅ Converted ${blockData.inputs.length} inputs for block ${blockUtxoInfo.height}`, true);
+                    log('info', `✅ Converted ${blockData.inputs.length} simplified inputs for block ${blockUtxoInfo.height}`, true);
                 }
 
                 return blockData;
@@ -659,7 +660,6 @@
         window.toggleTraceLogs = function() {
             const showTrace = document.getElementById('showTrace').checked;
             const traceLogs = document.querySelectorAll('.trace-log');
-            console.log(traceLogs);
             traceLogs.forEach(log => {
                 log.style.display = showTrace ? 'block' : 'none';
             });
@@ -728,11 +728,11 @@
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
 
-        function updateResults(blocksScanned, transactionsFound, totalValue, currentBlockHeight = null, downloadSize = null) {
+        function updateResults(blocksScanned, transactionsFound, currentBalance, currentBlockHeight = null, downloadSize = null) {
             document.getElementById('blocksScanned').textContent = blocksScanned.toLocaleString();
             document.getElementById('transactionsFound').textContent = transactionsFound.toLocaleString();
-            const totalValueT = (totalValue / 1000000);
-            document.getElementById('totalValueT').textContent = totalValueT.toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+            const currentBalanceT = (currentBalance / 1000000);
+            document.getElementById('currentBalanceT').textContent = currentBalanceT.toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 });
             
             if (currentBlockHeight !== null) {
                 document.getElementById('currentBlockHeight').textContent = currentBlockHeight.toLocaleString();
@@ -760,7 +760,6 @@
                 document.getElementById('resetScannerBtn').disabled = false;
 
             } catch (error) {
-                console.log(error)
                 log('error', `❌ Failed to initialize WASM module: ${error.message}`);
                 log('info', '💡 Make sure the WASM package is built for web target:');
                 log('info', '   wasm-pack build --target web --out-dir pkg --example wasm_scanner');
@@ -868,18 +867,6 @@
             log('info', `🔧 Creating scanner (auto-detecting type)...`);
             log('info', `   Using data: ${scannerData.substring(0, 20)}...`);
 
-            // DEBUG: Log more about the scanner data
-            console.log('=== DEBUG: Scanner Creation ===');
-            console.log('Scanner data length:', scannerData.length);
-            console.log('Scanner data type detection:');
-            if (scannerData.length === 64) {
-                console.log('  -> Looks like view key (64 hex chars)');
-            } else if (scannerData.split(' ').length >= 12) {
-                console.log('  -> Looks like seed phrase (word count:', scannerData.split(' ').length, ')');
-            } else {
-                console.log('  -> Unknown format');
-            }
-
             scanner = wasm.create_wasm_scanner(scannerData);
             log('success', '✅ Scanner created successfully');
 
@@ -888,66 +875,14 @@
 
         function scanHttpBlocks(httpResponse) {
             try {
-                // DEBUG: Log the HTTP response structure
-                console.log('=== DEBUG: HTTP Response Structure ===');
-                console.log('Number of blocks:', httpResponse.blocks?.length || 0);
-                
-                if (httpResponse.blocks && httpResponse.blocks.length > 0) {
-                    const firstBlock = httpResponse.blocks[0];
-                    console.log('First block structure:', {
-                        height: firstBlock.height,
-                        header_hash_length: firstBlock.header_hash?.length,
-                        outputs_count: firstBlock.outputs?.length || 0,
-                        mined_timestamp: firstBlock.mined_timestamp
-                    });
-                    
-                    if (firstBlock.outputs && firstBlock.outputs.length > 0) {
-                        const firstOutput = firstBlock.outputs[0];
-                        console.log('First output structure:', {
-                            output_hash_length: firstOutput.output_hash?.length,
-                            commitment_length: firstOutput.commitment?.length,
-                            encrypted_data_length: firstOutput.encrypted_data?.length,
-                            sender_offset_public_key_length: firstOutput.sender_offset_public_key?.length
-                        });
-                    }
-                }
+                                // Process HTTP response
 
                 const httpResponseJson = JSON.stringify(httpResponse);
-                console.log('=== DEBUG: Calling WASM process_http_blocks ===');
-                console.log('JSON size:', httpResponseJson.length, 'bytes');
                 
                 const resultJson = wasm.process_http_blocks(scanner, httpResponseJson);
                 const result = JSON.parse(resultJson);
 
-                // DEBUG: Log the WASM result in detail
-                console.log('=== DEBUG: WASM Result ===');
-                console.log('Success:', result.success);
-                console.log('Error:', result.error || 'None');
-                console.log('Blocks processed:', result.blocks_processed);
-                console.log('Total outputs:', result.total_outputs);
-                console.log('Total spent:', result.total_spent);
-                console.log('Total value:', result.total_value);
-                console.log('Current balance:', result.current_balance);
-                console.log('Transactions found:', result.transactions?.length || 0);
-                
-                if (result.transactions && result.transactions.length > 0) {
-                    console.log('=== DEBUG: Transaction Details ===');
-                    result.transactions.forEach((tx, index) => {
-                        console.log(`Transaction ${index + 1}:`, {
-                            block_height: tx.block_height,
-                            value: tx.value,
-                            direction: tx.direction,
-                            status: tx.status,
-                            is_spent: tx.is_spent,
-                            payment_id: tx.payment_id ? 'Present' : 'None'
-                        });
-                    });
-                    
-                    // Count by direction
-                    const inbound = result.transactions.filter(tx => tx.direction === 'inbound').length;
-                    const outbound = result.transactions.filter(tx => tx.direction === 'outbound').length;
-                    console.log(`Direction breakdown: ${inbound} inbound, ${outbound} outbound`);
-                }
+                // Process scan results
 
                 if (result.success) {
                     // Log transaction summary for the batch
@@ -980,7 +915,6 @@
                 return result;
 
             } catch (error) {
-                console.error('=== DEBUG: Error in scanHttpBlocks ===', error);
                 log('error', `❌ Failed to scan HTTP block batch: ${error.message}`);
                 throw error;
             }
@@ -1122,30 +1056,14 @@
                 let blockCount = 0;
                 updateProgress(0, 'Starting scan...');
 
-                // DEBUG: Expected results from scanner.rs
-                console.log('=== DEBUG: Expected Results Reference ===');
-                console.log('Scanner.rs found 12 transactions total:');
-                console.log('  - 7 inbound transactions (with output_index)');
-                console.log('  - 5 outbound transactions (with input_index)');
-                console.log('Key blocks to watch: 16609, 16637, 16674, 16686, 16703, 17186, 20103');
-                console.log('Expected commitments to find:');
-                console.log('  - 8eb6f2e1eda1589468e4b05c4d04c369a1362dfe04e53d5904174e951687c346');
-                console.log('  - 420465f60b274eea493c5683502c2268ba33ada4899a1ff148ee831f43b84e4c');
-                console.log('  - 367d8a6b83aa1cc57362e73dedb5cd70704dd5132386ad320a72e4ee0119477b');
-                console.log('  - 88e3f0b7bef01a5649ab9ab071065afe709ae70c67405e4c24da0041f0656f4e');
-                console.log('  - 147975046e961285897fe1bd0fa3c56f76c1f0e1873d47d13faac7e774bc745c');
-                console.log('  - 34c9517ba3cc8ee92af8360bfa82dea6cc85abd4a8570b6df0f04957cf660400');
-                console.log('  - 30d1a223e3ee078ec913b126b54fb9cdb02e18f5eaa3fd49fae08b62cf1fa523');
 
                 // Stream and scan block batches
                 for await (const httpResponse of blockIterator) {
                     if (!isScanning) break; // Allow cancellation
 
-                    // DEBUG: Log block range being processed
-                    console.log('=== DEBUG: Processing Batch ===');
+                    // Process block batch
                     if (httpResponse.blocks && httpResponse.blocks.length > 0) {
                         const heights = httpResponse.blocks.map(b => b.height).sort((a, b) => a - b);
-                        console.log('Block heights in this batch:', heights);
                     }
 
                     // Process the entire batch
@@ -1164,7 +1082,7 @@
                     // Update progress
                     const percentage = (blockCount / totalBlocks) * 100;
                     updateProgress(percentage, `Scanned ${blockCount}/${totalBlocks} blocks`);
-                    updateResults(blockCount, cumulativeStats.total_transactions, cumulativeStats.total_value, highestBlockInBatch, totalDownloadSize);
+                    updateResults(blockCount, cumulativeStats.total_transactions, cumulativeStats.current_balance, highestBlockInBatch, totalDownloadSize);
 
                     // Allow UI to update
                     await new Promise(resolve => setTimeout(resolve, 10));
@@ -1176,30 +1094,7 @@
                     // Get final cumulative stats
                     const finalStats = getCumulativeStats();
 
-                    // DEBUG: Final comparison with scanner.rs results
-                    console.log('=== DEBUG: Final Results Comparison ===');
-                    console.log('WASM Scanner Results:');
-                    console.log('  Total transactions:', finalStats.total_transactions);
-                    console.log('  Total value:', finalStats.total_value);
-                    console.log('  Current balance:', finalStats.current_balance);
-                    console.log('');
-                    console.log('Expected Scanner.rs Results:');
-                    console.log('  Total transactions: 12');
-                    console.log('  Expected to find both inbound and outbound transactions');
-                    console.log('');
-                    console.log('ANALYSIS:');
-                    if (finalStats.total_transactions < 12) {
-                        console.log('  ❌ MISSING TRANSACTIONS! Found', finalStats.total_transactions, 'but expected 12');
-                        console.log('  📝 Possible issues:');
-                        console.log('    - Synthetic input creation not working correctly');
-                        console.log('    - PaymentId extraction failing');
-                        console.log('    - View key/seed phrase mismatch');
-                        console.log('    - HTTP API data format mismatch');
-                    } else if (finalStats.total_transactions === 12) {
-                        console.log('  ✅ CORRECT TRANSACTION COUNT!');
-                    } else {
-                        console.log('  ⚠️ MORE TRANSACTIONS THAN EXPECTED');
-                    }
+                 
 
                     if (isScanning) {
                         log('success', '📈 SCAN COMPLETED SUCCESSFULLY');
@@ -1207,14 +1102,8 @@
                         log('info', `Scan type: ${scanDescription}`);
                         log('info', `Blocks processed: ${blockCount.toLocaleString()}`);
                         log('info', `Total transactions: ${finalStats.total_transactions.toLocaleString()}`);
-                        log('info', `Total value found: ${(finalStats.total_value / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
                         log('info', `Current balance: ${(finalStats.current_balance / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
                         log('info', `Data downloaded: ${formatFileSize(totalDownloadSize)}`);
-                        
-                        // DEBUG: Final diagnostic message
-                        if (finalStats.total_transactions < 12) {
-                            log('warning', `🔍 DIAGNOSTIC: Found ${finalStats.total_transactions}/12 expected transactions. Check console logs for debugging details.`);
-                        }
                         
                         updateProgress(100, 'Scan completed!');
                     } else {
@@ -1223,7 +1112,6 @@
                         log('info', `Scan type: ${scanDescription}`);
                         log('info', `Blocks processed before stop: ${blockCount.toLocaleString()}`);
                         log('info', `Total transactions found: ${finalStats.total_transactions.toLocaleString()}`);
-                        log('info', `Total value found: ${(finalStats.total_value / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
                         log('info', `Current balance: ${(finalStats.current_balance / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
                         log('info', `Data downloaded: ${formatFileSize(totalDownloadSize)}`);
                     }
