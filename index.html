@@ -371,6 +371,7 @@
         <div class="header">
             <h1>🌟 Tari Wallet Scanner</h1>
             <p>Browser-based blockchain scanner for Tari wallets</p>
+
         </div>
 
         <div class="main-content">
@@ -426,6 +427,8 @@
                         <input type="number" id="limit" value="10" min="1" max="1000">
                     </div>
                 </div>
+
+               
 
                 <div class="section">
                     <h3>🎛️ Actions</h3>
@@ -485,6 +488,18 @@
                     </div>
 
                     <div class="logs" id="logsContainer"></div>
+                </div>
+
+                 <div class="section">
+                    <h3>🧹 Memory Management</h3>
+                    <div class="form-group">
+                        <label for="maxTransactions">Max Transactions to Keep:</label>
+                        <input type="number" id="maxTransactions" value="5000" min="1000" max="50000" 
+                               title="Limits memory usage by keeping only the most recent transactions. Balance calculations remain accurate.">
+                    </div>
+                    <p style="font-size: 0.9em; color: #666; margin-top: 10px;">
+                        Log entries are automatically limited to 1000 entries. Transaction cleanup happens automatically when the limit is exceeded.
+                    </p>
                 </div>
             </div>
         </div>
@@ -667,8 +682,8 @@
         // Logging functions
         function log(level, message, isTrace = false) {
             const container = document.getElementById('logsContainer');
-            const entries = container.querySelectorAll('.log-entry');
-
+            
+            // Create new log entry first
             const entry = document.createElement('div');
             entry.className = `log-entry ${isTrace ? 'trace-log' : ``} ${level}-log`;
 
@@ -686,7 +701,35 @@
                 <span>${message}</span>
             `;
 
+            // Add the new entry
             container.appendChild(entry);
+            
+            // Maintain log limit - smart cleanup that handles hidden trace logs
+            const maxLogEntries = 100;
+            while (container.children.length > maxLogEntries) {
+                // Find the first child to remove (prefer hidden ones first)
+                let childToRemove = null;
+                
+                // First try to remove a hidden trace log
+                for (let i = 0; i < container.children.length; i++) {
+                    const child = container.children[i];
+                    if (child.style.display === 'none' || child.classList.contains('trace-log')) {
+                        const computedStyle = window.getComputedStyle(child);
+                        if (computedStyle.display === 'none') {
+                            childToRemove = child;
+                            break;
+                        }
+                    }
+                }
+                
+                // If no hidden logs found, remove the oldest visible one
+                if (!childToRemove) {
+                    childToRemove = container.children[0];
+                }
+                
+                container.removeChild(childToRemove);
+            }
+
             container.scrollTop = container.scrollHeight;
 
             // Also show status for important messages
@@ -875,12 +918,14 @@
 
         function scanHttpBlocks(httpResponse) {
             try {
-                                // Process HTTP response
-
-                const httpResponseJson = JSON.stringify(httpResponse);
+                // Process HTTP response
+                let httpResponseJson = JSON.stringify(httpResponse);
                 
                 const resultJson = wasm.process_http_blocks(scanner, httpResponseJson);
                 const result = JSON.parse(resultJson);
+
+                // Clear the large JSON string to help garbage collection
+                httpResponseJson = null;
 
                 // Process scan results
 
@@ -1084,7 +1129,18 @@
                     updateProgress(percentage, `Scanned ${blockCount}/${totalBlocks} blocks`);
                     updateResults(blockCount, cumulativeStats.total_transactions, cumulativeStats.current_balance, highestBlockInBatch, totalDownloadSize);
 
-                    // Allow UI to update
+                    // Explicit memory cleanup to help garbage collection
+                    // Clear references to large HTTP response data
+                    httpResponse.blocks = null;
+                    
+                    // Auto cleanup WASM transactions when they exceed the limit
+                    const maxTransactions = parseInt(document.getElementById('maxTransactions').value) || 5000;
+                    if (cumulativeStats.total_transactions > maxTransactions) {
+                        wasm.cleanup_scanner_transactions(scanner, maxTransactions);
+                        log('info', `🧹 WASM cleanup: limited to ${maxTransactions} recent transactions`, true);
+                    }
+                    
+                    // Allow UI to update and garbage collection
                     await new Promise(resolve => setTimeout(resolve, 10));
                 }
 
@@ -1195,7 +1251,7 @@
 
         function loadSavedValues() {
             // Load all saved values except scannerData
-            const fieldsToLoad = ['scannerData', 'baseNodeUrl', 'startHeight', 'endHeight', 'limit', 'scanMode', 'specificHeights'];
+            const fieldsToLoad = ['scannerData', 'baseNodeUrl', 'startHeight', 'endHeight', 'limit', 'scanMode', 'specificHeights', 'maxTransactions'];
 
             fieldsToLoad.forEach(fieldId => {
                 const element = document.getElementById(fieldId);
@@ -1213,7 +1269,7 @@
 
         function setupInputSaving() {
             // Fields to save (excluding scannerData)
-            const fieldsToSave = ['scannerData', 'baseNodeUrl', 'startHeight', 'endHeight', 'limit', 'scanMode', 'specificHeights'];
+            const fieldsToSave = ['scannerData', 'baseNodeUrl', 'startHeight', 'endHeight', 'limit', 'scanMode', 'specificHeights', 'maxTransactions'];
 
             fieldsToSave.forEach(fieldId => {
                 const element = document.getElementById(fieldId);
@@ -1287,7 +1343,6 @@
 
         // Initialize on page load
         log('info', '🌟 Tari Wallet Scanner - Browser loaded');
-        log('info', '🔧 Enhanced to process both outputs and inputs for complete transaction detection');
         loadSavedValues(); // Load saved values from localStorage
         setupEventListeners();
         updateScanButtonState(); // Set initial button state

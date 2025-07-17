@@ -42,6 +42,10 @@ export function get_scanner_state(scanner: WasmScanner): string;
  */
 export function reset_scanner(scanner: WasmScanner): void;
 /**
+ * Cleanup old transactions to prevent memory leaks (WASM export)
+ */
+export function cleanup_scanner_transactions(scanner: WasmScanner, max_transactions: number): void;
+/**
  * Get tip info from HTTP scanner (WASM export)
  */
 export function get_tip_info(scanner: WasmScanner): Promise<string>;
@@ -84,6 +88,7 @@ export interface InitOutput {
   readonly get_scanner_stats: (a: number) => [number, number, number, number];
   readonly get_scanner_state: (a: number) => [number, number];
   readonly reset_scanner: (a: number) => void;
+  readonly cleanup_scanner_transactions: (a: number, b: number) => void;
   readonly get_tip_info: (a: number) => any;
   readonly fetch_blocks_by_heights: (a: number, b: number, c: number) => any;
   readonly search_utxos: (a: number, b: number, c: number) => any;

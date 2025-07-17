@@ -12,6 +12,7 @@ export const scan_single_block: (a: number, b: number, c: number) => [number, nu
 export const get_scanner_stats: (a: number) => [number, number, number, number];
 export const get_scanner_state: (a: number) => [number, number];
 export const reset_scanner: (a: number) => void;
+export const cleanup_scanner_transactions: (a: number, b: number) => void;
 export const get_tip_info: (a: number) => any;
 export const fetch_blocks_by_heights: (a: number, b: number, c: number) => any;
 export const search_utxos: (a: number, b: number, c: number) => any;

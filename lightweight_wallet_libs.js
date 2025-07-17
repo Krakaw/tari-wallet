@@ -426,6 +426,16 @@ export function reset_scanner(scanner) {
 }
 
 /**
+ * Cleanup old transactions to prevent memory leaks (WASM export)
+ * @param {WasmScanner} scanner
+ * @param {number} max_transactions
+ */
+export function cleanup_scanner_transactions(scanner, max_transactions) {
+    _assertClass(scanner, WasmScanner);
+    wasm.cleanup_scanner_transactions(scanner.__wbg_ptr, max_transactions);
+}
+
+/**
  * Get tip info from HTTP scanner (WASM export)
  * @param {WasmScanner} scanner
  * @returns {Promise<string>}
@@ -512,7 +522,7 @@ function __wbg_adapter_46(arg0, arg1, arg2) {
     wasm.closure114_externref_shim(arg0, arg1, arg2);
 }
 
-function __wbg_adapter_122(arg0, arg1, arg2, arg3) {
+function __wbg_adapter_123(arg0, arg1, arg2, arg3) {
     wasm.closure160_externref_shim(arg0, arg1, arg2, arg3);
 }
 
@@ -695,7 +705,7 @@ function __wbg_get_imports() {
                 const a = state0.a;
                 state0.a = 0;
                 try {
-                    return __wbg_adapter_122(a, state0.b, arg0, arg1);
+                    return __wbg_adapter_123(a, state0.b, arg0, arg1);
                 } finally {
                     state0.a = a;
                 }
@@ -820,7 +830,7 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper576 = function(arg0, arg1, arg2) {
+    imports.wbg.__wbindgen_closure_wrapper588 = function(arg0, arg1, arg2) {
         const ret = makeMutClosure(arg0, arg1, 115, __wbg_adapter_46);
         return ret;
     };
