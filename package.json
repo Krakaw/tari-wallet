@@ -5,7 +5,7 @@
     "Krakaw"
   ],
   "description": "Lightweight wallet libraries for Tari",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "license": "BSD-3-Clause",
   "repository": {
     "type": "git",
