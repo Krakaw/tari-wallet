@@ -10,7 +10,15 @@ export function derive_public_key_hex(master_key: Uint8Array): string;
  */
 export function create_wasm_scanner(data: string): WasmScanner;
 /**
- * Process HTTP block response (WASM export) - NEW METHOD for HTTP API
+ * Initialize HTTP scanner (WASM export) - Returns a Promise
+ */
+export function initialize_http_scanner(scanner: WasmScanner, base_url: string): Promise<void>;
+/**
+ * Process HTTP block response with async support (WASM export)
+ */
+export function process_http_blocks_async(scanner: WasmScanner, http_response_json: string, base_url?: string | null): Promise<string>;
+/**
+ * Process HTTP block response (WASM export) - LEGACY METHOD for backward compatibility
  */
 export function process_http_blocks(scanner: WasmScanner, http_response_json: string): string;
 /**
@@ -34,6 +42,22 @@ export function get_scanner_state(scanner: WasmScanner): string;
  */
 export function reset_scanner(scanner: WasmScanner): void;
 /**
+ * Get tip info from HTTP scanner (WASM export)
+ */
+export function get_tip_info(scanner: WasmScanner): Promise<string>;
+/**
+ * Fetch specific blocks by height using HTTP scanner (WASM export)
+ */
+export function fetch_blocks_by_heights(scanner: WasmScanner, heights_json: string): Promise<string>;
+/**
+ * Search for UTXOs by commitment using HTTP scanner (WASM export)
+ */
+export function search_utxos(scanner: WasmScanner, commitments_json: string): Promise<string>;
+/**
+ * Create scan config for HTTP scanner (WASM export)
+ */
+export function create_scan_config(scanner: WasmScanner, start_height: bigint, end_height?: bigint | null): string;
+/**
  * Get version information (WASM export)
  */
 export function get_version(): string;
@@ -52,18 +76,29 @@ export interface InitOutput {
   readonly derive_public_key_hex: (a: number, b: number) => [number, number, number, number];
   readonly __wbg_wasmscanner_free: (a: number, b: number) => void;
   readonly create_wasm_scanner: (a: number, b: number) => [number, number, number];
+  readonly initialize_http_scanner: (a: number, b: number, c: number) => any;
+  readonly process_http_blocks_async: (a: number, b: number, c: number, d: number, e: number) => any;
   readonly process_http_blocks: (a: number, b: number, c: number) => [number, number, number, number];
   readonly scan_block_data: (a: number, b: number, c: number) => [number, number, number, number];
   readonly scan_single_block: (a: number, b: number, c: number) => [number, number, number, number];
   readonly get_scanner_stats: (a: number) => [number, number, number, number];
   readonly get_scanner_state: (a: number) => [number, number];
   readonly reset_scanner: (a: number) => void;
+  readonly get_tip_info: (a: number) => any;
+  readonly fetch_blocks_by_heights: (a: number, b: number, c: number) => any;
+  readonly search_utxos: (a: number, b: number, c: number) => any;
+  readonly create_scan_config: (a: number, b: bigint, c: number, d: bigint) => [number, number, number, number];
   readonly get_version: () => [number, number];
-  readonly __wbindgen_export_0: WebAssembly.Table;
   readonly __wbindgen_malloc: (a: number, b: number) => number;
+  readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+  readonly __wbindgen_exn_store: (a: number) => void;
+  readonly __externref_table_alloc: () => number;
+  readonly __wbindgen_export_4: WebAssembly.Table;
+  readonly __wbindgen_export_5: WebAssembly.Table;
   readonly __externref_table_dealloc: (a: number) => void;
   readonly __wbindgen_free: (a: number, b: number, c: number) => void;
-  readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+  readonly closure121_externref_shim: (a: number, b: number, c: any) => void;
+  readonly closure167_externref_shim: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_start: () => void;
 }
 
