@@ -461,12 +461,34 @@
                             <div class="result-value" id="blocksScanned">0</div>
                         </div>
                         <div class="result-card">
-                            <h4>Transactions Found</h4>
+                            <h4>Data Downloaded</h4>
+                            <div class="result-value" id="downloadSize">0 B</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>Total Records</h4>
                             <div class="result-value" id="transactionsFound">0</div>
                         </div>
                         <div class="result-card">
-                            <h4>Data Downloaded</h4>
-                            <div class="result-value" id="downloadSize">0 B</div>
+                            <h4>Available Outputs</h4>
+                            <div class="result-value" id="unspentCount">0</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>Used Outputs</h4>
+                            <div class="result-value" id="spentCount">0</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>Spending Events</h4>
+                            <div class="result-value" id="spendingEvents">0</div>
+                        </div>
+                       
+                        
+                        <div class="result-card">
+                            <h4>Total Value Received (T)</h4>
+                            <div class="result-value" id="totalValueReceived">0.000000</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>Total Value Spent (T)</h4>
+                            <div class="result-value" id="totalSpentValue">0.000000</div>
                         </div>
                         <div class="result-card">
                             <h4>Current Balance (T)</h4>
@@ -771,11 +793,21 @@
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
 
-        function updateResults(blocksScanned, transactionsFound, currentBalance, currentBlockHeight = null, downloadSize = null) {
+        function updateResults(blocksScanned, stats, currentBlockHeight = null, downloadSize = null) {
             document.getElementById('blocksScanned').textContent = blocksScanned.toLocaleString();
-            document.getElementById('transactionsFound').textContent = transactionsFound.toLocaleString();
-            const currentBalanceT = (currentBalance / 1000000);
+            document.getElementById('transactionsFound').textContent = (stats.total_transactions || 0).toLocaleString();
+            document.getElementById('unspentCount').textContent = (stats.total_outputs || 0).toLocaleString();
+            document.getElementById('spentCount').textContent = (stats.total_spent || 0).toLocaleString();
+            document.getElementById('spendingEvents').textContent = (stats.outbound_transactions || 0).toLocaleString();
+            
+            const currentBalanceT = ((stats.current_balance || 0) / 1000000);
             document.getElementById('currentBalanceT').textContent = currentBalanceT.toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+            
+            const totalValueReceivedT = ((stats.total_value || 0) / 1000000);
+            document.getElementById('totalValueReceived').textContent = totalValueReceivedT.toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+            
+            const totalSpentValueT = ((stats.total_spent_value || 0) / 1000000);
+            document.getElementById('totalSpentValue').textContent = totalSpentValueT.toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 });
             
             if (currentBlockHeight !== null) {
                 document.getElementById('currentBlockHeight').textContent = currentBlockHeight.toLocaleString();
@@ -945,7 +977,7 @@
                         
                         // Log details for each block that has transactions
                         txByBlock.forEach((transactions, blockHeight) => {
-                            log('info', `   Block ${blockHeight}: ${transactions.length} transaction(s)`);
+                            log('info', `   Block ${blockHeight}: ${transactions.length} transaction(s)`, true);
                             transactions.forEach((tx, index) => {
                                 log('info', `     Tx ${index + 1}: ${(tx.value / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T (${tx.direction})`, true);
                             });
@@ -968,15 +1000,37 @@
         function getCumulativeStats() {
             try {
                 const statsJson = wasm.get_scanner_stats(scanner);
-                return JSON.parse(statsJson);
+                const stats = JSON.parse(statsJson);
+                
+                // Debug logging to help identify the spent value issue
+                log('info', `📊 WASM Stats Debug:`, true);
+                log('info', `   total_value: ${stats.total_value}`, true);
+                log('info', `   total_spent_value: ${stats.total_spent_value}`, true);
+                log('info', `   current_balance: ${stats.current_balance}`, true);
+                log('info', `   total_outputs: ${stats.total_outputs}`, true);
+                log('info', `   total_spent: ${stats.total_spent}`, true);
+                log('info', `   total_transactions: ${stats.total_transactions}`, true);
+                log('info', `   inbound_transactions: ${stats.inbound_transactions}`, true);
+                log('info', `   outbound_transactions: ${stats.outbound_transactions}`, true);
+                log('info', `   🧮 Math Check: ${stats.inbound_transactions || 0} inbound + ${stats.outbound_transactions || 0} outbound = ${(stats.inbound_transactions || 0) + (stats.outbound_transactions || 0)} (should equal ${stats.total_transactions})`, true);
+                
+                if (stats.total_spent_value === undefined || stats.total_spent_value === null || isNaN(stats.total_spent_value)) {
+                    log('warning', `⚠️ total_spent_value is ${stats.total_spent_value}, using 0 instead`, true);
+                    stats.total_spent_value = 0;
+                }
+                
+                return stats;
             } catch (error) {
                 log('error', `❌ Failed to get scanner stats: ${error.message}`);
                 return {
                     total_outputs: 0,
                     total_spent: 0,
                     total_value: 0,
+                    total_spent_value: 0,
                     current_balance: 0,
-                    total_transactions: 0
+                    total_transactions: 0,
+                    inbound_transactions: 0,
+                    outbound_transactions: 0
                 };
             }
         }
@@ -1127,7 +1181,7 @@
                     // Update progress
                     const percentage = (blockCount / totalBlocks) * 100;
                     updateProgress(percentage, `Scanned ${blockCount}/${totalBlocks} blocks`);
-                    updateResults(blockCount, cumulativeStats.total_transactions, cumulativeStats.current_balance, highestBlockInBatch, totalDownloadSize);
+                    updateResults(blockCount, cumulativeStats, highestBlockInBatch, totalDownloadSize);
 
                     // Explicit memory cleanup to help garbage collection
                     // Clear references to large HTTP response data
@@ -1198,7 +1252,17 @@
 
                 // Reset UI
                 totalDownloadSize = 0;
-                updateResults(0, 0, 0, null, 0);
+                const emptyStats = {
+                    total_outputs: 0,
+                    total_spent: 0,
+                    total_value: 0,
+                    total_spent_value: 0,
+                    current_balance: 0,
+                    total_transactions: 0,
+                    inbound_transactions: 0,
+                    outbound_transactions: 0
+                };
+                updateResults(0, emptyStats, null, 0);
                 document.getElementById('currentBlockHeight').textContent = '-';
                 updateProgress(0, 'Ready to start...');
 
@@ -1206,6 +1270,7 @@
                 log('error', `❌ Failed to reset scanner: ${error.message}`);
             }
         };
+
 
         // Update scan button state based on scanner data availability
         function updateScanButtonState() {
