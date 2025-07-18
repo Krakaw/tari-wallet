@@ -534,165 +534,7 @@
         let isScanning = false;
         let totalDownloadSize = 0;
 
-        // HTTP Client for browser
-        class HttpClient {
-            constructor(baseUrl = 'http://127.0.0.1:8080') {
-                this.baseUrl = baseUrl;
-            }
-
-                        async request(endpoint, params = {}) {
-                const url = new URL(endpoint, this.baseUrl);
-                
-                Object.keys(params).forEach(key => {
-                    if (params[key] !== undefined && params[key] !== null) {
-                        url.searchParams.append(key, params[key]);
-                    }
-                });
-
-                try {
-                    const response = await fetch(url.toString(), {
-                        method: 'GET',
-                        headers: {
-                            'Accept': 'application/json',
-                        }
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-                    }
-
-                    // Track download size
-                    const contentLength = response.headers.get('content-length');
-                    if (contentLength) {
-                        totalDownloadSize += parseInt(contentLength);
-                    } else {
-                        // Estimate size from response text if content-length not available
-                        const responseText = await response.text();
-                        totalDownloadSize += new Blob([responseText]).size;
-                        return JSON.parse(responseText);
-                    }
-
-                    return await response.json();
-                } catch (error) {
-                    throw new Error(`Request failed: ${error.message}`);
-                }
-            }
-
-            async getTipInfo() {
-                return await this.request('/get_tip_info');
-            }
-
-            async getHeaderByHeight(blockHeight) {
-                log('info', `📡 Fetching header for block ${blockHeight}...`, true);
-                try {
-                    const response = await this.request('/get_header_by_height', { height: blockHeight });
-                    log('success', `✅ Header fetched for block ${blockHeight}`, true);
-                    return response;
-                } catch (error) {
-                    log('error', `❌ Failed to fetch header for block ${blockHeight}: ${error.message}`);
-                    throw error;
-                }
-            }
-
-            async syncUtxosByBlock(startHeaderHash, endHeaderHash, limit = 10, page = 0) {
-                log('info', `📡 Syncing UTXOs from ${startHeaderHash.substring(0, 16)}... to ${endHeaderHash.substring(0, 16)}...`, true);
-                try {
-                    const response = await this.request('/sync_utxos_by_block', {
-                        start_header_hash: startHeaderHash,
-                        end_header_hash: endHeaderHash,
-                        limit,
-                        page
-                    });
-                    log('info', `✅ Synced ${response.blocks?.length || 0} blocks, has_next_page: ${response.has_next_page}`, true);
-                    return response;
-                } catch (error) {
-                    log('error', `❌ Failed to sync UTXOs: ${error.message}`);
-                    throw error;
-                }
-            }
-
-
-
-            convertToScannerFormat(blockUtxoInfo) {
-                // Log the actual structure to understand what data is available
-                if (blockUtxoInfo.inputs && blockUtxoInfo.inputs.length > 0) {
-                    log('info', `🔍 Block ${blockUtxoInfo.height} has ${blockUtxoInfo.inputs.length} inputs for spent detection`, true);
-                }
-                
-                const blockData = {
-                    height: blockUtxoInfo.height,
-                    hash: this.arrayToHex(blockUtxoInfo.header_hash),
-                    timestamp: blockUtxoInfo.mined_timestamp,
-                    outputs: (blockUtxoInfo.outputs || []).map(output => ({
-                        commitment: this.arrayToHex(output.commitment),
-                        sender_offset_public_key: this.arrayToHex(output.sender_offset_public_key),
-                        encrypted_data: this.arrayToHex(output.encrypted_data),
-                        minimum_value_promise: output.minimum_value_promise || 0,
-                        features: output.features ? JSON.stringify(output.features) : null,
-                        script: output.script ? this.arrayToHex(output.script) : null,
-                        metadata_signature: output.metadata_signature ? this.arrayToHex(output.metadata_signature) : null,
-                        covenant: output.covenant ? this.arrayToHex(output.covenant) : null
-                    })),
-                    inputs: []
-                };
-
-                // Handle simplified inputs structure - inputs are now just arrays of 32-byte hashes
-                if (blockUtxoInfo.inputs && Array.isArray(blockUtxoInfo.inputs)) {
-                    // The new API returns inputs as arrays of byte arrays (commitment hashes)
-                    blockData.inputs = blockUtxoInfo.inputs.map(inputHash => ({
-                        commitment: this.arrayToHex(inputHash),
-                        script: null,
-                        input_data: null,
-                        script_signature: null,
-                        sender_offset_public_key: null,
-                    }));
-                    log('info', `✅ Converted ${blockData.inputs.length} simplified inputs for block ${blockUtxoInfo.height}`, true);
-                }
-
-                return blockData;
-            }
-
-            arrayToHex(array) {
-                return Array.from(new Uint8Array(array))
-                    .map(b => b.toString(16).padStart(2, '0'))
-                    .join('');
-            }
-
-            async* fetchBlockRangeBatches(startHeight, endHeight, limit) {
-                log('info', `📡 Fetching block range ${startHeight} to ${endHeight} in batches...`, true);
-
-                try {
-                    const startHeader = await this.getHeaderByHeight(startHeight);
-                    const endHeader = await this.getHeaderByHeight(endHeight);
-
-                    const startHash = this.arrayToHex(startHeader.hash);
-                    const endHash = this.arrayToHex(endHeader.hash);
-
-                    let page = 0;
-                    let hasNextPage = true;
-                    let totalBlocks = 0;
-
-                    while (hasNextPage) {
-                        const syncResponse = await this.syncUtxosByBlock(startHash, endHash, limit, page);
-                        hasNextPage = syncResponse.has_next_page;
-
-                        if (syncResponse.blocks && syncResponse.blocks.length > 0) {
-                            totalBlocks += syncResponse.blocks.length;
-                            // Yield the entire HTTP response for batch processing
-                            yield syncResponse;
-                        }
-
-                        page++;
-                    }
-
-                    log('success', `✅ Streamed ${totalBlocks} blocks in batches from base node`, true);
-
-                } catch (error) {
-                    log('error', `❌ Failed to fetch block range: ${error.message}`);
-                    throw error;
-                }
-            }
-        }
+        // HttpClient class removed - enhanced scanner handles HTTP communication internally
 
         window.toggleTraceLogs = function() {
             const showTrace = document.getElementById('showTrace').checked;
@@ -873,7 +715,7 @@
             }
         }
 
-        // Check connection status
+        // Check connection status - simplified since enhanced scanner handles connection internally
         window.checkConnection = async function () {
             const baseNodeUrl = document.getElementById('baseNodeUrl').value.trim();
 
@@ -885,16 +727,22 @@
             updateConnectionStatus('checking');
             log('info', '📡 Testing base node connection...');
 
-            const httpClient = new HttpClient(baseNodeUrl);
-
             try {
-                log('info', `🔗 Connecting to ${baseNodeUrl}...`);
+                log('info', `🔗 Will connect to ${baseNodeUrl} when scanner is initialized...`);
+                
+                // Simple fetch test to check if URL is reachable
+                const response = await fetch(`${baseNodeUrl}/get_tip_info`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                });
 
-                const header = await httpClient.getHeaderByHeight(1);
-                updateConnectionStatus('connected', `Connected to ${baseNodeUrl}`);
-                log('success', '✅ Successfully connected to base node');
-                log('info', `   Genesis block hash: ${httpClient.arrayToHex(header.hash).substring(0, 16)}...`);
-                log('info', `   Timestamp: ${new Date(header.timestamp * 1000).toISOString()}`);
+                if (response.ok) {
+                    updateConnectionStatus('connected', `${baseNodeUrl} is reachable`);
+                    log('success', '✅ Base node URL is reachable');
+                } else {
+                    updateConnectionStatus('error', `HTTP ${response.status}`);
+                    log('error', `❌ Base node returned HTTP ${response.status}`);
+                }
 
             } catch (error) {
                 updateConnectionStatus('error', `Failed to connect: ${error.message}`);
@@ -932,7 +780,7 @@
 
 
 
-        function createScanner() {
+        async function createScanner() {
             const scannerData = document.getElementById('scannerData').value;
 
             if (!scannerData.trim()) {
@@ -945,95 +793,17 @@
             scanner = wasm.create_enhanced_wasm_scanner(scannerData);
             log('success', '✅ Enhanced scanner created successfully (unreachable error fixed!)');
 
+            // Initialize the scanner with base node URL
+            const baseNodeUrl = document.getElementById('baseNodeUrl').value;
+            log('info', `🌐 Initializing scanner with ${baseNodeUrl}...`);
+            
+            await scanner.initialize_scanner(baseNodeUrl);
+            log('success', '✅ Scanner initialized with base node connection');
+
             return scanner;
         }
 
-        function scanHttpBlocks(httpResponse) {
-            try {
-                // Process HTTP response
-                let httpResponseJson = JSON.stringify(httpResponse);
-                
-                const resultJson = wasm.process_http_blocks(scanner, httpResponseJson);
-                const result = JSON.parse(resultJson);
-
-                // Clear the large JSON string to help garbage collection
-                httpResponseJson = null;
-
-                // Process scan results
-
-                if (result.success) {
-                    // Log transaction summary for the batch
-                    if (result.transactions.length > 0) {
-                        log('success', `💰 Found ${result.transactions.length} transaction(s) in ${httpResponse.blocks.length} block(s)!`);
-                        
-                        // Group transactions by block for better logging
-                        const txByBlock = new Map();
-                        result.transactions.forEach(tx => {
-                            if (!txByBlock.has(tx.block_height)) {
-                                txByBlock.set(tx.block_height, []);
-                            }
-                            txByBlock.get(tx.block_height).push(tx);
-                        });
-                        
-                        // Log details for each block that has transactions
-                        txByBlock.forEach((transactions, blockHeight) => {
-                            log('info', `   Block ${blockHeight}: ${transactions.length} transaction(s)`, true);
-                            transactions.forEach((tx, index) => {
-                                log('info', `     Tx ${index + 1}: ${(tx.value / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T (${tx.direction})`, true);
-                            });
-                        });
-                    } else {
-                        log('info', `🔍 Scanned ${httpResponse.blocks.length} blocks - no transactions found`, true);
-                    }
-                } else {
-                    log('warning', `⚠️ HTTP block batch scan completed with error: ${result.error}`);
-                }
-
-                return result;
-
-            } catch (error) {
-                log('error', `❌ Failed to scan HTTP block batch: ${error.message}`);
-                throw error;
-            }
-        }
-
-        function getCumulativeStats() {
-            try {
-                const statsJson = wasm.get_scanner_stats(scanner);
-                const stats = JSON.parse(statsJson);
-                
-                // Debug logging to help identify the spent value issue
-                log('info', `📊 WASM Stats Debug:`, true);
-                log('info', `   total_value: ${stats.total_value}`, true);
-                log('info', `   total_spent_value: ${stats.total_spent_value}`, true);
-                log('info', `   current_balance: ${stats.current_balance}`, true);
-                log('info', `   total_outputs: ${stats.total_outputs}`, true);
-                log('info', `   total_spent: ${stats.total_spent}`, true);
-                log('info', `   total_transactions: ${stats.total_transactions}`, true);
-                log('info', `   inbound_transactions: ${stats.inbound_transactions}`, true);
-                log('info', `   outbound_transactions: ${stats.outbound_transactions}`, true);
-                log('info', `   🧮 Math Check: ${stats.inbound_transactions || 0} inbound + ${stats.outbound_transactions || 0} outbound = ${(stats.inbound_transactions || 0) + (stats.outbound_transactions || 0)} (should equal ${stats.total_transactions})`, true);
-                
-                if (stats.total_spent_value === undefined || stats.total_spent_value === null || isNaN(stats.total_spent_value)) {
-                    log('warning', `⚠️ total_spent_value is ${stats.total_spent_value}, using 0 instead`, true);
-                    stats.total_spent_value = 0;
-                }
-                
-                return stats;
-            } catch (error) {
-                log('error', `❌ Failed to get scanner stats: ${error.message}`);
-                return {
-                    total_outputs: 0,
-                    total_spent: 0,
-                    total_value: 0,
-                    total_spent_value: 0,
-                    current_balance: 0,
-                    total_transactions: 0,
-                    inbound_transactions: 0,
-                    outbound_transactions: 0
-                };
-            }
-        }
+        // Functions removed - enhanced scanner handles block processing internally
 
         window.stopScan = function () {
             if (!isScanning) {
@@ -1042,6 +812,13 @@
             }
 
             log('info', '⏹️ Stopping scan...');
+            
+            // Cancel the enhanced scanner
+            if (scanner && scanner.cancel_scan) {
+                scanner.cancel_scan();
+                log('info', '📡 Cancellation signal sent to enhanced scanner');
+            }
+            
             isScanning = false;
             updateProgress(0, 'Scan stopped by user');
 
@@ -1049,27 +826,7 @@
             updateScanButton(false);
         };
 
-        async function* fetchSpecificBlocksBatches(httpClient, heights) {
-            log('info', `📡 Fetching ${heights.length} specific blocks in batches...`);
-
-            for (const height of heights) {
-                try {
-                    const header = await httpClient.getHeaderByHeight(height);
-                    const startHash = httpClient.arrayToHex(header.hash);
-                    const endHash = startHash; // Same block
-
-                    const syncResponse = await httpClient.syncUtxosByBlock(startHash, endHash, 1, 0);
-
-                    if (syncResponse.blocks && syncResponse.blocks.length > 0) {
-                        // Yield the entire HTTP response for batch processing
-                        yield syncResponse;
-                    }
-                } catch (error) {
-                    log('error', `❌ Failed to fetch block ${height}: ${error.message}`);
-                    // Continue with other blocks
-                }
-            }
-        }
+        // fetchSpecificBlocksBatches removed - enhanced scanner handles this internally
 
         window.startScan = async function () {
             if (!wasm) {
@@ -1088,7 +845,7 @@
                 return;
             }
 
-                        try {
+            try {
                 isScanning = true;
                 
                 // Reset download size counter
@@ -1097,19 +854,13 @@
                 // Update button state
                 updateScanButton(true);
                 
-                // Create scanner
-                createScanner();
+                // Create and initialize scanner
+                await createScanner();
 
-                const baseNodeUrl = document.getElementById('baseNodeUrl').value;
                 const scanMode = document.getElementById('scanMode').value;
                 const limit = parseInt(document.getElementById('limit').value);
 
-                const httpClient = new HttpClient(baseNodeUrl);
-
-                let blockIterator;
-                let totalBlocks;
-                let scanDescription;
-
+                // Configure the enhanced scanner based on scan mode
                 if (scanMode === 'specific') {
                     // Parse specific heights
                     const specificHeightsText = document.getElementById('specificHeights').value.trim();
@@ -1122,133 +873,139 @@
                         .split(',')
                         .map(h => parseInt(h.trim()))
                         .filter(h => !isNaN(h) && h >= 0)
-                        .sort((a, b) => a - b); // Sort for better progress tracking
+                        .sort((a, b) => a - b);
 
                     if (heights.length === 0) {
                         log('error', '❌ No valid block heights found');
                         return;
                     }
 
-                    totalBlocks = heights.length;
-                    blockIterator = fetchSpecificBlocksBatches(httpClient, heights);
-                    scanDescription = `specific blocks: ${heights.join(', ')}`;
-                    log('info', `🔍 Starting scan of ${totalBlocks} specific blocks`);
+                    log('info', `🔍 Configuring scan for ${heights.length} specific blocks: ${heights.join(', ')}`);
+                    scanner.configure_scan_blocks(JSON.stringify(heights), limit);
 
                 } else {
                     // Range mode
                     const startHeight = parseInt(document.getElementById('startHeight').value);
                     let endHeight = document.getElementById('endHeight').value;
 
-                    // Get tip height if endHeight not specified
+                    // If no end height specified, we'll let the scanner determine the tip
                     if (!endHeight) {
-                        const tipInfo = await httpClient.getTipInfo();
-                        endHeight = tipInfo.metadata.best_block_height;
-                    }
-                    endHeight = parseInt(endHeight);
-
-                    totalBlocks = endHeight - startHeight + 1;
-                    blockIterator = httpClient.fetchBlockRangeBatches(startHeight, endHeight, limit);
-                    scanDescription = `height range ${startHeight} to ${endHeight}`;
-                    log('info', `🔍 Starting blockchain scan from height ${startHeight} to ${endHeight}`);
-                }
-
-                let blockCount = 0;
-                updateProgress(0, 'Starting scan...');
-
-
-                // Stream and scan block batches
-                for await (const httpResponse of blockIterator) {
-                    if (!isScanning) break; // Allow cancellation
-
-                    // Process block batch
-                    if (httpResponse.blocks && httpResponse.blocks.length > 0) {
-                        const heights = httpResponse.blocks.map(b => b.height).sort((a, b) => a - b);
-                    }
-
-                    // Process the entire batch
-                    const batchResult = scanHttpBlocks(httpResponse);
-                    
-                    // Update block count
-                    const batchSize = httpResponse.blocks.length;
-                    blockCount += batchSize;
-
-                    // Get cumulative stats from scanner
-                    const cumulativeStats = getCumulativeStats();
-
-                    // Get highest block height from this batch for display
-                    const highestBlockInBatch = Math.max(...httpResponse.blocks.map(b => b.height));
-
-                    // Update progress
-                    const percentage = (blockCount / totalBlocks) * 100;
-                    updateProgress(percentage, `Scanned ${blockCount}/${totalBlocks} blocks`);
-                    updateResults(blockCount, cumulativeStats, highestBlockInBatch, totalDownloadSize);
-
-                    // Explicit memory cleanup to help garbage collection
-                    // Clear references to large HTTP response data
-                    httpResponse.blocks = null;
-                    
-                    // Auto cleanup WASM transactions when they exceed the limit
-                    const maxTransactions = parseInt(document.getElementById('maxTransactions').value) || 5000;
-                    if (cumulativeStats.total_transactions > maxTransactions) {
-                        wasm.cleanup_scanner_transactions(scanner, maxTransactions);
-                        log('info', `🧹 WASM cleanup: limited to ${maxTransactions} recent transactions`, true);
-                    }
-                    
-                    // Allow UI to update and garbage collection
-                    await new Promise(resolve => setTimeout(resolve, 10));
-                }
-
-                if (blockCount === 0) {
-                    log('warning', '⚠️ No blocks found');
-                } else {
-                    // Get final cumulative stats
-                    const finalStats = getCumulativeStats();
-
-                 
-
-                    if (isScanning) {
-                        log('success', '📈 SCAN COMPLETED SUCCESSFULLY');
-                        log('info', `═══════════════════════════════`);
-                        log('info', `Scan type: ${scanDescription}`);
-                        log('info', `Blocks processed: ${blockCount.toLocaleString()}`);
-                        log('info', `Total transactions: ${finalStats.total_transactions.toLocaleString()}`);
-                        log('info', `Current balance: ${(finalStats.current_balance / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
-                        log('info', `Data downloaded: ${formatFileSize(totalDownloadSize)}`);
-                        
-                        updateProgress(100, 'Scan completed!');
+                        endHeight = null;
                     } else {
-                        log('info', '📈 SCAN STOPPED');
-                        log('info', `═══════════════════════════════`);
-                        log('info', `Scan type: ${scanDescription}`);
-                        log('info', `Blocks processed before stop: ${blockCount.toLocaleString()}`);
-                        log('info', `Total transactions found: ${finalStats.total_transactions.toLocaleString()}`);
-                        log('info', `Current balance: ${(finalStats.current_balance / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
-                        log('info', `Data downloaded: ${formatFileSize(totalDownloadSize)}`);
+                        endHeight = parseInt(endHeight);
                     }
+
+                    log('info', `🔍 Configuring scan for height range ${startHeight} to ${endHeight || 'tip'}`);
+                    scanner.configure_scan(startHeight, endHeight, limit);
+                }
+
+                // Create progress callback
+                const progressCallback = (progressInfo) => {
+                    if (!isScanning) return; // Don't update if scan was stopped
+
+                    // Update progress bar
+                    updateProgress(progressInfo.progress_percent, 
+                        `Block ${progressInfo.current_block} (${progressInfo.blocks_processed}/${progressInfo.total_blocks})`);
+
+                    // Update stats
+                    updateResults(
+                        progressInfo.blocks_processed, 
+                        {
+                            total_outputs: progressInfo.outputs_found,
+                            total_spent: progressInfo.inputs_found,
+                            total_value: 0, // Will be updated from final results
+                            total_spent_value: 0,
+                            current_balance: 0,
+                            total_transactions: progressInfo.outputs_found + progressInfo.inputs_found,
+                            inbound_transactions: progressInfo.outputs_found,
+                            outbound_transactions: progressInfo.inputs_found
+                        },
+                        progressInfo.current_block,
+                        totalDownloadSize
+                    );
+
+                    // Log progress occasionally
+                    if (progressInfo.blocks_processed % 50 === 0 || progressInfo.outputs_found > 0) {
+                        log('info', `📊 Progress: ${progressInfo.progress_percent.toFixed(1)}% - Block ${progressInfo.current_block} - Found ${progressInfo.outputs_found} outputs`, true);
+                    }
+                };
+
+                // Create cancellation token
+                scanner.create_cancellation_token();
+                
+                log('info', '🚀 Starting enhanced scanner...');
+                updateProgress(0, 'Starting enhanced scan...');
+
+                // Perform the scan using enhanced scanner
+                const scanResult = await scanner.scan_wallet(progressCallback);
+
+                // Process final results
+                if (scanResult.completed) {
+                    log('success', '📈 SCAN COMPLETED SUCCESSFULLY');
+                    log('info', `═══════════════════════════════`);
+                    log('info', `Transactions found: ${scanResult.transaction_count.toLocaleString()}`);
+                    log('info', `Total received: ${(scanResult.total_received / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
+                    log('info', `Total spent: ${(scanResult.total_spent / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
+                    log('info', `Current balance: ${(scanResult.current_balance / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
+                    log('info', `Scan duration: ${scanResult.duration_seconds.toFixed(2)} seconds`);
+                    
+                    updateProgress(100, 'Scan completed successfully!');
+                    
+                    // Update final results
+                    updateResults(
+                        0, // blocks_processed - not directly available from scanResult
+                        {
+                            total_outputs: scanResult.unspent_count,
+                            total_spent: scanResult.spent_count,
+                            total_value: scanResult.total_received,
+                            total_spent_value: scanResult.total_spent,
+                            current_balance: scanResult.current_balance,
+                            total_transactions: scanResult.transaction_count,
+                            inbound_transactions: scanResult.unspent_count,
+                            outbound_transactions: scanResult.spent_count
+                        },
+                        null,
+                        totalDownloadSize
+                    );
+
+                } else if (scanResult.interrupted) {
+                    log('info', '📈 SCAN INTERRUPTED');
+                    log('info', `═══════════════════════════════`);
+                    log('info', `Partial results - Transactions found: ${scanResult.transaction_count.toLocaleString()}`);
+                    log('info', `Current balance: ${(scanResult.current_balance / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
+                    log('info', `Scan duration: ${scanResult.duration_seconds.toFixed(2)} seconds`);
+                    
+                    updateProgress(0, 'Scan was interrupted');
+                    
+                } else if (scanResult.error) {
+                    log('error', `❌ Scan failed: ${scanResult.error}`);
+                    updateProgress(0, 'Scan failed');
                 }
 
             } catch (error) {
                 log('error', `❌ Scan failed: ${error.message || error}`);
                 updateProgress(0, 'Scan failed');
-                throw error;
+                console.error('Scan error:', error);
             } finally {
                 isScanning = false;
-
-                // Reset button state
                 updateScanButton(false);
             }
         };
 
         window.resetScanner = function () {
-            if (!wasm || !scanner) {
-                log('error', '❌ No scanner to reset');
+            if (!wasm) {
+                log('error', '❌ WASM not initialized');
                 return;
             }
 
             try {
                 log('info', '🔄 Resetting scanner state...');
-                wasm.reset_scanner(scanner);
-                log('success', '✅ Scanner state reset successfully');
+                
+                // Enhanced scanner doesn't have a reset method, so we'll clear the scanner instance
+                // It will be recreated on next scan
+                scanner = null;
+                
+                log('success', '✅ Scanner cleared - will be recreated on next scan');
 
                 // Reset UI
                 totalDownloadSize = 0;
