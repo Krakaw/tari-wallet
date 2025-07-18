@@ -225,16 +225,8 @@ pub trait ScanCallback: ProgressCallback + ErrorCallback {
     }
 }
 
-/// Cancellation token for scan operations
-/// 
-/// Provides a thread-safe way to signal cancellation of scanning operations.
-pub trait CancellationToken: Send + Sync {
-    /// Check if cancellation has been requested
-    fn is_cancelled(&self) -> bool;
-    
-    /// Request cancellation of the operation
-    fn cancel(&self);
-}
+// Re-export CancellationToken from the cancellation module
+pub use super::cancellation::CancellationToken;
 
 /// Console-based progress callback implementation
 /// 

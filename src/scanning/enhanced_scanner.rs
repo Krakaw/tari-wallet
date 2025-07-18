@@ -162,6 +162,11 @@ impl<S: BlockchainScanner> EnhancedWalletScanner<S> {
         self.storage.get_wallet_birthday().await
     }
 
+    /// Update the from_block in configuration (used for resume functionality)
+    pub fn update_from_block(&mut self, from_block: u64) {
+        self.config.from_block = from_block;
+    }
+
     /// Scan wallet across blocks with comprehensive error handling and progress reporting
     pub async fn scan_wallet(
         &mut self,

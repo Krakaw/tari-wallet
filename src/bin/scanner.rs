@@ -39,7 +39,7 @@ use lightweight_wallet_libs::{
     scanning::{
         EnhancedScannerBuilder, EnhancedScanConfig, WalletScanContext, OutputFormat,
         GrpcScannerBuilder, ConsoleProgressCallback, InteractiveErrorCallback,
-        AtomicCancellationToken, EnhancedScanResult, ScanPhase,
+        AtomicCancellationToken, EnhancedScanResult, BlockchainScanner,
     },
     storage::{ScannerStorageConfig, WalletSelectionStrategy},
     wallet::Wallet,
@@ -189,7 +189,7 @@ async fn main() -> LightweightWalletResult<()> {
     if !args.quiet {
         println!("🌐 Connecting to Tari base node...");
     }
-    let grpc_scanner = GrpcScannerBuilder::new()
+    let mut grpc_scanner = GrpcScannerBuilder::new()
         .with_base_url(args.base_url.clone())
         .with_timeout(Duration::from_secs(30))
         .build()
@@ -299,7 +299,7 @@ async fn main() -> LightweightWalletResult<()> {
             WalletSelectionStrategy::Interactive
         };
 
-        let selection_callback = |wallets: &[lightweight_wallet_libs::storage::StoredWallet]| {
+        let selection_callback = move |wallets: &[lightweight_wallet_libs::storage::StoredWallet]| {
             if args.quiet {
                 return Some(0); // Auto-select first wallet in quiet mode
             }
@@ -340,6 +340,17 @@ async fn main() -> LightweightWalletResult<()> {
         };
 
         enhanced_scanner.initialize_wallet(wallet_strategy, Some(&selection_callback)).await?;
+        
+        // Update scan config with wallet resume block if not explicitly set by user
+        if args.from_block.is_none() {
+            if let Some(resume_block) = enhanced_scanner.get_wallet_birthday().await? {
+                if !args.quiet {
+                    println!("📄 Resuming wallet from last scanned block {}", format_number(resume_block));
+                }
+                                 // Update the scan config with the correct resume block
+                 enhanced_scanner.update_from_block(resume_block);
+            }
+        }
     }
 
     // Set up progress and error callbacks
@@ -369,7 +380,7 @@ async fn main() -> LightweightWalletResult<()> {
     let scan_result = enhanced_scanner.scan_wallet(
         progress_callback.as_ref().map(|cb| cb as &dyn lightweight_wallet_libs::scanning::EnhancedProgressCallback),
         error_callback.as_ref().map(|cb| cb as &dyn lightweight_wallet_libs::scanning::ErrorCallback),
-        Some(&cancel_token),
+        Some(&cancel_token as &dyn lightweight_wallet_libs::scanning::CancellationToken),
     ).await;
 
     // Cancel the ctrl-c task
@@ -490,7 +501,7 @@ fn display_detailed_results(wallet_state: &WalletState, config: &EnhancedScanCon
 
     // Sort transactions by block height for chronological order
     let mut sorted_transactions: Vec<_> = wallet_state.transactions.iter().enumerate().collect();
-    sorted_transactions.sort_by_key|(_, tx)| tx.block_height);
+    sorted_transactions.sort_by_key(|(_, tx)| tx.block_height);
 
     for (original_index, tx) in sorted_transactions {
         let direction_symbol = match tx.transaction_direction {

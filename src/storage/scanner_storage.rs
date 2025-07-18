@@ -270,7 +270,7 @@ impl ScannerStorage {
                         })
                     }
                 } else {
-                    Err(LightweightWalletError::OperationCancelled(
+                    Err(LightweightWalletError::OperationNotSupported(
                         "Wallet selection cancelled by user".to_string()
                     ))
                 }
