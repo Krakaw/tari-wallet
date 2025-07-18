@@ -33,12 +33,55 @@ use tari_crypto::{
     ristretto::{RistrettoSecretKey, RistrettoPublicKey},
 };
 
+// Enhanced configuration types
+pub mod config;
+
+// Callback traits for progress and error handling
+pub mod callbacks;
+
+// Enhanced scanner with comprehensive functionality
+pub mod enhanced_scanner;
+
+// Cancellation token abstractions
+pub mod cancellation;
+
 // Include GRPC scanner when the feature is enabled
 #[cfg(feature = "grpc")]
 pub mod grpc_scanner;
 
 // Include HTTP scanner
 pub mod http_scanner;
+
+// Re-export enhanced configuration types
+pub use config::{
+    EnhancedScanConfig, OutputFormat, WalletScanContext, BlockHeightRange,
+    derive_entropy_from_seed_phrase,
+};
+
+// Re-export callback types (with prefixes to avoid conflicts)
+pub use callbacks::{
+    ScanProgress as EnhancedScanProgress, ScanPhase, ScanError, ErrorResponse, 
+    ProgressCallback as EnhancedProgressCallback, ErrorCallback,
+    ScanCallback, CancellationToken, ConsoleProgressCallback, InteractiveErrorCallback,
+    SilentErrorCallback, NoOpProgressCallback, NoOpErrorCallback,
+};
+
+// Re-export enhanced scanner types
+pub use enhanced_scanner::{
+    EnhancedScanResult, EnhancedWalletScanner, EnhancedScannerBuilder,
+};
+
+// Re-export cancellation types
+pub use cancellation::{
+    AtomicCancellationToken, CancellationHandle, NeverCancelToken, AlwaysCancelToken,
+    CompositeCancellationToken, TimeoutCancellationToken,
+};
+
+#[cfg(feature = "tokio")]
+pub use cancellation::{TokioCancellationToken, TokioCancellationHandle};
+
+#[cfg(target_arch = "wasm32")]
+pub use cancellation::{WasmCancellationToken, WasmCancellationHandle};
 
 // Re-export GRPC scanner types
 #[cfg(feature = "grpc")]
