@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WASM Scanner Test</title>
+    <style>
+        body {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+        }
+        .container {
+            background-color: #252526;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #3e3e42;
+        }
+        .test-section {
+            margin-bottom: 30px;
+            padding: 15px;
+            border: 1px solid #007acc;
+            border-radius: 5px;
+            background-color: rgba(0, 122, 204, 0.1);
+        }
+        .success {
+            color: #4ec9b0;
+            background-color: rgba(78, 201, 176, 0.1);
+            border-color: #4ec9b0;
+        }
+        .error {
+            color: #f44747;
+            background-color: rgba(244, 71, 71, 0.1);
+            border-color: #f44747;
+        }
+        .warning {
+            color: #ffcc02;
+            background-color: rgba(255, 204, 2, 0.1);
+            border-color: #ffcc02;
+        }
+        h1, h2, h3 {
+            color: #569cd6;
+        }
+        pre {
+            background-color: #1e1e1e;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+            border: 1px solid #3e3e42;
+        }
+        button {
+            background-color: #007acc;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #005a9e;
+        }
+        .input-group {
+            margin: 10px 0;
+        }
+        input, textarea {
+            background-color: #3c3c3c;
+            color: #d4d4d4;
+            border: 1px solid #3e3e42;
+            padding: 8px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        }
+        .log {
+            height: 200px;
+            overflow-y: scroll;
+            background-color: #1e1e1e;
+            border: 1px solid #3e3e42;
+            padding: 10px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 WASM Scanner Test Suite</h1>
+        <p>Testing enhanced WASM scanner functionality with unreachable error diagnostics</p>
+    </div>
+
+    <!-- Test Controls -->
+    <div class="container">
+        <h2>Test Controls</h2>
+        <div class="input-group">
+            <label for="seedPhrase">Test Seed Phrase:</label><br>
+            <textarea id="seedPhrase" style="width: 100%; height: 60px;">abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about</textarea>
+        </div>
+        <div class="input-group">
+            <label for="viewKey">Test View Key (hex):</label><br>
+            <input type="text" id="viewKey" style="width: 100%;" value="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef">
+        </div>
+        <button onclick="runAllTests()">🔬 Run All Tests</button>
+        <button onclick="clearLog()">🗑️ Clear Log</button>
+    </div>
+
+    <!-- Test Results -->
+    <div id="testResults"></div>
+
+    <!-- Console Log -->
+    <div class="container">
+        <h3>Console Log</h3>
+        <div id="consoleLog" class="log"></div>
+    </div>
+
+    <script type="module">
+        import init, { 
+            create_wasm_scanner, 
+            create_enhanced_wasm_scanner,
+            WasmScanner,
+            EnhancedWasmScanner,
+            WasmScanConfig
+        } from './pkg/lightweight_wallet_libs.js';
+
+        // Initialize WASM
+        let wasmModule = null;
+        
+        // Log function
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logDiv = document.getElementById('consoleLog');
+            const color = type === 'error' ? '#f44747' : type === 'success' ? '#4ec9b0' : type === 'warning' ? '#ffcc02' : '#d4d4d4';
+            logDiv.innerHTML += `<div style="color: ${color}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(`[${timestamp}] ${message}`);
+        }
+
+        // Create test section
+        function createTestSection(title, status = 'pending') {
+            const className = status === 'success' ? 'test-section success' : 
+                             status === 'error' ? 'test-section error' : 
+                             status === 'warning' ? 'test-section warning' : 'test-section';
+            
+            return `<div class="${className}">
+                <h3>${title}</h3>
+                <div id="test-${title.toLowerCase().replace(/\s+/g, '-')}">
+                    <p>Status: ${status}</p>
+                </div>
+            </div>`;
+        }
+
+        // Update test result
+        function updateTestResult(testId, content, status = 'info') {
+            const element = document.getElementById(`test-${testId}`);
+            if (element) {
+                element.innerHTML = content;
+                const parent = element.parentElement;
+                parent.className = status === 'success' ? 'test-section success' : 
+                                 status === 'error' ? 'test-section error' : 
+                                 status === 'warning' ? 'test-section warning' : 'test-section';
+            }
+        }
+
+        // Test 1: WASM Module Loading
+        async function testWasmLoading() {
+            log("🔄 Testing WASM module loading...");
+            try {
+                wasmModule = await init();
+                log("✅ WASM module loaded successfully", 'success');
+                
+                // Check available exports
+                const exports = Object.keys(wasmModule).filter(key => typeof wasmModule[key] === 'function');
+                log(`📋 Available exports (${exports.length}): ${exports.join(', ')}`);
+                
+                updateTestResult('wasm-module-loading', `
+                    <p>✅ Status: Success</p>
+                    <p>📦 Module: Loaded</p>
+                    <p>🔧 Exports: ${exports.length}</p>
+                    <pre>${exports.join('\n')}</pre>
+                `, 'success');
+                
+                return true;
+            } catch (error) {
+                log(`❌ WASM loading failed: ${error.message}`, 'error');
+                updateTestResult('wasm-module-loading', `
+                    <p>❌ Status: Failed</p>
+                    <p>🔴 Error: ${error.message}</p>
+                `, 'error');
+                return false;
+            }
+        }
+
+        // Test 2: Basic Scanner Creation
+        async function testBasicScanner() {
+            log("🔄 Testing basic WasmScanner creation...");
+            try {
+                const seedPhrase = document.getElementById('seedPhrase').value;
+                
+                log("Creating scanner from seed phrase...");
+                const scanner = create_wasm_scanner(seedPhrase);
+                log("✅ Basic scanner created successfully", 'success');
+                
+                updateTestResult('basic-scanner-creation', `
+                    <p>✅ Status: Success</p>
+                    <p>🔧 Type: WasmScanner</p>
+                    <p>📝 Input: Seed phrase (${seedPhrase.split(' ').length} words)</p>
+                    <p>💼 Scanner: Created and ready</p>
+                `, 'success');
+                
+                return scanner;
+            } catch (error) {
+                log(`❌ Basic scanner creation failed: ${error.message}`, 'error');
+                updateTestResult('basic-scanner-creation', `
+                    <p>❌ Status: Failed</p>
+                    <p>🔴 Error: ${error.message}</p>
+                `, 'error');
+                return null;
+            }
+        }
+
+        // Test 3: Enhanced Scanner Creation (The Critical Test)
+        async function testEnhancedScanner() {
+            log("🔄 Testing Enhanced Scanner creation (CRITICAL TEST)...");
+            try {
+                const seedPhrase = document.getElementById('seedPhrase').value;
+                
+                log("About to call create_enhanced_wasm_scanner...");
+                const enhancedScanner = create_enhanced_wasm_scanner(seedPhrase);
+                log("✅ Enhanced scanner created successfully - NO UNREACHABLE ERROR!", 'success');
+                
+                // Test scanner properties
+                log("Testing scanner methods...");
+                
+                // Test auto-detection functionality
+                log("Testing auto-detection with view key...");
+                const viewKey = document.getElementById('viewKey').value;
+                const scannerFromViewKey = create_enhanced_wasm_scanner(viewKey);
+                log("✅ Auto-detection working: view key scanner created", 'success');
+                
+                updateTestResult('enhanced-scanner-creation', `
+                    <p>✅ Status: SUCCESS - UNREACHABLE ERROR FIXED!</p>
+                    <p>🔧 Type: EnhancedWasmScanner</p>
+                    <p>📝 Input: Seed phrase auto-detected</p>
+                    <p>🔑 View key test: Also working</p>
+                    <p>💼 Scanner: Created without serialization issues</p>
+                    <p>🎉 The Duration/OutputFormat serialization fix worked!</p>
+                `, 'success');
+                
+                return enhancedScanner;
+            } catch (error) {
+                log(`❌ Enhanced scanner creation failed: ${error.message}`, 'error');
+                log(`📋 Error stack: ${error.stack || 'No stack available'}`, 'error');
+                
+                updateTestResult('enhanced-scanner-creation', `
+                    <p>❌ Status: Failed</p>
+                    <p>🔴 Error: ${error.message}</p>
+                    <p>🔍 This indicates remaining serialization issues</p>
+                    <pre>${error.stack || 'No stack available'}</pre>
+                `, 'error');
+                return null;
+            }
+        }
+
+        // Test 4: Enhanced Scanner Configuration
+        async function testEnhancedScannerConfig(enhancedScanner) {
+            if (!enhancedScanner) {
+                updateTestResult('enhanced-scanner-config', `
+                    <p>⏭️ Status: Skipped</p>
+                    <p>📝 Reason: Enhanced scanner not available</p>
+                `, 'warning');
+                return false;
+            }
+
+            log("🔄 Testing Enhanced Scanner configuration...");
+            try {
+                // Test WasmScanConfig creation
+                log("Creating WasmScanConfig...");
+                const config = new WasmScanConfig(1000, 1010);
+                log(`✅ WasmScanConfig created: blocks ${config.from_block} to ${config.to_block}`);
+                
+                // Test configuration methods
+                config.set_batch_size(5);
+                config.set_progress_frequency(2);
+                config.set_request_timeout_secs(60);
+                
+                log(`📊 Config updated: batch_size=${config.batch_size}, progress_freq=${config.progress_frequency}, timeout=${config.request_timeout_secs}s`);
+                
+                // Test scanner configuration
+                log("Configuring enhanced scanner...");
+                enhancedScanner.configure_scan(1000, 1010, 5);
+                log("✅ Scanner configured for block range");
+                
+                // Test specific blocks configuration
+                const testBlocks = JSON.stringify([1000, 1005, 1010]);
+                enhancedScanner.configure_scan_blocks(testBlocks, 3);
+                log("✅ Scanner configured for specific blocks");
+                
+                updateTestResult('enhanced-scanner-config', `
+                    <p>✅ Status: Success</p>
+                    <p>🔧 WasmScanConfig: Created and functional</p>
+                    <p>📊 Range config: 1000-1010 (batch_size=5)</p>
+                    <p>📋 Specific blocks: [1000, 1005, 1010] (batch_size=3)</p>
+                    <p>⏰ Timeout: 60 seconds</p>
+                `, 'success');
+                
+                return true;
+            } catch (error) {
+                log(`❌ Enhanced scanner configuration failed: ${error.message}`, 'error');
+                updateTestResult('enhanced-scanner-config', `
+                    <p>❌ Status: Failed</p>
+                    <p>🔴 Error: ${error.message}</p>
+                `, 'error');
+                return false;
+            }
+        }
+
+        // Test 5: API Comparison
+        async function testAPIComparison(basicScanner, enhancedScanner) {
+            log("🔄 Testing API comparison between scanners...");
+            
+            const basicMethods = basicScanner ? Object.getOwnPropertyNames(Object.getPrototypeOf(basicScanner)) : [];
+            const enhancedMethods = enhancedScanner ? Object.getOwnPropertyNames(Object.getPrototypeOf(enhancedScanner)) : [];
+            
+            log(`📋 Basic scanner methods: ${basicMethods.length}`);
+            log(`📋 Enhanced scanner methods: ${enhancedMethods.length}`);
+            
+            const uniqueToEnhanced = enhancedMethods.filter(m => !basicMethods.includes(m));
+            const uniqueToBasic = basicMethods.filter(m => !enhancedMethods.includes(m));
+            
+            updateTestResult('api-comparison', `
+                <p>📊 Status: Comparison complete</p>
+                <p>🔧 Basic methods: ${basicMethods.length}</p>
+                <p>🚀 Enhanced methods: ${enhancedMethods.length}</p>
+                <p>➕ Enhanced-only: ${uniqueToEnhanced.length}</p>
+                <p>➖ Basic-only: ${uniqueToBasic.length}</p>
+                <details>
+                    <summary>Enhanced-only methods:</summary>
+                    <pre>${uniqueToEnhanced.join('\n')}</pre>
+                </details>
+                <details>
+                    <summary>Basic-only methods:</summary>
+                    <pre>${uniqueToBasic.join('\n')}</pre>
+                </details>
+            `, basicScanner && enhancedScanner ? 'success' : 'warning');
+        }
+
+        // Run all tests
+        window.runAllTests = async function() {
+            log("🚀 Starting comprehensive WASM scanner tests...", 'info');
+            
+            // Initialize test results container
+            const resultsDiv = document.getElementById('testResults');
+            resultsDiv.innerHTML = `
+                ${createTestSection('WASM Module Loading')}
+                ${createTestSection('Basic Scanner Creation')}
+                ${createTestSection('Enhanced Scanner Creation')}
+                ${createTestSection('Enhanced Scanner Config')}
+                ${createTestSection('API Comparison')}
+            `;
+            
+            // Run tests sequentially
+            const wasmLoaded = await testWasmLoading();
+            if (!wasmLoaded) return;
+            
+            const basicScanner = await testBasicScanner();
+            const enhancedScanner = await testEnhancedScanner();
+            
+            await testEnhancedScannerConfig(enhancedScanner);
+            await testAPIComparison(basicScanner, enhancedScanner);
+            
+            // Final summary
+            if (enhancedScanner) {
+                log("🎉 SUCCESS: Enhanced scanner is working! The unreachable error has been fixed!", 'success');
+            } else {
+                log("❌ Enhanced scanner still has issues", 'error');
+            }
+        };
+        
+        window.clearLog = function() {
+            document.getElementById('consoleLog').innerHTML = '';
+            log("🗑️ Log cleared");
+        };
+
+        // Auto-run tests on load
+        window.addEventListener('load', () => {
+            log("🌐 Page loaded, ready for testing");
+        });
+    </script>
+</body>
+</html> 

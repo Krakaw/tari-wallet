@@ -14,6 +14,10 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use argon2::{Argon2, Algorithm, Version, Params};
 use std::mem::size_of;
 
+// For WASM console logging
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
 // Constants from the Tari CipherSeed specification
 const CIPHER_SEED_VERSION: u8 = 2u8;
 const CIPHER_SEED_VERSION_LEGACY: u8 = 128u8; // Legacy version (0x80) for backward compatibility
@@ -532,16 +536,42 @@ pub fn mnemonic_to_bytes(mnemonic: &str) -> Result<Vec<u8>, KeyManagementError> 
 /// Converts a mnemonic phrase and optional passphrase to a 32-byte master key using Tari CipherSeed
 /// This follows the exact Tari key derivation specification
 pub fn mnemonic_to_master_key(mnemonic: &str, passphrase: Option<&str>) -> Result<[u8; 32], KeyManagementError> {
+    // Add console logging for WASM debugging
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::console::log_1(&format!("[SEED_PHRASE] mnemonic_to_master_key - START").into());
+        web_sys::console::log_1(&format!("[SEED_PHRASE] mnemonic length: {}", mnemonic.len()).into());
+        web_sys::console::log_1(&format!("[SEED_PHRASE] has passphrase: {}", passphrase.is_some()).into());
+    }
+    
     if mnemonic.trim().is_empty() {
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&format!("[SEED_PHRASE] ERROR: Empty mnemonic").into());
         return Err(KeyManagementError::empty_seed_phrase());
     }
     
     // Convert mnemonic to encrypted bytes
-    let encrypted_bytes = mnemonic_to_bytes(mnemonic)?;
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&format!("[SEED_PHRASE] Converting mnemonic to bytes...").into());
+    
+    let encrypted_bytes = mnemonic_to_bytes(mnemonic)
+        .map_err(|e| {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::log_1(&format!("[SEED_PHRASE] ERROR in mnemonic_to_bytes: {}", e).into());
+            e
+        })?;
+    
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&format!("[SEED_PHRASE] Mnemonic converted to {} bytes", encrypted_bytes.len()).into());
     
     // Decrypt the CipherSeed
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&format!("[SEED_PHRASE] Decrypting CipherSeed...").into());
+    
     let cipher_seed = CipherSeed::from_enciphered_bytes(&encrypted_bytes, passphrase)
         .map_err(|e| {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::log_1(&format!("[SEED_PHRASE] ERROR decrypting CipherSeed: {}", e).into());
             match e {
                 KeyManagementError::DecryptionFailed => {
                     if passphrase.is_some() {
@@ -559,17 +589,29 @@ pub fn mnemonic_to_master_key(mnemonic: &str, passphrase: Option<&str>) -> Resul
             }
         })?;
     
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&format!("[SEED_PHRASE] CipherSeed decrypted successfully").into());
+    
     // Use the exact Tari derivation pattern: H(master_entropy || branch_seed || key_index)
     // For the master key, we use a special branch_seed "master_key" and index 0
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&format!("[SEED_PHRASE] Deriving master key hash...").into());
+    
     let master_key_hash = DomainSeparatedHasher::<Blake2b<U64>, KeyManagerDomain>::new_with_label(HASHER_LABEL_DERIVE_KEY)
         .chain(cipher_seed.entropy())  // 16-byte entropy directly from CipherSeed
         .chain("master_key".as_bytes())  // Special branch seed for master key
         .chain(0u64.to_le_bytes())  // Index 0 for master key
         .finalize();
     
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&format!("[SEED_PHRASE] Master key hash derived").into());
+    
     // Take the first 32 bytes of the 64-byte Blake2b output for our master key
     let mut master_key = [0u8; 32];
     master_key.copy_from_slice(&master_key_hash.as_ref()[..32]);
+    
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&format!("[SEED_PHRASE] mnemonic_to_master_key - SUCCESS").into());
     
     Ok(master_key)
 }

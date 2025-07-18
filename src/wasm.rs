@@ -2,6 +2,17 @@ use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};
 use tari_utilities::ByteArray;
 
+// Add console logging for debugging
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+}
+
+macro_rules! console_log {
+    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
+}
+
 #[cfg(feature = "http")]
 use crate::scanning::cancellation::CancellationToken;
 
@@ -234,34 +245,66 @@ impl WasmScanner {
 
     /// Create scanner from seed phrase
     pub fn from_seed_phrase(seed_phrase: &str) -> Result<Self, String> {
+        console_log!("[WASM] WasmScanner::from_seed_phrase - START");
+        console_log!("[WASM] seed_phrase length: {}", seed_phrase.len());
+        
         // Convert seed phrase to bytes
+        console_log!("[WASM] Converting seed phrase to bytes...");
         let encrypted_bytes = mnemonic_to_bytes(seed_phrase)
-            .map_err(|e| format!("Failed to convert seed phrase: {}", e))?;
+            .map_err(|e| {
+                console_log!("[WASM] ERROR converting seed phrase to bytes: {}", e);
+                format!("Failed to convert seed phrase: {}", e)
+            })?;
+        console_log!("[WASM] Seed phrase converted to bytes successfully");
         
+        console_log!("[WASM] Creating cipher seed...");
         let cipher_seed = CipherSeed::from_enciphered_bytes(&encrypted_bytes, None)
-            .map_err(|e| format!("Failed to create cipher seed: {}", e))?;
+            .map_err(|e| {
+                console_log!("[WASM] ERROR creating cipher seed: {}", e);
+                format!("Failed to create cipher seed: {}", e)
+            })?;
+        console_log!("[WASM] Cipher seed created successfully");
         
+        console_log!("[WASM] Extracting entropy...");
         let entropy = cipher_seed.entropy();
         let entropy_array: [u8; 16] = entropy.try_into()
-            .map_err(|_| "Invalid entropy length".to_string())?;
+            .map_err(|_| {
+                console_log!("[WASM] ERROR: Invalid entropy length");
+                "Invalid entropy length".to_string()
+            })?;
+        console_log!("[WASM] Entropy extracted successfully");
         
         // Derive view key from entropy
+        console_log!("[WASM] Deriving view key from entropy...");
         let view_key_raw = key_derivation::derive_private_key_from_entropy(
             &entropy_array,
             "data encryption",
             0,
-        ).map_err(|e| format!("Failed to derive view key: {}", e))?;
+        ).map_err(|e| {
+            console_log!("[WASM] ERROR deriving view key: {}", e);
+            format!("Failed to derive view key: {}", e)
+        })?;
+        console_log!("[WASM] View key derived successfully");
         
+        console_log!("[WASM] Converting view key to PrivateKey...");
         let view_key = PrivateKey::new(view_key_raw.as_bytes().try_into()
-            .map_err(|_| "Failed to convert view key".to_string())?);
+            .map_err(|_| {
+                console_log!("[WASM] ERROR converting view key");
+                "Failed to convert view key".to_string()
+            })?);
+        console_log!("[WASM] View key converted successfully");
         
-        Ok(Self {
+        console_log!("[WASM] Creating WasmScanner instance...");
+        let scanner = Self {
             #[cfg(feature = "http")]
             http_scanner: None, // Will be initialized when needed
             view_key,
             entropy: entropy_array,
             wallet_state: WalletState::new(),
-        })
+        };
+        console_log!("[WASM] WasmScanner::from_seed_phrase - SUCCESS");
+        
+        Ok(scanner)
     }
 
     /// Create scanner from view key
@@ -703,7 +746,7 @@ impl WasmScanner {
                     value_spent: 0,
                     transactions: Vec::new(),
                     success: false,
-                    error: Some(e),
+                    error: Some(format!("Invalid block hash: {}", e)),
                 };
             }
         };
@@ -1011,6 +1054,17 @@ pub fn create_wasm_scanner(data: &str) -> Result<WasmScanner, JsValue> {
     WasmScanner::from_str(data).map_err(|e| JsValue::from_str(&e))
 }
 
+/// Create an enhanced scanner from view key or seed phrase (WASM export)
+/// Automatically detects the input type by trying view key first, then seed phrase
+#[cfg(feature = "http")]
+#[wasm_bindgen]
+pub fn create_enhanced_wasm_scanner(data: &str) -> Result<EnhancedWasmScanner, JsValue> {
+    console_log!("[WASM] create_enhanced_wasm_scanner - START");
+    let result = EnhancedWasmScanner::from_str(data);
+    console_log!("[WASM] create_enhanced_wasm_scanner - calling from_str completed");
+    result
+}
+
 /// Initialize HTTP scanner (WASM export) - Returns a Promise
 #[cfg(feature = "http")]
 #[wasm_bindgen]
@@ -1180,6 +1234,100 @@ pub fn get_version() -> String {
 // ENHANCED WASM SCANNING FUNCTIONALITY
 //=============================================================================
 
+/// WASM-compatible scan configuration to avoid Duration serialization issues
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct WasmScanConfig {
+    /// Starting block height for scanning
+    from_block: u64,
+    /// Ending block height for scanning
+    to_block: u64,
+    /// Batch size for scanning operations
+    batch_size: usize,
+    /// Progress update frequency (every N blocks)
+    progress_frequency: usize,
+    /// Request timeout in seconds (instead of Duration)
+    request_timeout_secs: u64,
+    /// Whether explicit from_block was provided (for resume logic)
+    explicit_from_block: Option<u64>,
+    // Note: specific block heights and output format are handled separately to avoid serialization issues
+}
+
+#[wasm_bindgen]
+impl WasmScanConfig {
+    #[wasm_bindgen(constructor)]
+    pub fn new(from_block: u64, to_block: u64) -> Self {
+        Self {
+            from_block,
+            to_block,
+            batch_size: 10,
+            progress_frequency: 1,
+            request_timeout_secs: 30,
+            explicit_from_block: None,
+        }
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn from_block(&self) -> u64 {
+        self.from_block
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn to_block(&self) -> u64 {
+        self.to_block
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn batch_size(&self) -> usize {
+        self.batch_size
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn progress_frequency(&self) -> usize {
+        self.progress_frequency
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn request_timeout_secs(&self) -> u64 {
+        self.request_timeout_secs
+    }
+
+    #[wasm_bindgen(setter)]
+    pub fn set_batch_size(&mut self, batch_size: usize) {
+        self.batch_size = batch_size;
+    }
+
+    #[wasm_bindgen(setter)]
+    pub fn set_progress_frequency(&mut self, frequency: usize) {
+        self.progress_frequency = frequency;
+    }
+
+    #[wasm_bindgen(setter)]
+    pub fn set_request_timeout_secs(&mut self, timeout_secs: u64) {
+        self.request_timeout_secs = timeout_secs;
+    }
+
+    /// Convert to internal EnhancedScanConfig
+    pub(crate) fn to_enhanced_scan_config(&self, specific_blocks: Option<Vec<u64>>) -> crate::scanning::EnhancedScanConfig {
+        use crate::scanning::{EnhancedScanConfig, OutputFormat};
+        use std::time::Duration;
+        
+        if let Some(blocks) = specific_blocks {
+            EnhancedScanConfig::for_specific_blocks(blocks)
+                .with_batch_size(self.batch_size)
+                .with_progress_frequency(self.progress_frequency)
+                .with_output_format(OutputFormat::Summary)
+                .with_request_timeout(Duration::from_secs(self.request_timeout_secs))
+        } else {
+            EnhancedScanConfig::new(self.from_block, self.to_block)
+                .with_batch_size(self.batch_size)
+                .with_progress_frequency(self.progress_frequency)
+                .with_output_format(OutputFormat::Summary)
+                .with_request_timeout(Duration::from_secs(self.request_timeout_secs))
+        }
+    }
+}
+
 /// Enhanced WASM Scanner that uses the lib's new enhanced scanning functionality
 /// Only available when HTTP scanning is enabled (WASM doesn't support gRPC)
 #[cfg(feature = "http")]
@@ -1187,7 +1335,8 @@ pub fn get_version() -> String {
 pub struct EnhancedWasmScanner {
     scan_context: Option<crate::scanning::WalletScanContext>,
     scanner: Option<crate::scanning::HttpBlockchainScanner>,
-    config: Option<crate::scanning::EnhancedScanConfig>,
+    config: Option<WasmScanConfig>,
+    specific_blocks: Option<Vec<u64>>,
     cancellation_token: Option<crate::scanning::WasmCancellationToken>,
 }
 
@@ -1282,40 +1431,99 @@ impl WasmScanResult {
 
 #[wasm_bindgen]
 impl EnhancedWasmScanner {
+    /// Create a scanner from string input (automatically detects view key or seed phrase)
+    pub fn from_str(data: &str) -> Result<Self, JsValue> {
+        console_log!("[WASM] EnhancedWasmScanner::from_str - START");
+        
+        // Try view key first
+        match Self::new_from_view_key(data) {
+            Ok(scanner) => {
+                console_log!("[WASM] EnhancedWasmScanner::from_str - detected as view key");
+                Ok(scanner)
+            },
+            Err(_view_key_error) => {
+                console_log!("[WASM] EnhancedWasmScanner::from_str - view key failed, trying seed phrase");
+                // If view key fails, try seed phrase
+                match Self::new_from_seed_phrase(data) {
+                    Ok(scanner) => {
+                        console_log!("[WASM] EnhancedWasmScanner::from_str - detected as seed phrase");
+                        Ok(scanner)
+                    },
+                    Err(seed_phrase_error) => {
+                        console_log!("[WASM] EnhancedWasmScanner::from_str - both methods failed");
+                        // Both failed, return the seed phrase error (more likely to be helpful)
+                        Err(seed_phrase_error)
+                    }
+                }
+            }
+        }
+    }
+
     /// Create a new enhanced WASM scanner from seed phrase
     #[wasm_bindgen(constructor)]
     pub fn new_from_seed_phrase(seed_phrase: &str) -> Result<EnhancedWasmScanner, JsValue> {
+        console_log!("[WASM] EnhancedWasmScanner::new_from_seed_phrase - START");
+        console_log!("[WASM] seed_phrase length: {}", seed_phrase.len());
+        
         use crate::wallet::Wallet;
         use crate::scanning::WalletScanContext;
         
+        console_log!("[WASM] About to create wallet from seed phrase...");
         let wallet = Wallet::new_from_seed_phrase(seed_phrase, None)
-            .map_err(|e| JsValue::from_str(&format!("Failed to create wallet: {}", e)))?;
+            .map_err(|e| {
+                console_log!("[WASM] ERROR creating wallet: {}", e);
+                JsValue::from_str(&format!("Failed to create wallet: {}", e))
+            })?;
+        console_log!("[WASM] Wallet created successfully");
             
+        console_log!("[WASM] About to create scan context from wallet...");
         let scan_context = WalletScanContext::from_wallet(&wallet)
-            .map_err(|e| JsValue::from_str(&format!("Failed to create scan context: {}", e)))?;
+            .map_err(|e| {
+                console_log!("[WASM] ERROR creating scan context: {}", e);
+                JsValue::from_str(&format!("Failed to create scan context: {}", e))
+            })?;
+        console_log!("[WASM] Scan context created successfully");
         
-        Ok(EnhancedWasmScanner {
+        console_log!("[WASM] Creating EnhancedWasmScanner instance...");
+        let scanner = EnhancedWasmScanner {
             scan_context: Some(scan_context),
             scanner: None,
             config: None,
+            specific_blocks: None,
             cancellation_token: None,
-        })
+        };
+        console_log!("[WASM] EnhancedWasmScanner::new_from_seed_phrase - SUCCESS");
+        
+        Ok(scanner)
     }
 
     /// Create a new enhanced WASM scanner from view key
     #[wasm_bindgen]
     pub fn new_from_view_key(view_key_hex: &str) -> Result<EnhancedWasmScanner, JsValue> {
+        console_log!("[WASM] EnhancedWasmScanner::new_from_view_key - START");
+        console_log!("[WASM] view_key_hex length: {}", view_key_hex.len());
+        
         use crate::scanning::WalletScanContext;
         
+        console_log!("[WASM] About to create scan context from view key...");
         let scan_context = WalletScanContext::from_view_key(view_key_hex)
-            .map_err(|e| JsValue::from_str(&format!("Failed to create scan context: {}", e)))?;
+            .map_err(|e| {
+                console_log!("[WASM] ERROR creating scan context from view key: {}", e);
+                JsValue::from_str(&format!("Failed to create scan context: {}", e))
+            })?;
+        console_log!("[WASM] Scan context from view key created successfully");
         
-        Ok(EnhancedWasmScanner {
+        console_log!("[WASM] Creating EnhancedWasmScanner instance...");
+        let scanner = EnhancedWasmScanner {
             scan_context: Some(scan_context),
             scanner: None,
             config: None,
+            specific_blocks: None,
             cancellation_token: None,
-        })
+        };
+        console_log!("[WASM] EnhancedWasmScanner::new_from_view_key - SUCCESS");
+        
+        Ok(scanner)
     }
 
     /// Initialize the HTTP scanner
@@ -1350,28 +1558,42 @@ impl EnhancedWasmScanner {
             .with_output_format(OutputFormat::Summary)
             .with_request_timeout(Duration::from_secs(30));
             
-        self.config = Some(config);
+        self.config = Some(WasmScanConfig {
+            from_block: from_block,
+            to_block: actual_to_block,
+            batch_size: actual_batch_size,
+            progress_frequency: 1,
+            request_timeout_secs: 30,
+            explicit_from_block: None,
+        });
         Ok(())
     }
 
     /// Configure the scan for specific blocks
     #[wasm_bindgen]
     pub fn configure_scan_blocks(&mut self, blocks_json: &str, batch_size: Option<usize>) -> Result<(), JsValue> {
-        use crate::scanning::{EnhancedScanConfig, OutputFormat};
-        use std::time::Duration;
-        
         let blocks: Vec<u64> = serde_json::from_str(blocks_json)
             .map_err(|e| JsValue::from_str(&format!("Failed to parse blocks: {}", e)))?;
         
         let actual_batch_size = batch_size.unwrap_or(10);
         
-        let config = EnhancedScanConfig::for_specific_blocks(blocks)
-            .with_batch_size(actual_batch_size)
-            .with_progress_frequency(1) // Update every block for WASM
-            .with_output_format(OutputFormat::Summary)
-            .with_request_timeout(Duration::from_secs(30));
-            
-        self.config = Some(config);
+        if blocks.is_empty() {
+            return Err(JsValue::from_str("Blocks list cannot be empty"));
+        }
+        
+        let from_block = *blocks.iter().min().unwrap();
+        let to_block = *blocks.iter().max().unwrap();
+        
+        self.config = Some(WasmScanConfig {
+            from_block,
+            to_block,
+            batch_size: actual_batch_size,
+            progress_frequency: 1,
+            request_timeout_secs: 30,
+            explicit_from_block: None,
+        });
+        
+        self.specific_blocks = Some(blocks);
         Ok(())
     }
 
@@ -1420,7 +1642,7 @@ impl EnhancedWasmScanner {
         // Create enhanced scanner
         let mut enhanced_scanner = EnhancedScannerBuilder::new()
             .with_scanner(scanner)
-            .with_scan_config(config.clone())
+            .with_scan_config(config.to_enhanced_scan_config(self.specific_blocks.clone()))
             .build()
             .map_err(|e| JsValue::from_str(&format!("Failed to build enhanced scanner: {}", e)))?
             .with_scan_context(scan_context);

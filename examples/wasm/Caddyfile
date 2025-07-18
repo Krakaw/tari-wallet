@@ -21,6 +21,15 @@
 	# Handle OPTIONS requests for CORS preflight
 	@options method OPTIONS
 	respond @options 204
+@test_html path /test.html /
+	handle @test_html {
+		header Content-Type "text/html; charset=utf-8"
+		try_files /test.html
+		file_server {
+			root .
+		}
+	}
+
 
 	# Serve the main scanner HTML file
 	@scanner_html path /scanner.html /

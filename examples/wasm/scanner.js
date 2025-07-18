@@ -41,7 +41,8 @@ async function initWasm() {
     try {
         // Import the WASM module
         wasm = await import(path.resolve(__dirname, 'pkg', 'lightweight_wallet_libs.js'));
-        await wasm.default(); // Initialize the WASM module
+        // console.log(wasm)
+        // await wasm.default(); // Initialize the WASM module
         console.log('🚀 WASM module initialized successfully');
         return true;
     } catch (error) {
