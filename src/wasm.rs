@@ -1,7 +1,9 @@
 use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};
 use tari_utilities::ByteArray;
-use web_sys::console;
+
+#[cfg(feature = "http")]
+use crate::scanning::cancellation::CancellationToken;
 
 use crate::{
     data_structures::{
@@ -1179,6 +1181,8 @@ pub fn get_version() -> String {
 //=============================================================================
 
 /// Enhanced WASM Scanner that uses the lib's new enhanced scanning functionality
+/// Only available when HTTP scanning is enabled (WASM doesn't support gRPC)
+#[cfg(feature = "http")]
 #[wasm_bindgen]
 pub struct EnhancedWasmScanner {
     scan_context: Option<crate::scanning::WalletScanContext>,
@@ -1188,10 +1192,23 @@ pub struct EnhancedWasmScanner {
 }
 
 /// WASM-compatible progress callback
+/// Only available when HTTP scanning is enabled (WASM doesn't support gRPC)
+#[cfg(feature = "http")]
 #[wasm_bindgen]
 pub struct WasmProgressCallback {
     callback: js_sys::Function,
 }
+
+/// Thread-safe wrapper for WASM callback (WASM is single-threaded so this is safe)
+#[cfg(feature = "http")]
+struct WasmProgressCallbackWrapper {
+    callback: js_sys::Function,
+}
+
+#[cfg(feature = "http")]
+unsafe impl Send for WasmProgressCallbackWrapper {}
+#[cfg(feature = "http")]
+unsafe impl Sync for WasmProgressCallbackWrapper {}
 
 /// WASM-compatible progress information
 #[wasm_bindgen]
@@ -1211,12 +1228,21 @@ pub struct WasmProgressInfo {
     pub progress_percent: f64,
     /// Blocks per second
     pub blocks_per_second: f64,
-    /// Current phase
-    pub phase: String,
     /// Elapsed time in seconds
     pub elapsed_seconds: f64,
     /// Estimated remaining seconds
     pub remaining_seconds: Option<f64>,
+    // Private field for phase - accessed via getter
+    phase_str: String,
+}
+
+#[wasm_bindgen]
+impl WasmProgressInfo {
+    /// Get the current phase as a string
+    #[wasm_bindgen(getter)]
+    pub fn phase(&self) -> String {
+        self.phase_str.clone()
+    }
 }
 
 /// WASM-compatible scan results
@@ -1227,8 +1253,6 @@ pub struct WasmScanResult {
     pub completed: bool,
     /// Whether scan was interrupted
     pub interrupted: bool,
-    /// Error message if failed
-    pub error: Option<String>,
     /// Total transactions found
     pub transaction_count: usize,
     /// Total received amount (microTari)
@@ -1243,6 +1267,17 @@ pub struct WasmScanResult {
     pub spent_count: usize,
     /// Scan duration in seconds
     pub duration_seconds: f64,
+    // Private field for error - accessed via getter
+    error_msg: Option<String>,
+}
+
+#[wasm_bindgen]
+impl WasmScanResult {
+    /// Get the error message if any
+    #[wasm_bindgen(getter)]
+    pub fn error(&self) -> Option<String> {
+        self.error_msg.clone()
+    }
 }
 
 #[wasm_bindgen]
@@ -1286,7 +1321,7 @@ impl EnhancedWasmScanner {
     /// Initialize the HTTP scanner
     #[wasm_bindgen]
     pub async fn initialize_scanner(&mut self, base_url: &str) -> Result<(), JsValue> {
-        use crate::scanning::{HttpScannerBuilder, BlockchainScanner};
+        use crate::scanning::HttpScannerBuilder;
         use std::time::Duration;
         
         let scanner = HttpScannerBuilder::new()
@@ -1387,8 +1422,8 @@ impl EnhancedWasmScanner {
             .map_err(|e| JsValue::from_str(&format!("Failed to build enhanced scanner: {}", e)))?
             .with_scan_context(scan_context);
 
-        // Create WASM progress callback
-        let wasm_progress_callback = progress_callback.map(|cb| WasmProgressCallback { callback: cb });
+        // Create WASM progress callback wrapper
+        let wasm_progress_callback = progress_callback.map(|cb| WasmProgressCallbackWrapper { callback: cb });
 
         // Setup cancellation
         let cancellation_token = self.cancellation_token.as_ref()
@@ -1398,7 +1433,7 @@ impl EnhancedWasmScanner {
 
         // Perform the scan
         let scan_result = enhanced_scanner.scan_wallet(
-            wasm_progress_callback.as_ref(),
+            wasm_progress_callback.as_ref().map(|cb| cb as &dyn crate::scanning::EnhancedProgressCallback),
             None, // No error callback for now
             cancellation_token,
         ).await;
@@ -1417,7 +1452,7 @@ impl EnhancedWasmScanner {
                         return Ok(serde_wasm_bindgen::to_value(&WasmScanResult {
                             completed: false,
                             interrupted: false,
-                            error: Some(error.to_string()),
+                            error_msg: Some(error.to_string()),
                             transaction_count: 0,
                             total_received: 0,
                             total_spent: 0,
@@ -1434,11 +1469,11 @@ impl EnhancedWasmScanner {
                 let result = WasmScanResult {
                     completed,
                     interrupted,
-                    error: None,
+                    error_msg: None,
                     transaction_count: wallet_state.transactions.len(),
                     total_received,
                     total_spent,
-                    current_balance,
+                    current_balance: current_balance.max(0) as u64,
                     unspent_count,
                     spent_count,
                     duration_seconds: duration.as_secs_f64(),
@@ -1450,7 +1485,7 @@ impl EnhancedWasmScanner {
                 let result = WasmScanResult {
                     completed: false,
                     interrupted: false,
-                    error: Some(e.to_string()),
+                    error_msg: Some(e.to_string()),
                     transaction_count: 0,
                     total_received: 0,
                     total_spent: 0,
@@ -1466,9 +1501,10 @@ impl EnhancedWasmScanner {
     }
 }
 
-/// Implementation of ProgressCallback for WASM
-impl crate::scanning::ProgressCallback for WasmProgressCallback {
-    fn on_progress(&self, progress: &crate::scanning::ScanProgress) {
+/// Implementation of ProgressCallback for WASM wrapper
+#[cfg(feature = "http")]
+impl crate::scanning::callbacks::ProgressCallback for WasmProgressCallbackWrapper {
+    fn on_progress(&self, progress: &crate::scanning::callbacks::ScanProgress) {
         let progress_info = WasmProgressInfo {
             current_block: progress.current_block,
             total_blocks: progress.total_blocks,
@@ -1477,9 +1513,9 @@ impl crate::scanning::ProgressCallback for WasmProgressCallback {
             inputs_found: progress.inputs_found,
             progress_percent: progress.progress_percentage() * 100.0,
             blocks_per_second: progress.blocks_per_second(),
-            phase: format!("{:?}", progress.phase),
             elapsed_seconds: progress.elapsed().as_secs_f64(),
             remaining_seconds: progress.estimated_remaining().map(|d| d.as_secs_f64()),
+            phase_str: format!("{:?}", progress.phase),
         };
 
         if let Ok(js_value) = serde_wasm_bindgen::to_value(&progress_info) {
@@ -1487,7 +1523,7 @@ impl crate::scanning::ProgressCallback for WasmProgressCallback {
         }
     }
 
-    fn on_phase_change(&self, _old_phase: crate::scanning::ScanPhase, _new_phase: crate::scanning::ScanPhase) {
+    fn on_phase_change(&self, _old_phase: crate::scanning::callbacks::ScanPhase, _new_phase: crate::scanning::callbacks::ScanPhase) {
         // Phase changes can be handled in the progress callback
     }
 
@@ -1495,11 +1531,11 @@ impl crate::scanning::ProgressCallback for WasmProgressCallback {
         // Could add a specific callback for scan start
     }
 
-    fn on_scan_complete(&self, _final_state: &crate::data_structures::wallet_transaction::WalletState, _stats: &crate::scanning::ScanProgress) {
+    fn on_scan_complete(&self, _final_state: &crate::data_structures::wallet_transaction::WalletState, _stats: &crate::scanning::callbacks::ScanProgress) {
         // Could add a specific callback for scan complete
     }
 
-    fn on_scan_interrupted(&self, _partial_state: &crate::data_structures::wallet_transaction::WalletState, _stats: &crate::scanning::ScanProgress) {
+    fn on_scan_interrupted(&self, _partial_state: &crate::data_structures::wallet_transaction::WalletState, _stats: &crate::scanning::callbacks::ScanProgress) {
         // Could add a specific callback for scan interrupted
     }
 }

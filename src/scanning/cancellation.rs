@@ -199,11 +199,12 @@ impl TokioCancellationHandle {
 /// WASM-compatible cancellation token
 /// 
 /// This implementation works in WASM environments where threading
-/// primitives may be limited.
+/// primitives may be limited. Uses Arc<AtomicBool> for thread safety
+/// compatibility even though WASM is single-threaded.
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug)]
 pub struct WasmCancellationToken {
-    cancelled: std::rc::Rc<std::cell::Cell<bool>>,
+    cancelled: Arc<AtomicBool>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -211,13 +212,13 @@ impl WasmCancellationToken {
     /// Create a new WASM cancellation token
     pub fn new() -> Self {
         Self {
-            cancelled: std::rc::Rc::new(std::cell::Cell::new(false)),
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Create a pair of (token, handle) for WASM environments
     pub fn create_pair() -> (Self, WasmCancellationHandle) {
-        let cancelled = std::rc::Rc::new(std::cell::Cell::new(false));
+        let cancelled = Arc::new(AtomicBool::new(false));
         let token = Self {
             cancelled: cancelled.clone(),
         };
@@ -236,15 +237,15 @@ impl Default for WasmCancellationToken {
 #[cfg(target_arch = "wasm32")]
 impl CancellationToken for WasmCancellationToken {
     fn is_cancelled(&self) -> bool {
-        self.cancelled.get()
+        self.cancelled.load(Ordering::Relaxed)
     }
 
     fn cancel(&self) {
-        self.cancelled.set(true);
+        self.cancelled.store(true, Ordering::Relaxed);
     }
 
     fn reset(&self) {
-        self.cancelled.set(false);
+        self.cancelled.store(false, Ordering::Relaxed);
     }
 }
 
@@ -252,24 +253,24 @@ impl CancellationToken for WasmCancellationToken {
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone)]
 pub struct WasmCancellationHandle {
-    cancelled: std::rc::Rc<std::cell::Cell<bool>>,
+    cancelled: Arc<AtomicBool>,
 }
 
 #[cfg(target_arch = "wasm32")]
 impl WasmCancellationHandle {
     /// Cancel the associated token
     pub fn cancel(&self) {
-        self.cancelled.set(true);
+        self.cancelled.store(true, Ordering::Relaxed);
     }
 
     /// Check if the token is cancelled
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.get()
+        self.cancelled.load(Ordering::Relaxed)
     }
 
     /// Reset the cancellation state
     pub fn reset(&self) {
-        self.cancelled.set(false);
+        self.cancelled.store(false, Ordering::Relaxed);
     }
 }
 
