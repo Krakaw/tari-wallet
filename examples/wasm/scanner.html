@@ -420,6 +420,9 @@
                         <div class="form-group">
                             <label for="specificHeights">Block Heights (comma-separated):</label>
                             <textarea id="specificHeights" placeholder="e.g., 100, 200, 300, 1000"></textarea>
+                            <p style="font-size: 0.9em; color: #666; margin-top: 5px;">
+                                ⚡ Optimized: Only requested heights are fetched (no pagination or range scanning)
+                            </p>
                         </div>
                     </div>
                     <div class="form-group">
@@ -835,8 +838,21 @@
             
             // Cancel the enhanced scanner
             if (scanner && scanner.cancel_scan) {
-                scanner.cancel_scan();
-                log('info', '📡 Cancellation signal sent to enhanced scanner');
+                try {
+                    scanner.cancel_scan();
+                    log('info', '📡 Cancellation signal sent to enhanced scanner');
+                    
+                    // Verify cancellation worked
+                    if (scanner.is_cancelled && scanner.is_cancelled()) {
+                        log('success', '✅ Scanner confirmed as cancelled');
+                    } else {
+                        log('warning', '⚠️ Scanner may not be cancelled yet');
+                    }
+                } catch (error) {
+                    log('error', `❌ Failed to cancel scanner: ${error.message || error}`);
+                }
+            } else {
+                log('warning', '⚠️ Scanner cancellation method not available');
             }
             
             isScanning = false;
@@ -883,11 +899,20 @@
                     log('info', '   • A valid 64-character hexadecimal view key, or');
                     log('info', '   • A valid BIP39 seed phrase (12-24 words)');
                     updateProgress(0, 'Scanner creation failed');
+                    
+                    // Cleanup and exit early
+                    isScanning = false;
+                    updateScanButton(false);
+                    if (scanner && scanner.cleanup_scan) {
+                        try { scanner.cleanup_scan(); } catch (e) { /* ignore */ }
+                    }
                     return;
                 }
 
                 const scanMode = document.getElementById('scanMode').value;
                 const limit = parseInt(document.getElementById('limit').value);
+
+                log('info', `🔧 Scan mode: ${scanMode}, batch limit: ${limit}`);
 
                 // Configure the enhanced scanner based on scan mode
                 if (scanMode === 'specific') {
@@ -910,7 +935,14 @@
                     }
 
                     log('info', `🔍 Configuring scan for ${heights.length} specific blocks: ${heights.join(', ')}`);
-                    scanner.configure_scan_blocks(JSON.stringify(heights), limit);
+                    log('info', `⚡ This should use optimized direct fetching (no pagination)`);
+                    try {
+                        scanner.configure_scan_blocks(JSON.stringify(heights), limit);
+                        log('success', '✅ Specific blocks configuration sent to scanner');
+                    } catch (error) {
+                        log('error', `❌ Failed to configure specific blocks: ${error.message || error}`);
+                        return;
+                    }
 
                 } else {
                     // Range mode
@@ -925,12 +957,31 @@
                     }
 
                     log('info', `🔍 Configuring scan for height range ${startHeight} to ${endHeight || 'tip'}`);
-                    scanner.configure_scan(startHeight, endHeight || null, limit);
+                    log('info', `📊 This will use range scanning with pagination`);
+                    try {
+                        scanner.configure_scan(BigInt(startHeight), endHeight ? BigInt(endHeight) : null, limit);
+                        log('success', '✅ Range configuration sent to scanner');
+                    } catch (error) {
+                        log('error', `❌ Failed to configure range: ${error.message || error}`);
+                        return;
+                    }
                 }
 
                 // Create progress callback
                 const progressCallback = (progressInfo) => {
-                    if (!isScanning) return; // Don't update if scan was stopped
+                    if (!isScanning) {
+                        log('info', '⏹️ Progress callback detected scan was stopped, ending updates');
+                        return; // Don't update if scan was stopped
+                    }
+
+                    // Check if scanner is cancelled
+                    if (scanner && scanner.is_cancelled && scanner.is_cancelled()) {
+                        log('info', '⏹️ Progress callback detected scanner cancellation');
+                        isScanning = false;
+                        updateProgress(0, 'Scan cancelled');
+                        updateScanButton(false);
+                        return;
+                    }
 
                     // Update progress bar
                     updateProgress(progressInfo.progress_percent, 
@@ -1017,6 +1068,17 @@
             } finally {
                 isScanning = false;
                 updateScanButton(false);
+                
+                // Cleanup scan ID when scan ends (success or failure)
+                if (scanner && scanner.cleanup_scan) {
+                    try {
+                        scanner.cleanup_scan();
+                        log('info', '🧹 Scanner resources cleaned up');
+                    } catch (error) {
+                        // Ignore cleanup errors
+                        log('warning', `⚠️ Failed to cleanup scan resources: ${error.message || error}`);
+                    }
+                }
             }
         };
 

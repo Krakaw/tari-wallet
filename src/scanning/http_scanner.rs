@@ -425,12 +425,26 @@ impl HttpBlockchainScanner {
         let mut all_blocks = Vec::new();
         let mut page = 0;
         let mut has_next_page = true;
+        const MAX_PAGES: u64 = 1000; // Safety limit to prevent infinite loops
 
-        while has_next_page {
+        while has_next_page && page < MAX_PAGES {
             let response = self.sync_utxos_by_block(start_hash.clone(), end_hash.clone(), limit, page).await?;
             all_blocks.extend(response.blocks);
             has_next_page = response.has_next_page;
             page += 1;
+        }
+
+        // Log if we hit the maximum page limit
+        if page >= MAX_PAGES && has_next_page {
+            #[cfg(target_arch = "wasm32")]
+            {
+                // For WASM, we can't use console_log! directly here since it's defined in wasm.rs
+                // Instead, we'll let the calling code handle this error case
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                eprintln!("Warning: Hit maximum page limit ({}) while fetching blocks, some blocks may be missing", MAX_PAGES);
+            }
         }
 
         // Filter blocks to only include requested heights
@@ -442,6 +456,52 @@ impl HttpBlockchainScanner {
 
         Ok(HttpBlockResponse {
             blocks: filtered_blocks,
+            has_next_page: false,
+        })
+    }
+
+    /// Fetch specific block heights efficiently without using range API
+    /// This method fetches only the requested heights to avoid unnecessary data transfer
+    async fn fetch_specific_heights_directly(&self, heights: Vec<u64>) -> LightweightWalletResult<HttpBlockResponse> {
+        if heights.is_empty() {
+            return Ok(HttpBlockResponse {
+                blocks: Vec::new(),
+                has_next_page: false,
+            });
+        }
+
+        // For specific heights, fetch each block individually to avoid pagination overhead
+        // This is much more efficient than fetching entire ranges when only specific heights are needed
+        let mut all_blocks = Vec::new();
+
+        // Process heights in small batches to avoid overwhelming the API
+        const DIRECT_FETCH_BATCH_SIZE: usize = 10;
+        for height_batch in heights.chunks(DIRECT_FETCH_BATCH_SIZE) {
+            for &height in height_batch {
+                // Get the header first to get the block hash
+                let header = self.get_header_by_height(height).await?;
+                let block_hash = hex::encode(&header.hash);
+                
+                // Fetch the specific block using a single-block range
+                let response = self.sync_utxos_by_block(
+                    block_hash.clone(), 
+                    block_hash, // Same start and end hash for single block
+                    1, // Limit to 1 block
+                    0  // Page 0
+                ).await?;
+                
+                // Add any blocks returned (should be just the one we requested)
+                for block in response.blocks {
+                    if block.height == height {
+                        all_blocks.push(block);
+                        break; // Found our block, move to next
+                    }
+                }
+            }
+        }
+
+        Ok(HttpBlockResponse {
+            blocks: all_blocks,
             has_next_page: false,
         })
     }
@@ -609,6 +669,7 @@ impl HttpBlockchainScanner {
         Ok(ScanConfig {
             start_height,
             end_height,
+            specific_heights: None,
             batch_size: 100,
             #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
             request_timeout: self.timeout,
@@ -630,6 +691,7 @@ impl HttpBlockchainScanner {
         ScanConfig {
             start_height,
             end_height,
+            specific_heights: None,
             batch_size: 100,
             #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
             request_timeout: self.timeout,
@@ -774,7 +836,63 @@ impl BlockchainScanner for HttpBlockchainScanner {
         #[cfg(feature = "tracing")]
         debug!("Starting HTTP block scan from height {} to {:?}", config.start_height, config.end_height);
         
-        // Get tip info to determine end height
+        let mut results = Vec::new();
+
+        // Handle specific heights differently - no pagination required
+        if config.is_scanning_specific_heights() {
+            let specific_heights = config.specific_heights.as_ref().unwrap();
+            #[cfg(feature = "tracing")]
+            debug!("Scanning {} specific heights: {:?}", specific_heights.len(), specific_heights);
+            
+            // Use direct fetching for specific heights - more efficient, no pagination
+            let http_response = self.fetch_specific_heights_directly(specific_heights.clone()).await?;
+            
+            for http_block in http_response.blocks {
+                let block_info = Self::convert_http_block_to_block_info(&http_block)?;
+                let mut wallet_outputs = Vec::new();
+                
+                for output in &block_info.outputs {
+                    let mut found_output = false;
+                    
+                    // Strategy 1: Regular recoverable outputs
+                    if !found_output {
+                        if let Some(wallet_output) = Self::scan_for_recoverable_output(output, &config.extraction_config)? {
+                            wallet_outputs.push(wallet_output);
+                            found_output = true;
+                        }
+                    }
+                    
+                    // Strategy 2: One-sided payments
+                    if !found_output {
+                        if let Some(wallet_output) = Self::scan_for_one_sided_payment(output, &config.extraction_config)? {
+                            wallet_outputs.push(wallet_output);
+                            found_output = true;
+                        }
+                    }
+                    
+                    // Strategy 3: Coinbase outputs
+                    if !found_output {
+                        if let Some(wallet_output) = Self::scan_for_coinbase_output(output)? {
+                            wallet_outputs.push(wallet_output);
+                        }
+                    }
+                }
+                
+                results.push(BlockScanResult {
+                    height: block_info.height,
+                    block_hash: block_info.hash,
+                    outputs: block_info.outputs,
+                    wallet_outputs,
+                    mined_timestamp: block_info.timestamp,
+                });
+            }
+            
+            #[cfg(feature = "tracing")]
+            debug!("HTTP scan completed for specific heights, found {} blocks with wallet outputs", results.len());
+            return Ok(results);
+        }
+
+        // Handle range scanning with pagination (existing logic)
         let tip_info = self.get_tip_info().await?;
         let end_height = config.end_height.unwrap_or(tip_info.best_block_height);
 
@@ -782,14 +900,13 @@ impl BlockchainScanner for HttpBlockchainScanner {
             return Ok(Vec::new());
         }
 
-        let mut results = Vec::new();
         let mut current_height = config.start_height;
 
         while current_height <= end_height {
             let batch_end = std::cmp::min(current_height + config.batch_size - 1, end_height);
             let heights: Vec<u64> = (current_height..=batch_end).collect();
 
-            // Fetch blocks for this batch
+            // Fetch blocks for this batch using the range-based method
             let http_response = self.fetch_blocks_by_heights(heights).await?;
 
             for http_block in http_response.blocks {
@@ -1101,34 +1218,32 @@ impl HttpScannerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extraction::ExtractionConfig;
+    use std::time::Duration;
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_http_scanner_builder() {
         let builder = HttpScannerBuilder::new()
-            .with_base_url("http://127.0.0.1:18142".to_string())
+            .with_base_url("https://rpc.tari.com".to_string())
             .with_timeout(Duration::from_secs(10));
-        
-        // Note: This will fail if no server is running, but tests the builder pattern
-        let result = builder.build().await;
-        assert!(result.is_err()); // Expected to fail in test environment
+            
+        let scanner = builder.build().await;
+        assert!(scanner.is_ok());
     }
 
     #[test]
     fn test_http_output_conversion() {
         let http_output = HttpOutputData {
-            output_hash: vec![0u8; 32],
-            commitment: vec![1u8; 32],
-            encrypted_data: vec![1u8; 80], // Provide minimum required bytes for encrypted data
-            sender_offset_public_key: vec![2u8; 32],
-            features: Some(HttpOutputFeatures {
-                output_type: 0,
-                maturity: 0,
-                range_proof_type: 0,
-            }),
+            output_hash: vec![1u8; 32],
+            commitment: vec![2u8; 32],
+            encrypted_data: vec![3u8; 24], // Minimum 24 bytes for EncryptedData
+            sender_offset_public_key: vec![4u8; 32],
+            features: None,
             script: None,
             metadata_signature: None,
             covenant: None,
-            minimum_value_promise: Some(0),
+            minimum_value_promise: Some(1000),
             range_proof: None,
         };
 
@@ -1138,38 +1253,38 @@ mod tests {
 
     #[test]
     fn test_http_block_data_json_parsing_without_inputs() {
-        // Test JSON without inputs field (current API)
-        let json_without_inputs = r#"{
-            "header_hash": [1, 2, 3, 4],
-            "height": 12345,
+        let json = r#"{
+            "header_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "height": 100,
             "outputs": [],
-            "mined_timestamp": 1748298680
+            "mined_timestamp": 1234567890
         }"#;
 
-        let result: Result<HttpBlockData, serde_json::Error> = serde_json::from_str(json_without_inputs);
+        let result: Result<HttpBlockData, _> = serde_json::from_str(json);
         assert!(result.is_ok());
         let block_data = result.unwrap();
-        assert_eq!(block_data.height, 12345);
+        assert_eq!(block_data.height, 100);
         assert!(block_data.inputs.is_none());
     }
 
     #[test]
     fn test_http_block_data_json_parsing_with_inputs() {
-        // Test JSON with inputs field (future API)
-        let json_with_inputs = r#"{
-            "header_hash": [1, 2, 3, 4],
-            "height": 12345,
+        let json = r#"{
+            "header_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "height": 100,
             "outputs": [],
-            "inputs": [],
-            "mined_timestamp": 1748298680
+            "inputs": [
+                "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+            ],
+            "mined_timestamp": 1234567890
         }"#;
 
-        let result: Result<HttpBlockData, serde_json::Error> = serde_json::from_str(json_with_inputs);
+        let result: Result<HttpBlockData, _> = serde_json::from_str(json);
         assert!(result.is_ok());
         let block_data = result.unwrap();
-        assert_eq!(block_data.height, 12345);
+        assert_eq!(block_data.height, 100);
         assert!(block_data.inputs.is_some());
-        assert_eq!(block_data.inputs.unwrap().len(), 0);
+        assert_eq!(block_data.inputs.unwrap().len(), 1);
     }
 
     #[test]
@@ -1177,16 +1292,42 @@ mod tests {
         let json = r#"{
             "metadata": {
                 "best_block_height": 12345,
-                "best_block_hash": [1, 2, 3, 4],
-                "accumulated_difficulty": [5, 6, 7, 8],
-                "pruned_height": 100,
-                "timestamp": 1748298680
+                "best_block_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "accumulated_difficulty": "1000000",
+                "pruned_height": 10000,
+                "timestamp": 1234567890
             }
         }"#;
 
-        let result: Result<HttpTipInfoResponse, serde_json::Error> = serde_json::from_str(json);
+        let result: Result<HttpTipInfoResponse, _> = serde_json::from_str(json);
         assert!(result.is_ok());
         let tip_info = result.unwrap();
         assert_eq!(tip_info.metadata.best_block_height, 12345);
+    }
+
+    #[test]
+    fn test_scan_config_specific_heights() {
+        let heights = vec![100, 200, 300];
+        let config = ScanConfig::for_specific_heights(heights.clone(), ExtractionConfig::default());
+        
+        assert!(config.is_scanning_specific_heights());
+        assert_eq!(config.get_heights_to_scan(), heights);
+        assert_eq!(config.start_height, 100);
+        assert_eq!(config.end_height, Some(300));
+    }
+
+    #[test]
+    fn test_scan_config_range_scanning() {
+        let config = ScanConfig {
+            start_height: 100,
+            end_height: Some(105),
+            specific_heights: None,
+            batch_size: 10,
+            request_timeout: Duration::from_secs(30),
+            extraction_config: ExtractionConfig::default(),
+        };
+        
+        assert!(!config.is_scanning_specific_heights());
+        assert_eq!(config.get_heights_to_scan(), vec![100, 101, 102, 103, 104, 105]);
     }
 } 

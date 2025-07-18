@@ -127,6 +127,7 @@ impl EnhancedScanConfig {
         crate::scanning::ScanConfig {
             start_height: self.from_block,
             end_height: Some(self.to_block),
+            specific_heights: self.block_heights.clone(),
             batch_size: self.batch_size as u64,
             request_timeout: self.request_timeout,
             extraction_config: crate::extraction::ExtractionConfig::default(),

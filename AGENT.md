@@ -9,14 +9,15 @@
 - `cargo check` - Fast compile check without building
 - `cargo build --release` - Production build
 - `wasm-pack test --node --features wasm` - WASM-specific tests
-- `wasm-pack build --target web` - Build WASM module for web
+- `wasm-pack build --target web --out-dir examples/wasm/pkg --features http` - Build WASM module for web
+- `wasm-pack build --target nodejs --out-dir examples/wasm/pkg --features http` - Build WASM module for node
 
 ## Architecture & Structure
-- **Core modules**: `wallet/` (master keys, addresses), `key_management/` (BIP39-like mnemonics), `data_structures/` (addresses, types)
+- **Core modules**: `wallet/` (master keys, addresses), `key_management/` (Tari Index based key generation), `data_structures/` (addresses, types)
 - **Crypto**: `validation/` (range proofs, commitments), `extraction/` (UTXO processing), `crypto/` (primitives)
 - **Storage**: Optional SQLite database support with `storage/` module
 - **Scanning**: GRPC-based blockchain scanning with `scanning/` module for UTXO discovery
-- **Features**: `grpc` (blockchain scanning), `storage` (SQLite), `wasm` (WebAssembly), `http` (web APIs)
+- **Features**: `grpc` (blockchain scanning), `storage` (SQLite), `http` (web APIs)
 - **Database**: SQLite (`wallet.db`) for persistent storage when `storage` feature enabled
 
 ## Code Style & Conventions
@@ -27,3 +28,4 @@
 - **Features**: Use `#[cfg(feature = "...")]` for conditional compilation
 - **Security**: Zeroize sensitive data, use SafeArray for keys, no secrets in logs
 - **Types**: Use domain-specific types like `CompressedPublicKey`, `PrivateKey`, `MicroMinotari`
+- **Logging**: In the wasm use the `console_log!` macro.
