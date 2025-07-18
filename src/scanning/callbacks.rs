@@ -265,19 +265,38 @@ impl ProgressCallback for ConsoleProgressCallback {
             *last = progress.blocks_processed;
         }
         
-        let progress_percent = progress.progress_percentage() * 100.0;
-        let blocks_per_sec = progress.blocks_per_second();
+        // Use the animated progress bar if we have wallet state, otherwise fall back to simple display
+        let progress_display = if let Some(wallet_state) = &progress.wallet_state {
+            // Use the beautiful animated progress bar with balance information
+            wallet_state.format_progress_bar(
+                progress.blocks_processed as u64,
+                progress.total_blocks as u64,
+                progress.current_block,
+                &format!("{:?}", progress.phase).replace("Blocks", "")
+            )
+        } else {
+            // Fallback to simpler progress display
+            let progress_percent = progress.progress_percentage() * 100.0;
+            let blocks_per_sec = progress.blocks_per_second();
+            let bar_width = 40;
+            let filled_width = ((progress_percent / 100.0) * bar_width as f64) as usize;
+            let bar = format!("{}{}",
+                "█".repeat(filled_width),
+                "░".repeat(bar_width - filled_width)
+            );
+            
+            format!(
+                "[{}] {:.1}% Block {} | {:.1} blocks/s | Found: {} outputs, {} spent",
+                bar,
+                progress_percent,
+                crate::utils::number::format_number(progress.current_block),
+                blocks_per_sec,
+                crate::utils::number::format_number(progress.outputs_found),
+                crate::utils::number::format_number(progress.inputs_found)
+            )
+        };
         
-        print!(
-            "\r🔍 Progress: {:.1}% ({}/{}) | Block {} | {:.1} blocks/s | Found: {} outputs, {} spent   ",
-            progress_percent,
-            progress.blocks_processed,
-            progress.total_blocks,
-            progress.current_block,
-            blocks_per_sec,
-            progress.outputs_found,
-            progress.inputs_found
-        );
+        print!("\r{}", progress_display);
         std::io::Write::flush(&mut std::io::stdout()).unwrap();
     }
     
