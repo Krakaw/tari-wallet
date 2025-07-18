@@ -4,6 +4,7 @@
 //! master keys, seed phrases, and wallet metadata.
 
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroize;
 use rand_core::{OsRng, RngCore};
@@ -12,6 +13,12 @@ use crate::data_structures::address::{TariAddress, DualAddress, SingleAddress, T
 use crate::data_structures::types::{CompressedPublicKey, PrivateKey};
 use crate::errors::KeyManagementError;
 use crate::key_management::{mnemonic_to_master_key, bytes_to_mnemonic, CipherSeed};
+
+// For WASM console logging and time functionality
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use js_sys::Date;
 
 // Constants from Tari CipherSeed specification for birthday calculation
 const BIRTHDAY_GENESIS_FROM_UNIX_EPOCH: u64 = 1640995200; // seconds to 2022-01-01 00:00:00 UTC
@@ -56,18 +63,51 @@ impl Wallet {
 
     /// Create a new wallet from a seed phrase and optional passphrase
     pub fn new_from_seed_phrase(phrase: &str, passphrase: Option<&str>) -> Result<Self, KeyManagementError> {
+        // Add console logging for WASM debugging
+        #[cfg(target_arch = "wasm32")]
+        {
+            web_sys::console::log_1(&format!("[WALLET] new_from_seed_phrase - START").into());
+            web_sys::console::log_1(&format!("[WALLET] phrase length: {}", phrase.len()).into());
+            web_sys::console::log_1(&format!("[WALLET] has passphrase: {}", passphrase.is_some()).into());
+        }
+        
         // Convert seed phrase to master key
-        let master_key = mnemonic_to_master_key(phrase, passphrase)?;
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&format!("[WALLET] Converting seed phrase to master key...").into());
+        
+        let master_key = mnemonic_to_master_key(phrase, passphrase)
+            .map_err(|e| {
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::log_1(&format!("[WALLET] ERROR in mnemonic_to_master_key: {}", e).into());
+                e
+            })?;
+        
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&format!("[WALLET] Master key converted successfully").into());
         
         // Calculate current birthday as days since genesis
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&format!("[WALLET] Calculating birthday...").into());
+        
         let birthday = Self::calculate_current_birthday();
         
-        Ok(Self {
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&format!("[WALLET] Birthday calculated: {}", birthday).into());
+        
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&format!("[WALLET] Creating wallet instance...").into());
+        
+        let wallet = Self {
             master_key: SafeArray::new(master_key),
             birthday,
             metadata: WalletMetadata::default(),
             original_seed_phrase: Some(phrase.to_string()),
-        })
+        };
+        
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&format!("[WALLET] new_from_seed_phrase - SUCCESS").into());
+        
+        Ok(wallet)
     }
 
     /// Generate a new wallet with random entropy
@@ -112,6 +152,7 @@ impl Wallet {
     }
 
     /// Calculate the current birthday (days since Tari genesis date)
+    #[cfg(not(target_arch = "wasm32"))]
     fn calculate_current_birthday() -> u64 {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -123,6 +164,21 @@ impl Wallet {
         }
         
         let seconds_since_genesis = now - BIRTHDAY_GENESIS_FROM_UNIX_EPOCH;
+        seconds_since_genesis / SECONDS_PER_DAY
+    }
+
+    /// Calculate the current birthday (days since Tari genesis date) - WASM version
+    #[cfg(target_arch = "wasm32")]
+    fn calculate_current_birthday() -> u64 {
+        // Use JavaScript Date API for WASM environments
+        let now_ms = Date::now(); // Returns milliseconds since UNIX epoch
+        let now_secs = (now_ms / 1000.0) as u64; // Convert to seconds
+        
+        if now_secs < BIRTHDAY_GENESIS_FROM_UNIX_EPOCH {
+            return 0; // Before genesis date
+        }
+        
+        let seconds_since_genesis = now_secs - BIRTHDAY_GENESIS_FROM_UNIX_EPOCH;
         seconds_since_genesis / SECONDS_PER_DAY
     }
 

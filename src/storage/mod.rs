@@ -7,6 +7,8 @@
 
 pub mod storage_trait;
 pub mod sqlite;
+pub mod scanner_storage;
 
 pub use storage_trait::*;
-pub use sqlite::*; 
+pub use sqlite::*;
+pub use scanner_storage::*; 

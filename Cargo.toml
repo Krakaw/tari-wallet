@@ -97,8 +97,8 @@ tonic-build = "0.10"  # GRPC code generation
 [features]
 default = ["http"]
 grpc = ["rayon", "tonic", "prost", "clap", "async-trait", "tokio", "tracing", "tracing-subscriber"]
-http = ["async-trait", "tokio", "tracing", "reqwest", "web-sys", "js-sys", "serde-wasm-bindgen", "wasm-bindgen-futures"]
-wasm = ["web-sys", "js-sys", "serde-wasm-bindgen", "wasm-bindgen-futures"]
+# HTTP feature - includes common dependencies and target-specific ones
+http = ["async-trait", "tracing", "reqwest", "web-sys", "js-sys", "serde-wasm-bindgen", "wasm-bindgen-futures", "tokio"]
 storage = ["rusqlite", "tokio-rusqlite", "async-trait", "tokio", "clap"]
 grpc-storage = ["grpc", "storage"]
 http-storage = ["http", "storage"]

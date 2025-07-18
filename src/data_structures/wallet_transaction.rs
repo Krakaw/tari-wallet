@@ -200,14 +200,6 @@ impl WalletState {
         // Index by output hash if available - CRITICAL for spent detection
         if let Some(hash) = output_hash {
             self.outputs_by_hash.insert(hash.clone(), tx_index);
-            
-            // Debug logging for output hash indexing
-            #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-            {
-                let hash_hex = hex::encode(&hash);
-                web_sys::console::log_1(&format!("📝 INDEXED OUTPUT: Hash {} -> Value {} μT (total tracked: {})", 
-                    hash_hex, value, self.outputs_by_hash.len()).into());
-            }
         }
         
         self.transactions.push(transaction);
@@ -280,19 +272,10 @@ impl WalletState {
                     let spent_value = transaction.value;
                     
                     // Update balance and counters for the spent inbound transaction
-                    let _old_total_spent = self.total_spent;
                     self.total_spent += spent_value;
                     self.running_balance -= spent_value as i64;
                     self.unspent_count -= 1;
                     self.spent_count += 1;
-                    
-                    // Debug logging for spent value tracking
-                    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-                    {
-                        let hash_hex = hex::encode(output_hash);
-                        web_sys::console::log_1(&format!("💰 SPENT VALUE UPDATE: Hash {} - Value: {} μT, Total spent: {} -> {} μT", 
-                            hash_hex, spent_value, old_total_spent, self.total_spent).into());
-                    }
                     
                     // Create an outbound transaction record for the spending
                     // (this is just for tracking/display, doesn't affect balance)
@@ -313,14 +296,6 @@ impl WalletState {
                     
                     return true;
                 }
-            }
-        } else {
-            // Debug logging for failed hash lookup
-            #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-            {
-                let hash_hex = hex::encode(output_hash);
-                web_sys::console::log_1(&format!("🔍 OUTPUT HASH LOOKUP FAILED: {} (not found in {} tracked hashes)", 
-                    hash_hex, self.outputs_by_hash.len()).into());
             }
         }
         false

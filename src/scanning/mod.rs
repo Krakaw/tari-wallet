@@ -33,12 +33,55 @@ use tari_crypto::{
     ristretto::{RistrettoSecretKey, RistrettoPublicKey},
 };
 
+// Enhanced configuration types
+pub mod config;
+
+// Callback traits for progress and error handling
+pub mod callbacks;
+
+// Enhanced scanner with comprehensive functionality
+pub mod enhanced_scanner;
+
+// Cancellation token abstractions
+pub mod cancellation;
+
 // Include GRPC scanner when the feature is enabled
 #[cfg(feature = "grpc")]
 pub mod grpc_scanner;
 
 // Include HTTP scanner
 pub mod http_scanner;
+
+// Re-export enhanced configuration types
+pub use config::{
+    EnhancedScanConfig, OutputFormat, WalletScanContext, BlockHeightRange,
+    derive_entropy_from_seed_phrase,
+};
+
+// Re-export callback types (with prefixes to avoid conflicts)
+pub use callbacks::{
+    ScanProgress as EnhancedScanProgress, ScanPhase, ScanError, ErrorResponse, 
+    ProgressCallback as EnhancedProgressCallback, ErrorCallback,
+    ScanCallback, CancellationToken, ConsoleProgressCallback, InteractiveErrorCallback,
+    SilentErrorCallback, NoOpProgressCallback, NoOpErrorCallback,
+};
+
+// Re-export enhanced scanner types
+pub use enhanced_scanner::{
+    EnhancedScanResult, EnhancedWalletScanner, EnhancedScannerBuilder,
+};
+
+// Re-export cancellation types
+pub use cancellation::{
+    AtomicCancellationToken, CancellationHandle, NeverCancelToken, AlwaysCancelToken,
+    CompositeCancellationToken, TimeoutCancellationToken,
+};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use cancellation::{TokioCancellationToken, TokioCancellationHandle};
+
+#[cfg(target_arch = "wasm32")]
+pub use cancellation::{WasmCancellationToken, WasmCancellationHandle};
 
 // Re-export GRPC scanner types
 #[cfg(feature = "grpc")]
@@ -72,6 +115,8 @@ pub struct ScanConfig {
     pub start_height: u64,
     /// Ending block height (optional, if None scans to tip)
     pub end_height: Option<u64>,
+    /// Specific block heights to scan (overrides range if provided)
+    pub specific_heights: Option<Vec<u64>>,
     /// Maximum number of blocks to scan in one request
     pub batch_size: u64,
     /// Timeout for requests
@@ -114,6 +159,36 @@ impl ScanConfig {
             progress_callback: Some(callback),
         }
     }
+
+    /// Create a scan config for specific block heights
+    pub fn for_specific_heights(heights: Vec<u64>, extraction_config: ExtractionConfig) -> Self {
+        let start_height = heights.iter().min().copied().unwrap_or(0);
+        let end_height = heights.iter().max().copied();
+        
+        Self {
+            start_height,
+            end_height,
+            specific_heights: Some(heights),
+            batch_size: 100,
+            request_timeout: Duration::from_secs(30),
+            extraction_config,
+        }
+    }
+
+    /// Check if this config is for scanning specific heights (vs range)
+    pub fn is_scanning_specific_heights(&self) -> bool {
+        self.specific_heights.is_some()
+    }
+
+    /// Get the heights to scan (either specific heights or range)
+    pub fn get_heights_to_scan(&self) -> Vec<u64> {
+        if let Some(ref heights) = self.specific_heights {
+            heights.clone()
+        } else {
+            let end_height = self.end_height.unwrap_or(self.start_height + 1000);
+            (self.start_height..=end_height).collect()
+        }
+    }
 }
 
 /// Scan config with progress callback (not Debug/Clone)
@@ -127,6 +202,7 @@ impl Default for ScanConfig {
         Self {
             start_height: 0,
             end_height: None,
+            specific_heights: None,
             batch_size: 100,
             request_timeout: Duration::from_secs(30),
             extraction_config: ExtractionConfig::default(),
@@ -157,6 +233,7 @@ impl WalletScanConfig {
             scan_config: ScanConfig {
                 start_height,
                 end_height: None,
+                specific_heights: None,
                 batch_size: 100,
                 request_timeout: Duration::from_secs(30),
                 extraction_config: ExtractionConfig::default(),

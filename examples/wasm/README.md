@@ -1,12 +1,48 @@
 # Tari WASM Scanner Examples
 
-This directory contains examples demonstrating how to use the Tari WASM Scanner in different environments.
+This directory contains examples demonstrating how to use the Tari WASM Scanner in different environments, including both legacy and enhanced scanning functionality.
 
 ## Files
 
-- **`scanner.js`** - Comprehensive Node.js example showing all features
-- **`package.json`** - NPM configuration for easy setup and running
-- **`README.md`** - This file
+### Enhanced Scanning (NEW! 🚀)
+- **`enhanced_scanner.js`** - Node.js example using lib's enhanced scanning functionality
+- **`enhanced_scanner.html`** - Interactive browser example with progress bars and cancellation
+- **`package.json`** - NPM configuration with enhanced build scripts
+
+### Legacy Scanning  
+- **`scanner.js`** - Original Node.js example (legacy)
+- **`scanner.html`** - Original browser example (legacy)
+- **`README.md`** - This documentation
+
+## 🚀 Enhanced Scanner Features
+
+The enhanced scanner brings the lib's advanced scanning functionality to WASM:
+
+### ✨ Key Features
+- **🎯 Real-time Progress Tracking** - Live progress bars with block/second rates
+- **🛑 Cancellation Support** - WASM-compatible cancellation tokens  
+- **💾 Memory-Only Storage** - No database dependencies, perfect for WASM
+- **📊 Comprehensive Error Handling** - Interactive error recovery strategies
+- **🔄 Batch Processing** - Configurable batch sizes for optimal performance
+- **🌐 Cross-Platform** - Works in Node.js and browsers identically
+
+### 🎨 Enhanced Examples
+
+#### Interactive Browser Example
+The `enhanced_scanner.html` provides a beautiful web interface featuring:
+- Animated progress bars with real-time updates
+- Interactive configuration forms
+- Live statistics display
+- Cancellation support via buttons or Ctrl+C
+- Comprehensive result visualization
+
+#### Node.js Command Line Example  
+The `enhanced_scanner.js` provides a feature-rich CLI experience:
+- Animated progress bars in terminal
+- Real-time scanning statistics
+- Graceful cancellation handling
+- Auto-detection of input type (seed phrase vs view key)
+- Comprehensive error reporting
 
 ## Quick Start
 

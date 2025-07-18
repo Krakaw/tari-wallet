@@ -370,6 +370,7 @@ impl GrpcBlockchainScanner {
             batch_size: 100,
             request_timeout: self.timeout,
             extraction_config,
+            specific_heights: None,
         })
     }
 
@@ -388,6 +389,7 @@ impl GrpcBlockchainScanner {
             batch_size: 100,
             request_timeout: self.timeout,
             extraction_config,
+            specific_heights: None,
         }
     }
 
