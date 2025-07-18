@@ -1173,3 +1173,333 @@ pub fn create_scan_config(scanner: &WasmScanner, start_height: u64, end_height: 
 pub fn get_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
+
+//=============================================================================
+// ENHANCED WASM SCANNING FUNCTIONALITY
+//=============================================================================
+
+/// Enhanced WASM Scanner that uses the lib's new enhanced scanning functionality
+#[wasm_bindgen]
+pub struct EnhancedWasmScanner {
+    scan_context: Option<crate::scanning::WalletScanContext>,
+    scanner: Option<crate::scanning::HttpBlockchainScanner>,
+    config: Option<crate::scanning::EnhancedScanConfig>,
+    cancellation_token: Option<crate::scanning::WasmCancellationToken>,
+}
+
+/// WASM-compatible progress callback
+#[wasm_bindgen]
+pub struct WasmProgressCallback {
+    callback: js_sys::Function,
+}
+
+/// WASM-compatible progress information
+#[wasm_bindgen]
+#[derive(Serialize)]
+pub struct WasmProgressInfo {
+    /// Current block being processed
+    pub current_block: u64,
+    /// Total blocks to process
+    pub total_blocks: usize,
+    /// Blocks processed so far
+    pub blocks_processed: usize,
+    /// Outputs found
+    pub outputs_found: usize,
+    /// Spent outputs found
+    pub inputs_found: usize,
+    /// Progress percentage (0-100)
+    pub progress_percent: f64,
+    /// Blocks per second
+    pub blocks_per_second: f64,
+    /// Current phase
+    pub phase: String,
+    /// Elapsed time in seconds
+    pub elapsed_seconds: f64,
+    /// Estimated remaining seconds
+    pub remaining_seconds: Option<f64>,
+}
+
+/// WASM-compatible scan results
+#[wasm_bindgen]
+#[derive(Serialize)]
+pub struct WasmScanResult {
+    /// Whether scan completed successfully
+    pub completed: bool,
+    /// Whether scan was interrupted
+    pub interrupted: bool,
+    /// Error message if failed
+    pub error: Option<String>,
+    /// Total transactions found
+    pub transaction_count: usize,
+    /// Total received amount (microTari)
+    pub total_received: u64,
+    /// Total spent amount (microTari)
+    pub total_spent: u64,
+    /// Current balance (microTari)
+    pub current_balance: u64,
+    /// Unspent outputs count
+    pub unspent_count: usize,
+    /// Spent outputs count
+    pub spent_count: usize,
+    /// Scan duration in seconds
+    pub duration_seconds: f64,
+}
+
+#[wasm_bindgen]
+impl EnhancedWasmScanner {
+    /// Create a new enhanced WASM scanner from seed phrase
+    #[wasm_bindgen(constructor)]
+    pub fn new_from_seed_phrase(seed_phrase: &str) -> Result<EnhancedWasmScanner, JsValue> {
+        use crate::wallet::Wallet;
+        use crate::scanning::WalletScanContext;
+        
+        let wallet = Wallet::new_from_seed_phrase(seed_phrase, None)
+            .map_err(|e| JsValue::from_str(&format!("Failed to create wallet: {}", e)))?;
+            
+        let scan_context = WalletScanContext::from_wallet(&wallet)
+            .map_err(|e| JsValue::from_str(&format!("Failed to create scan context: {}", e)))?;
+        
+        Ok(EnhancedWasmScanner {
+            scan_context: Some(scan_context),
+            scanner: None,
+            config: None,
+            cancellation_token: None,
+        })
+    }
+
+    /// Create a new enhanced WASM scanner from view key
+    #[wasm_bindgen]
+    pub fn new_from_view_key(view_key_hex: &str) -> Result<EnhancedWasmScanner, JsValue> {
+        use crate::scanning::WalletScanContext;
+        
+        let scan_context = WalletScanContext::from_view_key(view_key_hex)
+            .map_err(|e| JsValue::from_str(&format!("Failed to create scan context: {}", e)))?;
+        
+        Ok(EnhancedWasmScanner {
+            scan_context: Some(scan_context),
+            scanner: None,
+            config: None,
+            cancellation_token: None,
+        })
+    }
+
+    /// Initialize the HTTP scanner
+    #[wasm_bindgen]
+    pub async fn initialize_scanner(&mut self, base_url: &str) -> Result<(), JsValue> {
+        use crate::scanning::{HttpScannerBuilder, BlockchainScanner};
+        use std::time::Duration;
+        
+        let scanner = HttpScannerBuilder::new()
+            .with_base_url(base_url.to_string())
+            .with_timeout(Duration::from_secs(30))
+            .build()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to create scanner: {}", e)))?;
+            
+        self.scanner = Some(scanner);
+        Ok(())
+    }
+
+    /// Configure the scan parameters
+    #[wasm_bindgen]
+    pub fn configure_scan(&mut self, from_block: u64, to_block: Option<u64>, batch_size: Option<usize>) -> Result<(), JsValue> {
+        use crate::scanning::{EnhancedScanConfig, OutputFormat};
+        use std::time::Duration;
+        
+        let actual_to_block = to_block.unwrap_or(from_block + 1000); // Default range
+        let actual_batch_size = batch_size.unwrap_or(10);
+        
+        let config = EnhancedScanConfig::new(from_block, actual_to_block)
+            .with_batch_size(actual_batch_size)
+            .with_progress_frequency(1) // Update every block for WASM
+            .with_output_format(OutputFormat::Summary)
+            .with_request_timeout(Duration::from_secs(30));
+            
+        self.config = Some(config);
+        Ok(())
+    }
+
+    /// Configure the scan for specific blocks
+    #[wasm_bindgen]
+    pub fn configure_scan_blocks(&mut self, blocks: Vec<u64>, batch_size: Option<usize>) -> Result<(), JsValue> {
+        use crate::scanning::{EnhancedScanConfig, OutputFormat};
+        use std::time::Duration;
+        
+        let actual_batch_size = batch_size.unwrap_or(10);
+        
+        let config = EnhancedScanConfig::for_specific_blocks(blocks)
+            .with_batch_size(actual_batch_size)
+            .with_progress_frequency(1) // Update every block for WASM
+            .with_output_format(OutputFormat::Summary)
+            .with_request_timeout(Duration::from_secs(30));
+            
+        self.config = Some(config);
+        Ok(())
+    }
+
+    /// Create a cancellation token for the scan
+    #[wasm_bindgen]
+    pub fn create_cancellation_token(&mut self) -> Result<(), JsValue> {
+        use crate::scanning::WasmCancellationToken;
+        
+        self.cancellation_token = Some(WasmCancellationToken::new());
+        Ok(())
+    }
+
+    /// Cancel the current scan
+    #[wasm_bindgen]
+    pub fn cancel_scan(&self) -> Result<(), JsValue> {
+        if let Some(token) = &self.cancellation_token {
+            token.cancel();
+            Ok(())
+        } else {
+            Err(JsValue::from_str("No cancellation token available"))
+        }
+    }
+
+    /// Check if scan is cancelled
+    #[wasm_bindgen]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation_token
+            .as_ref()
+            .map(|token| token.is_cancelled())
+            .unwrap_or(false)
+    }
+
+    /// Perform the enhanced scan with progress callback
+    #[wasm_bindgen]
+    pub async fn scan_wallet(&mut self, progress_callback: Option<js_sys::Function>) -> Result<JsValue, JsValue> {
+        use crate::scanning::{EnhancedScannerBuilder, CancellationToken};
+        
+        // Validate prerequisites
+        let scan_context = self.scan_context.clone()
+            .ok_or_else(|| JsValue::from_str("No scan context available"))?;
+        let scanner = self.scanner.take()
+            .ok_or_else(|| JsValue::from_str("Scanner not initialized"))?;
+        let config = self.config.clone()
+            .ok_or_else(|| JsValue::from_str("Scan not configured"))?;
+
+        // Create enhanced scanner
+        let mut enhanced_scanner = EnhancedScannerBuilder::new()
+            .with_scanner(scanner)
+            .with_scan_config(config.clone())
+            .build()
+            .map_err(|e| JsValue::from_str(&format!("Failed to build enhanced scanner: {}", e)))?
+            .with_scan_context(scan_context);
+
+        // Create WASM progress callback
+        let wasm_progress_callback = progress_callback.map(|cb| WasmProgressCallback { callback: cb });
+
+        // Setup cancellation
+        let cancellation_token = self.cancellation_token.as_ref()
+            .map(|token| token as &dyn CancellationToken);
+
+        let start_time = std::time::Instant::now();
+
+        // Perform the scan
+        let scan_result = enhanced_scanner.scan_wallet(
+            wasm_progress_callback.as_ref(),
+            None, // No error callback for now
+            cancellation_token,
+        ).await;
+
+        let duration = start_time.elapsed();
+
+        // Process results
+        match scan_result {
+            Ok(result) => {
+                use crate::scanning::EnhancedScanResult;
+                
+                let (completed, interrupted, wallet_state) = match result {
+                    EnhancedScanResult::Completed(state) => (true, false, state),
+                    EnhancedScanResult::Interrupted(state) => (false, true, state),
+                    EnhancedScanResult::Failed(error) => {
+                        return Ok(serde_wasm_bindgen::to_value(&WasmScanResult {
+                            completed: false,
+                            interrupted: false,
+                            error: Some(error.to_string()),
+                            transaction_count: 0,
+                            total_received: 0,
+                            total_spent: 0,
+                            current_balance: 0,
+                            unspent_count: 0,
+                            spent_count: 0,
+                            duration_seconds: duration.as_secs_f64(),
+                        })?);
+                    }
+                };
+
+                let (total_received, total_spent, current_balance, unspent_count, spent_count) = wallet_state.get_summary();
+
+                let result = WasmScanResult {
+                    completed,
+                    interrupted,
+                    error: None,
+                    transaction_count: wallet_state.transactions.len(),
+                    total_received,
+                    total_spent,
+                    current_balance,
+                    unspent_count,
+                    spent_count,
+                    duration_seconds: duration.as_secs_f64(),
+                };
+
+                Ok(serde_wasm_bindgen::to_value(&result)?)
+            }
+            Err(e) => {
+                let result = WasmScanResult {
+                    completed: false,
+                    interrupted: false,
+                    error: Some(e.to_string()),
+                    transaction_count: 0,
+                    total_received: 0,
+                    total_spent: 0,
+                    current_balance: 0,
+                    unspent_count: 0,
+                    spent_count: 0,
+                    duration_seconds: duration.as_secs_f64(),
+                };
+
+                Ok(serde_wasm_bindgen::to_value(&result)?)
+            }
+        }
+    }
+}
+
+/// Implementation of ProgressCallback for WASM
+impl crate::scanning::ProgressCallback for WasmProgressCallback {
+    fn on_progress(&self, progress: &crate::scanning::ScanProgress) {
+        let progress_info = WasmProgressInfo {
+            current_block: progress.current_block,
+            total_blocks: progress.total_blocks,
+            blocks_processed: progress.blocks_processed,
+            outputs_found: progress.outputs_found,
+            inputs_found: progress.inputs_found,
+            progress_percent: progress.progress_percentage() * 100.0,
+            blocks_per_second: progress.blocks_per_second(),
+            phase: format!("{:?}", progress.phase),
+            elapsed_seconds: progress.elapsed().as_secs_f64(),
+            remaining_seconds: progress.estimated_remaining().map(|d| d.as_secs_f64()),
+        };
+
+        if let Ok(js_value) = serde_wasm_bindgen::to_value(&progress_info) {
+            let _ = self.callback.call1(&JsValue::NULL, &js_value);
+        }
+    }
+
+    fn on_phase_change(&self, _old_phase: crate::scanning::ScanPhase, _new_phase: crate::scanning::ScanPhase) {
+        // Phase changes can be handled in the progress callback
+    }
+
+    fn on_scan_start(&self, _total_blocks: usize) {
+        // Could add a specific callback for scan start
+    }
+
+    fn on_scan_complete(&self, _final_state: &crate::data_structures::wallet_transaction::WalletState, _stats: &crate::scanning::ScanProgress) {
+        // Could add a specific callback for scan complete
+    }
+
+    fn on_scan_interrupted(&self, _partial_state: &crate::data_structures::wallet_transaction::WalletState, _stats: &crate::scanning::ScanProgress) {
+        // Could add a specific callback for scan interrupted
+    }
+}

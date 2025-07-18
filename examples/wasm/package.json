@@ -7,8 +7,13 @@
     "start": "node scanner.js",
     "test": "node scanner.js view_key",
     "test-seed": "node scanner.js seed_phrase",
+    "enhanced": "node enhanced_scanner.js",
+    "enhanced-demo": "node enhanced_scanner.js \"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\"",
     "build-wasm": "cd ../.. && wasm-pack build --target nodejs --out-dir examples/wasm/pkg ",
-    "setup": "npm run build-wasm"
+    "build-enhanced": "cd ../.. && wasm-pack build --target web --out-dir examples/wasm/pkg --features wasm,http",
+    "setup": "npm run build-wasm",
+    "setup-enhanced": "npm run build-enhanced",
+    "serve": "python3 -m http.server 8080 || python -m SimpleHTTPServer 8080"
   },
   "keywords": [
     "tari",
