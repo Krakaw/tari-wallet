@@ -77,7 +77,7 @@ pub use cancellation::{
     CompositeCancellationToken, TimeoutCancellationToken,
 };
 
-#[cfg(feature = "tokio")]
+#[cfg(not(target_arch = "wasm32"))]
 pub use cancellation::{TokioCancellationToken, TokioCancellationHandle};
 
 #[cfg(target_arch = "wasm32")]

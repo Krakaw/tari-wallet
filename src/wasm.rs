@@ -1356,9 +1356,12 @@ impl EnhancedWasmScanner {
 
     /// Configure the scan for specific blocks
     #[wasm_bindgen]
-    pub fn configure_scan_blocks(&mut self, blocks: Vec<u64>, batch_size: Option<usize>) -> Result<(), JsValue> {
+    pub fn configure_scan_blocks(&mut self, blocks_json: &str, batch_size: Option<usize>) -> Result<(), JsValue> {
         use crate::scanning::{EnhancedScanConfig, OutputFormat};
         use std::time::Duration;
+        
+        let blocks: Vec<u64> = serde_json::from_str(blocks_json)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse blocks: {}", e)))?;
         
         let actual_batch_size = batch_size.unwrap_or(10);
         

@@ -1010,12 +1010,18 @@
                     }
 
                     // Configure scanner for specific blocks
-                    scanner.configure_scan_blocks(heights, limit);
-                    log('info', `🔍 Configured scan for ${heights.length} specific blocks: ${heights.slice(0, 5).join(', ')}${heights.length > 5 ? '...' : ''}`);
+                    // Convert to numbers and then to JSON string for WASM
+                    const heightsArray = heights.map(h => Number(h));
+                    const limitNumber = Number(limit);
+                    const heightsJson = JSON.stringify(heightsArray);
+                    
+                    log('info', `🔧 Configuring scanner for ${heightsArray.length} blocks with limit ${limitNumber}`);
+                    scanner.configure_scan_blocks(heightsJson, limitNumber);
+                    log('info', `🔍 Configured scan for ${heightsArray.length} specific blocks: ${heightsArray.slice(0, 5).join(', ')}${heightsArray.length > 5 ? '...' : ''}`);
 
                 } else {
                     // Range mode
-                    const startHeight = parseInt(document.getElementById('startHeight').value) || 0;
+                    const startHeight = Number(parseInt(document.getElementById('startHeight').value) || 0);
                     let endHeight = document.getElementById('endHeight').value;
 
                     // Get tip height if endHeight not specified
@@ -1024,10 +1030,13 @@
                         const baseNodeUrl = document.getElementById('baseNodeUrl').value;
                         const httpClient = new HttpClient(baseNodeUrl);
                         const tipInfo = await httpClient.getTipInfo();
-                        endHeight = tipInfo.metadata.best_block_height;
+                        endHeight = Number(tipInfo.metadata.best_block_height);
                         log('info', `📡 Current blockchain tip: ${endHeight}`);
+                    } else {
+                        endHeight = Number(parseInt(endHeight));
                     }
-                    endHeight = parseInt(endHeight);
+
+                    const limitNumber = Number(limit);
 
                     if (startHeight > endHeight) {
                         log('error', '❌ Start height cannot be greater than end height');
@@ -1035,7 +1044,8 @@
                     }
 
                     // Configure scanner for block range
-                    scanner.configure_scan(startHeight, endHeight, limit);
+                    log('info', `🔧 Configuring scanner: ${startHeight} to ${endHeight}, limit ${limitNumber}`);
+                    scanner.configure_scan(startHeight, endHeight, limitNumber);
                     log('info', `🔍 Configured scan from height ${startHeight} to ${endHeight} (${endHeight - startHeight + 1} blocks)`);
                 }
 

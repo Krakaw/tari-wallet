@@ -107,14 +107,14 @@ impl CancellationHandle {
 /// 
 /// This wraps tokio's cancellation functionality while implementing
 /// our generic trait, allowing seamless integration in tokio environments.
-#[cfg(feature = "tokio")]
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct TokioCancellationToken {
     receiver: tokio::sync::watch::Receiver<bool>,
     sender: Option<tokio::sync::watch::Sender<bool>>,
 }
 
-#[cfg(feature = "tokio")]
+#[cfg(not(target_arch = "wasm32"))]
 impl TokioCancellationToken {
     /// Create a new tokio cancellation token
     pub fn new() -> Self {
@@ -145,14 +145,14 @@ impl TokioCancellationToken {
     }
 }
 
-#[cfg(feature = "tokio")]
+#[cfg(not(target_arch = "wasm32"))]
 impl Default for TokioCancellationToken {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(feature = "tokio")]
+#[cfg(not(target_arch = "wasm32"))]
 impl CancellationToken for TokioCancellationToken {
     fn is_cancelled(&self) -> bool {
         *self.receiver.borrow()
@@ -172,13 +172,13 @@ impl CancellationToken for TokioCancellationToken {
 }
 
 /// Handle for cancelling tokio operations
-#[cfg(feature = "tokio")]
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct TokioCancellationHandle {
     sender: tokio::sync::watch::Sender<bool>,
 }
 
-#[cfg(feature = "tokio")]
+#[cfg(not(target_arch = "wasm32"))]
 impl TokioCancellationHandle {
     /// Cancel the associated token
     pub fn cancel(&self) -> Result<(), tokio::sync::watch::error::SendError<bool>> {

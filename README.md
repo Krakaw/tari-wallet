@@ -236,7 +236,7 @@ let wallet = Wallet::generate_new_with_seed_phrase(None)?;
 ### WASM (Web Assembly)
 ```rust
 // WASM-compatible with feature flag
-#[cfg(feature = "wasm")]
+#[cfg(target_arch = "wasm32")]
 use lightweight_wallet_libs::wasm::*;
 ```
 

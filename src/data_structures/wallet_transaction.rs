@@ -202,7 +202,7 @@ impl WalletState {
             self.outputs_by_hash.insert(hash.clone(), tx_index);
             
             // Debug logging for output hash indexing
-            #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+            #[cfg(all(target_arch = "wasm32"))]
             {
                 let hash_hex = hex::encode(&hash);
                 web_sys::console::log_1(&format!("📝 INDEXED OUTPUT: Hash {} -> Value {} μT (total tracked: {})", 
@@ -280,19 +280,10 @@ impl WalletState {
                     let spent_value = transaction.value;
                     
                     // Update balance and counters for the spent inbound transaction
-                    let _old_total_spent = self.total_spent;
                     self.total_spent += spent_value;
                     self.running_balance -= spent_value as i64;
                     self.unspent_count -= 1;
                     self.spent_count += 1;
-                    
-                    // Debug logging for spent value tracking
-                    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-                    {
-                        let hash_hex = hex::encode(output_hash);
-                        web_sys::console::log_1(&format!("💰 SPENT VALUE UPDATE: Hash {} - Value: {} μT, Total spent: {} -> {} μT", 
-                            hash_hex, spent_value, old_total_spent, self.total_spent).into());
-                    }
                     
                     // Create an outbound transaction record for the spending
                     // (this is just for tracking/display, doesn't affect balance)
@@ -316,7 +307,7 @@ impl WalletState {
             }
         } else {
             // Debug logging for failed hash lookup
-            #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+            #[cfg(all(target_arch = "wasm32"))]
             {
                 let hash_hex = hex::encode(output_hash);
                 web_sys::console::log_1(&format!("🔍 OUTPUT HASH LOOKUP FAILED: {} (not found in {} tracked hashes)", 
