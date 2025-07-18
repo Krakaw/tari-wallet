@@ -748,7 +748,6 @@
                 updateConnectionStatus('error', `Failed to connect: ${error.message}`);
                 log('error', `❌ Failed to connect to base node: ${error.message}`);
                 log('info', `   Make sure the Tari base node is running on ${baseNodeUrl}`);
-                console.error(error);
             }
         };
 
@@ -926,7 +925,7 @@
                     }
 
                     log('info', `🔍 Configuring scan for height range ${startHeight} to ${endHeight || 'tip'}`);
-                    scanner.configure_scan(startHeight, endHeight, limit);
+                    scanner.configure_scan(startHeight, endHeight || null, limit);
                 }
 
                 // Create progress callback
@@ -1015,7 +1014,6 @@
             } catch (error) {
                 log('error', `❌ Scan failed: ${error.message || error}`);
                 updateProgress(0, 'Scan failed');
-                console.error('Scan error:', error);
             } finally {
                 isScanning = false;
                 updateScanButton(false);
@@ -1088,7 +1086,7 @@
             try {
                 localStorage.setItem(`tariScanner_${key}`, value);
             } catch (error) {
-                console.warn('Failed to save to localStorage:', error);
+                // Silently ignore localStorage errors
             }
         }
 
@@ -1096,7 +1094,7 @@
             try {
                 return localStorage.getItem(`tariScanner_${key}`) || defaultValue;
             } catch (error) {
-                console.warn('Failed to load from localStorage:', error);
+                // Silently ignore localStorage errors
                 return defaultValue;
             }
         }
