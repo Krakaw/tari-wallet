@@ -4,8 +4,15 @@
 //! handling in the scanning process. This allows the core scanning logic to be
 //! decoupled from specific UI implementations (console, web, GUI, etc.).
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use crate::data_structures::wallet_transaction::WalletState;
+
+// Platform-specific time handling
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+
+#[cfg(target_arch = "wasm32")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Progress information for scanning operations
 #[derive(Debug, Clone)]
@@ -21,7 +28,10 @@ pub struct ScanProgress {
     /// Number of spent outputs detected so far
     pub inputs_found: usize,
     /// Time when scanning started
+    #[cfg(not(target_arch = "wasm32"))]
     pub start_time: Instant,
+    #[cfg(target_arch = "wasm32")]
+    pub start_time: SystemTime,
     /// Current wallet state
     pub wallet_state: Option<WalletState>,
     /// Current scanning phase
@@ -70,13 +80,18 @@ impl std::fmt::Display for ScanPhase {
 impl ScanProgress {
     /// Create a new scan progress instance
     pub fn new(total_blocks: usize) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        let start_time = Instant::now();
+        #[cfg(target_arch = "wasm32")]
+        let start_time = SystemTime::UNIX_EPOCH;
+        
         Self {
             current_block: 0,
             total_blocks,
             blocks_processed: 0,
             outputs_found: 0,
             inputs_found: 0,
-            start_time: Instant::now(),
+            start_time,
             wallet_state: None,
             phase: ScanPhase::Initializing,
         }
@@ -115,7 +130,16 @@ impl ScanProgress {
 
     /// Get elapsed time since scan started
     pub fn elapsed(&self) -> Duration {
-        self.start_time.elapsed()
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.start_time.elapsed()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            // SystemTime::elapsed() is not available in WASM
+            // Return a fixed duration for now
+            Duration::from_secs(0)
+        }
     }
 
     /// Get estimated time remaining

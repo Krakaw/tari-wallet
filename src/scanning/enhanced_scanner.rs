@@ -174,18 +174,119 @@ impl<S: BlockchainScanner> EnhancedWalletScanner<S> {
         error_callback: Option<&dyn ErrorCallback>,
         cancellation_token: Option<&dyn CancellationToken>,
     ) -> LightweightWalletResult<EnhancedScanResult> {
+        // WASM debugging - add basic logging to isolate the issue
+        #[cfg(all(feature = "http", target_arch = "wasm32"))]
+        {
+            use wasm_bindgen::prelude::*;
+            #[wasm_bindgen]
+            extern "C" {
+                #[wasm_bindgen(js_namespace = console)]
+                fn log(s: &str);
+            }
+            log("[ENHANCED] scan_wallet - method entry");
+        }
+        
         // Ensure we have a scan context and clone it to avoid borrowing issues
-        let scan_context = self.scan_context.clone()
-            .ok_or_else(|| LightweightWalletError::ConfigurationError(
-                "No scan context available".to_string()
-            ))?;
+        #[cfg(all(feature = "http", target_arch = "wasm32"))]
+        {
+            use wasm_bindgen::prelude::*;
+            #[wasm_bindgen]
+            extern "C" {
+                #[wasm_bindgen(js_namespace = console)]
+                fn log(s: &str);
+            }
+            log("[ENHANCED] scan_wallet - about to access scan context");
+        }
+        
+        let scan_context = match &self.scan_context {
+            Some(ctx) => {
+                #[cfg(all(feature = "http", target_arch = "wasm32"))]
+                {
+                    use wasm_bindgen::prelude::*;
+                    #[wasm_bindgen]
+                    extern "C" {
+                        #[wasm_bindgen(js_namespace = console)]
+                        fn log(s: &str);
+                    }
+                    log("[ENHANCED] scan_wallet - scan context found, attempting to clone...");
+                }
+                
+                // Try to clone the scan context manually to isolate the issue
+                let view_key = ctx.view_key.clone();
+                let entropy = ctx.entropy.clone();
+                
+                #[cfg(all(feature = "http", target_arch = "wasm32"))]
+                {
+                    use wasm_bindgen::prelude::*;
+                    #[wasm_bindgen]
+                    extern "C" {
+                        #[wasm_bindgen(js_namespace = console)]
+                        fn log(s: &str);
+                    }
+                    log("[ENHANCED] scan_wallet - scan context cloned successfully");
+                }
+                
+                crate::scanning::WalletScanContext { view_key, entropy }
+            }
+            None => {
+                #[cfg(all(feature = "http", target_arch = "wasm32"))]
+                {
+                    use wasm_bindgen::prelude::*;
+                    #[wasm_bindgen]
+                    extern "C" {
+                        #[wasm_bindgen(js_namespace = console)]
+                        fn log(s: &str);
+                    }
+                    log("[ENHANCED] scan_wallet - ERROR: No scan context available");
+                }
+                return Err(LightweightWalletError::ConfigurationError(
+                    "No scan context available".to_string()
+                ));
+            }
+        };
 
         // Get blocks to scan
+        #[cfg(all(feature = "http", target_arch = "wasm32"))]
+        {
+            use wasm_bindgen::prelude::*;
+            #[wasm_bindgen]
+            extern "C" {
+                #[wasm_bindgen(js_namespace = console)]
+                fn log(s: &str);
+            }
+            log("[ENHANCED] scan_wallet - about to call get_blocks_to_scan()");
+        }
+        
         let block_heights = self.config.get_blocks_to_scan();
+        
+        #[cfg(all(feature = "http", target_arch = "wasm32"))]
+        {
+            use wasm_bindgen::prelude::*;
+            #[wasm_bindgen]
+            extern "C" {
+                #[wasm_bindgen(js_namespace = console)]
+                fn log(s: &str);
+            }
+            log("[ENHANCED] scan_wallet - get_blocks_to_scan() completed");
+        }
+        
         let total_blocks = block_heights.len();
+        
+        #[cfg(all(feature = "http", target_arch = "wasm32"))]
+        {
+            use wasm_bindgen::prelude::*;
+            #[wasm_bindgen]
+            extern "C" {
+                #[wasm_bindgen(js_namespace = console)]
+                fn log(s: &str);
+            }
+            log(&format!("[ENHANCED] scan_wallet - total blocks: {}", total_blocks));
+        }
 
         // Initialize progress tracking
-        let mut progress = EnhancedScanProgress::new(total_blocks);
+        // Create progress tracking
+        let total_blocks = block_heights.len();
+        let mut progress = crate::scanning::callbacks::ScanProgress::new(total_blocks);
         progress.set_phase(ScanPhase::Initializing);
 
         if let Some(callback) = progress_callback {

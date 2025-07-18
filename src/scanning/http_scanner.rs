@@ -39,6 +39,10 @@ use std::time::Duration;
 #[cfg(all(feature = "http", target_arch = "wasm32"))]
 use web_sys::{window, Request, RequestInit, RequestMode, Response};
 
+// WASM-compatible constant Duration (30 seconds)
+#[cfg(all(feature = "http", target_arch = "wasm32"))]
+const WASM_DEFAULT_TIMEOUT: Duration = Duration::new(30, 0);
+
 #[cfg(all(feature = "http", target_arch = "wasm32"))]
 use wasm_bindgen::prelude::*;
 #[cfg(all(feature = "http", target_arch = "wasm32"))]
@@ -609,7 +613,7 @@ impl HttpBlockchainScanner {
             #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
             request_timeout: self.timeout,
             #[cfg(all(feature = "http", target_arch = "wasm32"))]
-            request_timeout: std::time::Duration::from_secs(30), // Default for WASM
+            request_timeout: WASM_DEFAULT_TIMEOUT,
             extraction_config,
         })
     }
@@ -630,7 +634,7 @@ impl HttpBlockchainScanner {
             #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
             request_timeout: self.timeout,
             #[cfg(all(feature = "http", target_arch = "wasm32"))]
-            request_timeout: std::time::Duration::from_secs(30), // Default for WASM
+            request_timeout: WASM_DEFAULT_TIMEOUT,
             extraction_config,
         }
     }

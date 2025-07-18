@@ -4,6 +4,7 @@
 //! master keys, seed phrases, and wallet metadata.
 
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroize;
 use rand_core::{OsRng, RngCore};
@@ -13,9 +14,11 @@ use crate::data_structures::types::{CompressedPublicKey, PrivateKey};
 use crate::errors::KeyManagementError;
 use crate::key_management::{mnemonic_to_master_key, bytes_to_mnemonic, CipherSeed};
 
-// For WASM console logging
+// For WASM console logging and time functionality
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use js_sys::Date;
 
 // Constants from Tari CipherSeed specification for birthday calculation
 const BIRTHDAY_GENESIS_FROM_UNIX_EPOCH: u64 = 1640995200; // seconds to 2022-01-01 00:00:00 UTC
@@ -149,6 +152,7 @@ impl Wallet {
     }
 
     /// Calculate the current birthday (days since Tari genesis date)
+    #[cfg(not(target_arch = "wasm32"))]
     fn calculate_current_birthday() -> u64 {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -160,6 +164,21 @@ impl Wallet {
         }
         
         let seconds_since_genesis = now - BIRTHDAY_GENESIS_FROM_UNIX_EPOCH;
+        seconds_since_genesis / SECONDS_PER_DAY
+    }
+
+    /// Calculate the current birthday (days since Tari genesis date) - WASM version
+    #[cfg(target_arch = "wasm32")]
+    fn calculate_current_birthday() -> u64 {
+        // Use JavaScript Date API for WASM environments
+        let now_ms = Date::now(); // Returns milliseconds since UNIX epoch
+        let now_secs = (now_ms / 1000.0) as u64; // Convert to seconds
+        
+        if now_secs < BIRTHDAY_GENESIS_FROM_UNIX_EPOCH {
+            return 0; // Before genesis date
+        }
+        
+        let seconds_since_genesis = now_secs - BIRTHDAY_GENESIS_FROM_UNIX_EPOCH;
         seconds_since_genesis / SECONDS_PER_DAY
     }
 

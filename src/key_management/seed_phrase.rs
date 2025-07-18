@@ -14,9 +14,11 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use argon2::{Argon2, Algorithm, Version, Params};
 use std::mem::size_of;
 
-// For WASM console logging
+// For WASM console logging and time functionality
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use js_sys::Date;
 
 // Constants from the Tari CipherSeed specification
 const CIPHER_SEED_VERSION: u8 = 2u8;
@@ -51,17 +53,10 @@ pub struct CipherSeed {
 }
 
 impl CipherSeed {
-    /// Create a new CipherSeed with current birthday
+    /// Create a new random CipherSeed
     pub fn new() -> Self {
-        use std::time::{SystemTime, UNIX_EPOCH, Duration};
-        
-        // Calculate birthday as days since genesis
-        let birthday_genesis_date = UNIX_EPOCH + Duration::from_secs(BIRTHDAY_GENESIS_FROM_UNIX_EPOCH);
-        let days = SystemTime::now()
-            .duration_since(birthday_genesis_date)
-            .unwrap_or_default()
-            .as_secs() / SECONDS_PER_DAY;
-        let birthday = u16::try_from(days).unwrap_or(0u16);
+        // Calculate birthday as days since genesis - platform-specific implementation
+        let birthday = Self::calculate_current_birthday();
         
         let mut entropy = Box::new([0u8; CIPHER_SEED_ENTROPY_BYTES]);
         OsRng.fill_bytes(entropy.as_mut());
@@ -75,6 +70,36 @@ impl CipherSeed {
             entropy,
             salt,
         }
+    }
+
+    /// Calculate current birthday (days since genesis) - Native version
+    #[cfg(not(target_arch = "wasm32"))]
+    fn calculate_current_birthday() -> u16 {
+        use std::time::{SystemTime, UNIX_EPOCH, Duration};
+        
+        // Calculate birthday as days since genesis
+        let birthday_genesis_date = UNIX_EPOCH + Duration::from_secs(BIRTHDAY_GENESIS_FROM_UNIX_EPOCH);
+        let days = SystemTime::now()
+            .duration_since(birthday_genesis_date)
+            .unwrap_or_default()
+            .as_secs() / SECONDS_PER_DAY;
+        u16::try_from(days).unwrap_or(0u16)
+    }
+
+    /// Calculate current birthday (days since genesis) - WASM version
+    #[cfg(target_arch = "wasm32")]
+    fn calculate_current_birthday() -> u16 {
+        // Use JavaScript Date API for WASM environments
+        let now_ms = Date::now(); // Returns milliseconds since UNIX epoch
+        let now_secs = (now_ms / 1000.0) as u64; // Convert to seconds
+        
+        if now_secs < BIRTHDAY_GENESIS_FROM_UNIX_EPOCH {
+            return 0u16; // Before genesis date
+        }
+        
+        let seconds_since_genesis = now_secs - BIRTHDAY_GENESIS_FROM_UNIX_EPOCH;
+        let days = seconds_since_genesis / SECONDS_PER_DAY;
+        u16::try_from(days).unwrap_or(0u16)
     }
     
     /// Encrypt the cipher seed with a passphrase

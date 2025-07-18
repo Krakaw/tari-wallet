@@ -780,25 +780,46 @@
 
 
 
-        async function createScanner() {
-            const scannerData = document.getElementById('scannerData').value;
+                async function createScanner() {
+            const scannerData = document.getElementById('scannerData').value.trim();
 
-            if (!scannerData.trim()) {
-                throw new Error('Scanner data is required');
+            if (!scannerData) {
+                throw new Error('Scanner data is required - please enter a view key or seed phrase');
             }
 
             log('info', `🔧 Creating enhanced scanner (auto-detecting type)...`);
-            log('info', `   Using data: ${scannerData.substring(0, 20)}...`);
+            
+            // Provide hints about the data format
+            if (scannerData.length === 64 && /^[0-9a-fA-F]+$/.test(scannerData)) {
+                log('info', `   Detected possible view key format (64 hex characters)`);
+            } else if (scannerData.split(' ').length >= 12 && scannerData.split(' ').length <= 24) {
+                log('info', `   Detected possible seed phrase format (${scannerData.split(' ').length} words)`);
+            } else {
+                log('warning', `   Format unclear - will attempt auto-detection`);
+            }
 
-            scanner = wasm.create_enhanced_wasm_scanner(scannerData);
-            log('success', '✅ Enhanced scanner created successfully (unreachable error fixed!)');
+            try {
+                scanner = wasm.create_enhanced_wasm_scanner(scannerData);
+                log('success', '✅ Enhanced scanner created successfully');
+            } catch (error) {
+                // Re-throw with more context
+                throw new Error(`Scanner creation failed: ${error.message || error}. Please verify your input format.`);
+            }
 
             // Initialize the scanner with base node URL
-            const baseNodeUrl = document.getElementById('baseNodeUrl').value;
+            const baseNodeUrl = document.getElementById('baseNodeUrl').value.trim();
+            if (!baseNodeUrl) {
+                throw new Error('Base node URL is required');
+            }
+            
             log('info', `🌐 Initializing scanner with ${baseNodeUrl}...`);
             
-            await scanner.initialize_scanner(baseNodeUrl);
-            log('success', '✅ Scanner initialized with base node connection');
+            try {
+                await scanner.initialize_scanner(baseNodeUrl);
+                log('success', '✅ Scanner initialized with base node connection');
+            } catch (error) {
+                throw new Error(`Failed to initialize scanner with base node: ${error.message || error}`);
+            }
 
             return scanner;
         }
@@ -855,7 +876,16 @@
                 updateScanButton(true);
                 
                 // Create and initialize scanner
-                await createScanner();
+                try {
+                    await createScanner();
+                } catch (error) {
+                    log('error', `❌ Failed to create scanner: ${error.message || error}`);
+                    log('info', '💡 Please check that your input is either:');
+                    log('info', '   • A valid 64-character hexadecimal view key, or');
+                    log('info', '   • A valid BIP39 seed phrase (12-24 words)');
+                    updateProgress(0, 'Scanner creation failed');
+                    return;
+                }
 
                 const scanMode = document.getElementById('scanMode').value;
                 const limit = parseInt(document.getElementById('limit').value);
