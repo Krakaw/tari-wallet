@@ -31,7 +31,7 @@ pub use hex_utils::*;
 pub use validation::*;
 pub use extraction::*;
 pub use key_management::*;
-#[cfg(feature = "grpc")]
+#[cfg(any(feature = "grpc", feature = "http"))]
 pub use scanning::*;
 #[cfg(feature = "storage")]
 pub use storage::*;

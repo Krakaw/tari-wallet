@@ -40,12 +40,22 @@ pub mod grpc_scanner;
 // Include HTTP scanner
 pub mod http_scanner;
 
+// Include new service modules
+pub mod scanner_service;
+pub mod scanner_builder;
+pub mod progress_tracker;
+
 // Re-export GRPC scanner types
 #[cfg(feature = "grpc")]
 pub use grpc_scanner::{GrpcBlockchainScanner, GrpcScannerBuilder};
 
 // Re-export HTTP scanner types
 pub use http_scanner::{HttpBlockchainScanner, HttpScannerBuilder};
+
+// Re-export new service types
+pub use scanner_service::{ScannerService, DefaultScannerService, ScannerConfig as ServiceScannerConfig, ScanResult, ScanStatistics, ResumeInfo, OutputFormat};
+pub use scanner_builder::{ScannerServiceBuilder, ScannerType as ServiceScannerType};
+pub use progress_tracker::{ProgressTracker, ProgressFormatter, ProgressCallbackManager};
 
 /// Progress callback for scanning operations
 pub type ProgressCallback = Box<dyn Fn(ScanProgress) + Send + Sync>;
