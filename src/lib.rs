@@ -20,6 +20,10 @@ pub mod utils;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 
+// Include WASM service modules when both WASM and HTTP features are available
+#[cfg(all(target_arch = "wasm32", feature = "http"))]
+pub mod wasm_service;
+
 // Include generated GRPC code when the feature is enabled
 #[cfg(feature = "grpc")]
 pub mod tari_rpc {
