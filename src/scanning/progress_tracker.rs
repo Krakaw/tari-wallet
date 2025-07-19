@@ -17,6 +17,7 @@ pub struct ProgressTracker {
 #[derive(Debug)]
 struct ProgressTrackerInner {
     start_time: Instant,
+    start_height: u64,
     current_height: u64,
     target_height: u64,
     outputs_found: u64,
@@ -30,6 +31,7 @@ impl ProgressTracker {
     pub fn new(start_height: u64, target_height: u64) -> Self {
         let inner = ProgressTrackerInner {
             start_time: Instant::now(),
+            start_height,
             current_height: start_height,
             target_height,
             outputs_found: 0,
@@ -76,16 +78,16 @@ impl ProgressTracker {
     /// Calculate completion percentage (0.0 to 1.0)
     pub fn completion_percentage(&self) -> f64 {
         if let Ok(inner) = self.inner.lock() {
-            if inner.target_height <= inner.current_height {
+            if inner.current_height >= inner.target_height {
                 return 1.0;
             }
             
-            let total_blocks = inner.target_height.saturating_sub(inner.current_height);
+            let total_blocks = inner.target_height.saturating_sub(inner.start_height);
             if total_blocks == 0 {
                 return 1.0;
             }
             
-            let completed_blocks = inner.current_height.saturating_sub(inner.current_height);
+            let completed_blocks = inner.current_height.saturating_sub(inner.start_height);
             completed_blocks as f64 / total_blocks as f64
         } else {
             0.0
@@ -283,7 +285,7 @@ mod tests {
         let tracker = ProgressTracker::new(0, 1000);
         tracker.update(500, 10, 5000);
         
-        thread::sleep(Duration::from_millis(100)); // Ensure update frequency is met
+        thread::sleep(Duration::from_millis(1100)); // Ensure update frequency is met (1 second + buffer)
         tracker.update(600, 15, 7500);
         
         let progress = tracker.get_progress().unwrap();
@@ -295,6 +297,7 @@ mod tests {
     #[test]
     fn test_completion_percentage() {
         let tracker = ProgressTracker::new(0, 1000);
+        thread::sleep(Duration::from_millis(1100)); // Wait for update frequency
         tracker.update(250, 5, 1000);
         
         let percentage = tracker.completion_percentage();

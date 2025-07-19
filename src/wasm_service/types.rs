@@ -23,7 +23,7 @@ pub struct WasmProgressInfo {
     /// Completion percentage (0.0 to 100.0)
     pub completion_percentage: f64,
     /// Estimated time remaining (in seconds)
-    pub estimated_time_remaining: Option<u64>,
+    estimated_time_remaining: Option<u64>,
 }
 
 #[wasm_bindgen]
@@ -60,6 +60,12 @@ impl WasmProgressInfo {
         self.estimated_time_remaining = Some(seconds);
     }
 
+    /// Get estimated time remaining
+    #[wasm_bindgen(getter)]
+    pub fn estimated_time_remaining(&self) -> Option<u64> {
+        self.estimated_time_remaining
+    }
+
     /// Get progress as a JSON string
     #[wasm_bindgen(js_name = toJson)]
     pub fn to_json(&self) -> Result<String, JsValue> {
@@ -73,7 +79,7 @@ impl WasmProgressInfo {
 #[wasm_bindgen]
 pub struct WasmTransactionOutput {
     /// Value (in MicroMinotari, if known)
-    pub value: Option<u64>,
+    value: Option<u64>,
     /// Block height where this output was found
     pub block_height: u64,
     /// Timestamp when the block was mined
@@ -111,6 +117,12 @@ impl WasmTransactionOutput {
     #[wasm_bindgen(setter)]
     pub fn set_value(&mut self, value: u64) {
         self.value = Some(value);
+    }
+
+    /// Get the value
+    #[wasm_bindgen(getter)]
+    pub fn value(&self) -> Option<u64> {
+        self.value
     }
 
     /// Get the value as a string (for JavaScript compatibility)

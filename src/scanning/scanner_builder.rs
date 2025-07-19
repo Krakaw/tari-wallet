@@ -339,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_scanner_build() {
-        let service = ScannerServiceBuilder::new()
+        let _service = ScannerServiceBuilder::new()
             .with_scanner_type(ScannerType::Mock)
             .build()
             .await

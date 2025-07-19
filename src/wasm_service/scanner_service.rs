@@ -22,13 +22,13 @@ pub struct WasmScanConfig {
     /// Starting block height
     pub start_height: u64,
     /// Ending block height (optional)
-    pub end_height: Option<u64>,
+    end_height: Option<u64>,
     /// Batch size for block requests
-    pub batch_size: u64,
+    batch_size: u64,
     /// Request timeout in seconds
-    pub timeout_seconds: u64,
+    timeout_seconds: u64,
     /// Whether to use quiet mode
-    pub quiet_mode: bool,
+    quiet_mode: bool,
 }
 
 /// Private fields that can't be directly accessed from WASM
@@ -75,6 +75,30 @@ impl WasmScanConfig {
     #[wasm_bindgen(setter)]
     pub fn set_quiet_mode(&mut self, quiet: bool) {
         self.quiet_mode = quiet;
+    }
+
+    /// Get ending block height
+    #[wasm_bindgen(getter)]
+    pub fn end_height(&self) -> Option<u64> {
+        self.end_height
+    }
+
+    /// Get batch size
+    #[wasm_bindgen(getter)]
+    pub fn batch_size(&self) -> u64 {
+        self.batch_size
+    }
+
+    /// Get timeout in seconds
+    #[wasm_bindgen(getter)]
+    pub fn timeout_seconds(&self) -> u64 {
+        self.timeout_seconds
+    }
+
+    /// Get quiet mode
+    #[wasm_bindgen(getter)]
+    pub fn quiet_mode(&self) -> bool {
+        self.quiet_mode
     }
 }
 

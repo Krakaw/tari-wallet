@@ -335,6 +335,7 @@ impl Zeroize for WalletMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data_structures::Network;
 
     #[test]
     fn test_wallet_creation() {

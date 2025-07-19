@@ -14,13 +14,16 @@ use crate::{
     extraction::ExtractionConfig,
 };
 
+#[cfg(feature = "storage")]
+use crate::errors::LightweightWalletError;
+
 use super::{
     BlockchainScanner, ScanConfig, WalletScanConfig, ScanProgress,
     WalletScanResult, TipInfo, DefaultScanningLogic
 };
 
 #[cfg(feature = "storage")]
-use crate::storage::{WalletStorage, StorageTransaction};
+use crate::storage::WalletStorage;
 
 /// Configuration for scanner service operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +34,8 @@ pub struct ScannerConfig {
     pub start_height: u64,
     /// Ending block height (optional, if None scans to tip)
     pub end_height: Option<u64>,
+    /// Specific block heights to scan (takes precedence over start_height/end_height)
+    pub specific_blocks: Option<Vec<u64>>,
     /// Maximum number of blocks to scan in one batch
     pub batch_size: u64,
     /// Request timeout duration
@@ -71,6 +76,7 @@ impl Default for ScannerConfig {
             base_url: "http://127.0.0.1:18142".to_string(),
             start_height: 0,
             end_height: None,
+            specific_blocks: None,
             batch_size: 100,
             request_timeout: Duration::from_secs(30),
             storage_path: None,
@@ -191,16 +197,70 @@ impl<S: BlockchainScanner> DefaultScannerService<S> {
     async fn execute_scan(
         &mut self,
         wallet_scan_config: WalletScanConfig,
+        config: &ScannerConfig,
         _progress_frequency: u64,
     ) -> LightweightWalletResult<WalletScanResult> {
-        // Use the scanning logic from the scanning module
-        let scan_result = DefaultScanningLogic::scan_wallet_with_progress(
-            &mut self.scanner,
-            wallet_scan_config,
-            None, // For now, no progress callback
-        ).await?;
+        if let Some(specific_blocks) = &config.specific_blocks {
+            // Scan specific blocks only
+            self.scan_specific_blocks(wallet_scan_config, specific_blocks).await
+        } else {
+            // Use the scanning logic from the scanning module for range scanning
+            let scan_result = DefaultScanningLogic::scan_wallet_with_progress(
+                &mut self.scanner,
+                wallet_scan_config,
+                None, // For now, no progress callback
+            ).await?;
 
-        Ok(scan_result)
+            Ok(scan_result)
+        }
+    }
+
+    /// Scan specific block heights
+    async fn scan_specific_blocks(
+        &mut self,
+        wallet_scan_config: WalletScanConfig,
+        specific_blocks: &[u64],
+    ) -> LightweightWalletResult<WalletScanResult> {
+        let start_time = Instant::now();
+        let mut all_block_results = Vec::new();
+        let mut total_wallet_outputs = 0;
+        let mut total_value = 0;
+
+        for &block_height in specific_blocks {
+            // Create a new scan config for this specific block
+            let mut block_scan_config = wallet_scan_config.scan_config.clone();
+            block_scan_config.start_height = block_height;
+            block_scan_config.end_height = Some(block_height);
+
+            let block_wallet_config = WalletScanConfig {
+                scan_config: block_scan_config,
+                key_manager: None, // Using simplified version for now
+                key_store: None,
+                scan_stealth_addresses: wallet_scan_config.scan_stealth_addresses,
+                max_addresses_per_account: wallet_scan_config.max_addresses_per_account,
+                scan_imported_keys: wallet_scan_config.scan_imported_keys,
+            };
+
+            // Scan this single block
+            let block_result = DefaultScanningLogic::scan_wallet_with_progress(
+                &mut self.scanner,
+                block_wallet_config,
+                None,
+            ).await?;
+
+            total_wallet_outputs += block_result.total_wallet_outputs;
+            total_value += block_result.total_value;
+            all_block_results.extend(block_result.block_results);
+        }
+
+        Ok(WalletScanResult {
+            block_results: all_block_results,
+            total_wallet_outputs,
+            total_value,
+            addresses_scanned: specific_blocks.len() as u64, // One address per block height
+            accounts_scanned: 1, // Simplified: assume single account
+            scan_duration: start_time.elapsed(),
+        })
     }
 
     /// Create scan statistics from wallet scan result
@@ -252,7 +312,7 @@ impl<S: BlockchainScanner> ScannerService for DefaultScannerService<S> {
         
         let wallet_scan_config = self.create_wallet_scan_config(&config, extraction_config);
         
-        let scan_result = self.execute_scan(wallet_scan_config, config.progress_frequency).await?;
+        let scan_result = self.execute_scan(wallet_scan_config, &config, config.progress_frequency).await?;
         
         let statistics = self.create_statistics(&scan_result, start_time);
         
@@ -284,10 +344,10 @@ impl<S: BlockchainScanner> ScannerService for DefaultScannerService<S> {
     #[cfg(feature = "storage")]
     async fn resume_scan(&mut self, config: ScannerConfig) -> LightweightWalletResult<ScanResult> {
         // Load wallet state from storage if available
-        if let Some(storage) = &self.storage {
+        if let Some(_storage) = &self.storage {
             // Load existing wallet state and update config with last scanned height
             // This is a placeholder - real implementation would load from storage
-            let mut resume_config = config.clone();
+            let resume_config = config.clone();
             // resume_config.start_height = last_scanned_height_from_storage;
             self.scan_wallet(resume_config).await
         } else {

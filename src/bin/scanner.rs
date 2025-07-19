@@ -5,16 +5,18 @@
 //! logic to the ScannerService while handling CLI interactions and output formatting.
 
 use clap::Parser;
-use tracing_subscriber;
 
 use lightweight_wallet_libs::{
     errors::LightweightWalletResult,
-    scanning::{ScannerServiceBuilder, ServiceScannerType, ServiceScannerConfig, OutputFormat},
+    scanning::{ServiceScannerConfig, OutputFormat, DefaultScannerService, ScannerService},
     wallet::Wallet,
 };
 
-#[cfg(feature = "storage")]
-use lightweight_wallet_libs::storage::{SqliteStorage, WalletStorage};
+#[cfg(feature = "grpc")]
+use lightweight_wallet_libs::scanning::GrpcBlockchainScanner;
+
+#[cfg(all(feature = "http", not(feature = "grpc")))]
+use lightweight_wallet_libs::scanning::HttpBlockchainScanner;
 
 /// Enhanced Tari Wallet Scanner
 ///
@@ -59,6 +61,14 @@ struct CliArgs {
     /// Ending block height for scanning
     #[arg(long, help = "Ending block height (defaults to current tip)")]
     to_block: Option<u64>,
+
+    /// Specific block heights to scan (comma-separated)
+    #[arg(
+        long,
+        help = "Comma-separated list of specific block heights to scan (e.g., --blocks=100,200,300)",
+        conflicts_with_all = ["from_block", "to_block"]
+    )]
+    blocks: Option<String>,
 
     /// Batch size for scanning
     #[arg(long, default_value = "10", help = "Batch size for scanning")]
@@ -113,12 +123,46 @@ fn parse_output_format(format_str: &str) -> LightweightWalletResult<OutputFormat
     }
 }
 
+/// Parse comma-separated block heights
+fn parse_block_list(blocks_str: &str) -> LightweightWalletResult<Vec<u64>> {
+    let mut blocks = Vec::new();
+    
+    for block_str in blocks_str.split(',') {
+        let block_str = block_str.trim();
+        if block_str.is_empty() {
+            continue;
+        }
+        
+        match block_str.parse::<u64>() {
+            Ok(block_height) => blocks.push(block_height),
+            Err(_) => {
+                return Err(lightweight_wallet_libs::errors::LightweightWalletError::InvalidArgument {
+                    argument: "blocks".to_string(),
+                    value: block_str.to_string(),
+                    message: format!("Invalid block height: {}", block_str),
+                });
+            }
+        }
+    }
+    
+    if blocks.is_empty() {
+        return Err(lightweight_wallet_libs::errors::LightweightWalletError::InvalidArgument {
+            argument: "blocks".to_string(),
+            value: blocks_str.to_string(),
+            message: "No valid block heights found in blocks list".to_string(),
+        });
+    }
+    
+    // Sort the blocks for efficient scanning
+    blocks.sort_unstable();
+    
+    Ok(blocks)
+}
+
 /// Enhanced Tari Wallet Scanner
-#[cfg(feature = "grpc")]
+#[cfg(any(feature = "grpc", feature = "http"))]
 #[tokio::main]
 async fn main() -> LightweightWalletResult<()> {
-    // Initialize logging
-    tracing_subscriber::fmt::init();
 
     let args = CliArgs::parse();
 
@@ -153,10 +197,11 @@ async fn main() -> LightweightWalletResult<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "grpc"))]
+#[cfg(not(any(feature = "grpc", feature = "http")))]
 fn main() {
-    eprintln!("❌ Error: Scanner binary requires 'grpc' feature to be enabled.");
+    eprintln!("❌ Error: Scanner binary requires either 'grpc' or 'http' feature to be enabled.");
     eprintln!("💡 Tip: Run with: cargo run --bin scanner --features grpc");
+    eprintln!("💡 Or: cargo run --bin scanner --features http");
     std::process::exit(1);
 }
 
@@ -184,18 +229,26 @@ fn validate_arguments(args: &CliArgs) -> LightweightWalletResult<()> {
 
 /// Create scanner service configuration
 async fn create_service_config(args: &CliArgs) -> LightweightWalletResult<ServiceScannerConfig> {
-    let start_height = if let Some(seed_phrase) = &args.seed_phrase {
-        // Use wallet birthday if available
-        let wallet = Wallet::new_from_seed_phrase(seed_phrase, None)?;
-        args.from_block.unwrap_or(wallet.birthday())
+    let (start_height, end_height, specific_blocks) = if let Some(blocks_str) = &args.blocks {
+        // Parse specific blocks list
+        let blocks = parse_block_list(blocks_str)?;
+        (blocks[0], Some(blocks[blocks.len() - 1]), Some(blocks))
     } else {
-        args.from_block.unwrap_or(0)
+        let start_height = if let Some(seed_phrase) = &args.seed_phrase {
+            // Use wallet birthday if available
+            let wallet = Wallet::new_from_seed_phrase(seed_phrase, None)?;
+            args.from_block.unwrap_or(wallet.birthday())
+        } else {
+            args.from_block.unwrap_or(0)
+        };
+        (start_height, args.to_block, None)
     };
 
     Ok(ServiceScannerConfig {
         base_url: args.base_url.clone(),
         start_height,
-        end_height: args.to_block,
+        end_height,
+        specific_blocks,
         batch_size: args.batch_size as u64,
         request_timeout: std::time::Duration::from_secs(30),
         storage_path: if args.seed_phrase.is_some() || args.view_key.is_some() {
@@ -215,40 +268,41 @@ async fn create_service_config(args: &CliArgs) -> LightweightWalletResult<Servic
 async fn create_scanner_service(
     config: &ServiceScannerConfig,
     args: &CliArgs,
-) -> LightweightWalletResult<Box<dyn lightweight_wallet_libs::scanning::ScannerService>> {
+) -> LightweightWalletResult<Box<dyn ScannerService>> {
     if !args.quiet {
         println!("🌐 Connecting to Tari base node...");
     }
 
-    let builder = ScannerServiceBuilder::new()
-        .with_base_url(&config.base_url)
-        .with_start_height(config.start_height)
-        .with_batch_size(config.batch_size)
-        .with_timeout(config.request_timeout)
-        .with_quiet_mode(config.quiet_mode)
-        .with_output_format(config.output_format.clone())
-        .with_scanner_type(ServiceScannerType::Grpc);
-
-    #[cfg(feature = "storage")]
-    let builder = if let Some(storage_path) = &config.storage_path {
-        let storage: Box<dyn WalletStorage> = if storage_path == ":memory:" {
-            Box::new(SqliteStorage::new_in_memory().await?)
-        } else {
-            Box::new(SqliteStorage::new(storage_path).await?)
-        };
-        
-        builder.with_storage(storage)
-    } else {
-        builder
-    };
-
-    let scanner_service = builder.build().await?;
+    // Create GRPC scanner
+    let grpc_scanner = GrpcBlockchainScanner::new(config.base_url.clone()).await?;
+    let scanner_service = DefaultScannerService::new(grpc_scanner);
 
     if !args.quiet {
         println!("✅ Connected to base node successfully");
     }
 
-    Ok(scanner_service)
+    Ok(Box::new(scanner_service))
+}
+
+/// Create scanner service with HTTP backend
+#[cfg(all(feature = "http", not(feature = "grpc")))]
+async fn create_scanner_service(
+    config: &ServiceScannerConfig,
+    args: &CliArgs,
+) -> LightweightWalletResult<Box<dyn ScannerService>> {
+    if !args.quiet {
+        println!("🌐 Connecting to Tari base node (HTTP)...");
+    }
+
+    // Create HTTP scanner
+    let http_scanner = HttpBlockchainScanner::new(config.base_url.clone()).await?;
+    let scanner_service = DefaultScannerService::new(http_scanner);
+
+    if !args.quiet {
+        println!("✅ Connected to base node successfully");
+    }
+
+    Ok(Box::new(scanner_service))
 }
 
 /// Display scan results
