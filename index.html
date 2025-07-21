@@ -423,8 +423,8 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label for="limit">Limit:</label>
-                        <input type="number" id="limit" value="10" min="1" max="1000">
+                        <label for="limit">Batch Size:</label>
+                        <input type="number" id="limit" value="100" min="1" max="1000">
                     </div>
                 </div>
 
@@ -595,15 +595,22 @@
             }
 
             async syncUtxosByBlock(startHeaderHash, endHeaderHash, limit = 10, page = 0) {
-                log('info', `📡 Syncing UTXOs from ${startHeaderHash.substring(0, 16)}... to ${endHeaderHash.substring(0, 16)}...`, true);
+                const endHashDisplay = endHeaderHash ? endHeaderHash.substring(0, 16) + '...' : 'server-controlled';
+                log('info', `📡 Syncing UTXOs from ${startHeaderHash.substring(0, 16)}... to ${endHashDisplay}`, true);
                 try {
-                    const response = await this.request('/sync_utxos_by_block', {
+                    const params = {
                         start_header_hash: startHeaderHash,
-                        end_header_hash: endHeaderHash,
                         limit,
                         page
-                    });
-                    log('info', `✅ Synced ${response.blocks?.length || 0} blocks, has_next_page: ${response.has_next_page}`, true);
+                    };
+                    
+                    // Only include end_header_hash if it's provided
+                    if (endHeaderHash) {
+                        params.end_header_hash = endHeaderHash;
+                    }
+                    
+                    const response = await this.request('/sync_utxos_by_block', params);
+                    log('info', `✅ Synced ${response.blocks?.length || 0} blocks, next_header: ${response.next_header_to_scan ? 'provided' : 'none'}`, true);
                     return response;
                 } catch (error) {
                     log('error', `❌ Failed to sync UTXOs: ${error.message}`);
@@ -662,30 +669,51 @@
                 log('info', `📡 Fetching block range ${startHeight} to ${endHeight} in batches...`, true);
 
                 try {
+                    // Get the starting header hash only
                     const startHeader = await this.getHeaderByHeight(startHeight);
-                    const endHeader = await this.getHeaderByHeight(endHeight);
-
-                    const startHash = this.arrayToHex(startHeader.hash);
-                    const endHash = this.arrayToHex(endHeader.hash);
-
-                    let page = 0;
-                    let hasNextPage = true;
+                    let currentHeaderHash = this.arrayToHex(startHeader.hash);
                     let totalBlocks = 0;
+                    let currentBlockHeight = startHeight;
 
-                    while (hasNextPage) {
-                        const syncResponse = await this.syncUtxosByBlock(startHash, endHash, limit, page);
-                        hasNextPage = syncResponse.has_next_page;
+                    while (currentBlockHeight <= endHeight) {
+                        // Use current header as start, no end header needed (server decides)
+                        const syncResponse = await this.syncUtxosByBlock(currentHeaderHash, null, limit, 0);
+
+                        log('info', `📊 Batch from ${currentBlockHeight}: fetched ${syncResponse.blocks?.length || 0} blocks`, true);
 
                         if (syncResponse.blocks && syncResponse.blocks.length > 0) {
                             totalBlocks += syncResponse.blocks.length;
+                            
+                            // Log block range for this batch
+                            const blockHeights = syncResponse.blocks.map(b => b.height).sort((a, b) => a - b);
+                            const batchStart = blockHeights[0];
+                            const batchEnd = blockHeights[blockHeights.length - 1];
+                            log('info', `   Block range: ${batchStart} to ${batchEnd}`, true);
+                            
+                            // Update current block height
+                            currentBlockHeight = batchEnd + 1;
+                            
                             // Yield the entire HTTP response for batch processing
                             yield syncResponse;
                         }
 
-                        page++;
+                        // Check if we have a next header to continue with
+                        if (syncResponse.next_header_to_scan) {
+                            currentHeaderHash = this.arrayToHex(syncResponse.next_header_to_scan);
+                            log('info', `🔄 Continuing with next header: ${currentHeaderHash.substring(0, 16)}...`, true);
+                        } else {
+                            log('info', '🏁 No more headers to scan, reached end of available data', true);
+                            break;
+                        }
+
+                        // Safety check to prevent scanning beyond our target end height
+                        if (currentBlockHeight > endHeight) {
+                            log('info', `🎯 Reached target end height ${endHeight}, stopping scan`, true);
+                            break;
+                        }
                     }
 
-                    log('success', `✅ Streamed ${totalBlocks} blocks in batches from base node`, true);
+                    log('success', `✅ Streamed ${totalBlocks} blocks using next_header_to_scan from base node`, true);
 
                 } catch (error) {
                     log('error', `❌ Failed to fetch block range: ${error.message}`);
@@ -1182,6 +1210,9 @@
                     const percentage = (blockCount / totalBlocks) * 100;
                     updateProgress(percentage, `Scanned ${blockCount}/${totalBlocks} blocks`);
                     updateResults(blockCount, cumulativeStats, highestBlockInBatch, totalDownloadSize);
+                    
+                    // Debug logging for progress tracking
+                    log('info', `📈 Progress: ${blockCount}/${totalBlocks} blocks (${percentage.toFixed(1)}%)`, true);
 
                     // Explicit memory cleanup to help garbage collection
                     // Clear references to large HTTP response data
