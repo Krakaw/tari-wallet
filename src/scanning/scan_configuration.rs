@@ -3,6 +3,8 @@
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use crate::extraction::ExtractionConfig;
+use crate::errors::{LightweightWalletError, LightweightWalletResult};
+use crate::key_management::{KeyManager, KeyStore};
 
 /// Comprehensive configuration structure for all scan parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,11 +13,64 @@ pub struct ScanConfiguration {
     pub start_height: u64,
     /// Ending block height (optional, if None scans to tip)
     pub end_height: Option<u64>,
+    /// Specific block heights to scan (overrides range if provided)
+    #[serde(default)]
+    pub specific_blocks: Option<Vec<u64>>,
     /// Maximum number of blocks to scan in one request
     pub batch_size: u64,
     /// Timeout for requests
     #[serde(with = "duration_serde")]
     pub request_timeout: Duration,
+    /// Progress update frequency (every N blocks)
+    pub progress_frequency: u64,
+    /// Whether to scan for stealth addresses
+    pub scan_stealth_addresses: bool,
+    /// Maximum number of addresses to scan per account
+    pub max_addresses_per_account: u32,
+    /// Whether to scan for imported keys
+    pub scan_imported_keys: bool,
+    /// Extraction configuration (excluded from serialization for security)
+    #[serde(skip)]
+    pub extraction_config: ExtractionConfig,
+    /// Output format for progress reporting
+    #[serde(default)]
+    pub output_format: OutputFormat,
+    /// Whether to run in quiet mode (minimal output)
+    pub quiet: bool,
+}
+
+/// Output format options for scan results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum OutputFormat {
+    /// Detailed progress with full information
+    Detailed,
+    /// Summary progress with key metrics
+    Summary,
+    /// JSON structured output
+    Json,
+}
+
+impl Default for OutputFormat {
+    fn default() -> Self {
+        OutputFormat::Summary
+    }
+}
+
+impl std::str::FromStr for OutputFormat {
+    type Err = LightweightWalletError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "detailed" => Ok(OutputFormat::Detailed),
+            "summary" => Ok(OutputFormat::Summary),
+            "json" => Ok(OutputFormat::Json),
+            _ => Err(LightweightWalletError::InvalidArgument {
+                argument: "output_format".to_string(),
+                value: s.to_string(),
+                message: "Valid options: detailed, summary, json".to_string(),
+            }),
+        }
+    }
 }
 
 impl Default for ScanConfiguration {
@@ -23,10 +78,252 @@ impl Default for ScanConfiguration {
         Self {
             start_height: 0,
             end_height: None,
+            specific_blocks: None,
             batch_size: 100,
             request_timeout: Duration::from_secs(30),
+            progress_frequency: 10,
+            scan_stealth_addresses: true,
+            max_addresses_per_account: 1000,
+            scan_imported_keys: true,
+            extraction_config: ExtractionConfig::default(),
+            output_format: OutputFormat::default(),
+            quiet: false,
         }
     }
+}
+
+impl ScanConfiguration {
+    /// Create a new scan configuration with a starting block height
+    pub fn new(start_height: u64) -> Self {
+        Self {
+            start_height,
+            ..Default::default()
+        }
+    }
+
+    /// Create a scan configuration for a specific block range
+    pub fn new_range(start_height: u64, end_height: u64) -> Self {
+        Self {
+            start_height,
+            end_height: Some(end_height),
+            ..Default::default()
+        }
+    }
+
+    /// Create a scan configuration for specific blocks
+    pub fn new_specific_blocks(blocks: Vec<u64>) -> Self {
+        let start_height = blocks.iter().min().copied().unwrap_or(0);
+        Self {
+            start_height,
+            specific_blocks: Some(blocks),
+            ..Default::default()
+        }
+    }
+
+    /// Set the ending block height
+    pub fn with_end_height(mut self, end_height: u64) -> Self {
+        self.end_height = Some(end_height);
+        self
+    }
+
+    /// Set specific blocks to scan
+    pub fn with_specific_blocks(mut self, blocks: Vec<u64>) -> Self {
+        self.specific_blocks = Some(blocks);
+        self
+    }
+
+    /// Set the batch size for scanning
+    pub fn with_batch_size(mut self, batch_size: u64) -> Self {
+        self.batch_size = batch_size;
+        self
+    }
+
+    /// Set the request timeout
+    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
+
+    /// Set the progress frequency
+    pub fn with_progress_frequency(mut self, frequency: u64) -> Self {
+        self.progress_frequency = frequency;
+        self
+    }
+
+    /// Set whether to scan for stealth addresses
+    pub fn with_stealth_address_scanning(mut self, enabled: bool) -> Self {
+        self.scan_stealth_addresses = enabled;
+        self
+    }
+
+    /// Set maximum addresses per account
+    pub fn with_max_addresses_per_account(mut self, max: u32) -> Self {
+        self.max_addresses_per_account = max;
+        self
+    }
+
+    /// Set whether to scan for imported keys
+    pub fn with_imported_key_scanning(mut self, enabled: bool) -> Self {
+        self.scan_imported_keys = enabled;
+        self
+    }
+
+    /// Set the extraction configuration
+    pub fn with_extraction_config(mut self, config: ExtractionConfig) -> Self {
+        self.extraction_config = config;
+        self
+    }
+
+    /// Set the output format
+    pub fn with_output_format(mut self, format: OutputFormat) -> Self {
+        self.output_format = format;
+        self
+    }
+
+    /// Set quiet mode
+    pub fn with_quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
+        self
+    }
+
+    /// Validate the configuration and return errors if invalid
+    pub fn validate(&self) -> LightweightWalletResult<()> {
+        // Validate batch size
+        if self.batch_size == 0 {
+            return Err(LightweightWalletError::InvalidArgument {
+                argument: "batch_size".to_string(),
+                value: self.batch_size.to_string(),
+                message: "Batch size must be greater than 0".to_string(),
+            });
+        }
+
+        if self.batch_size > 1000 {
+            return Err(LightweightWalletError::InvalidArgument {
+                argument: "batch_size".to_string(),
+                value: self.batch_size.to_string(),
+                message: "Batch size should not exceed 1000 for performance reasons".to_string(),
+            });
+        }
+
+        // Validate progress frequency
+        if self.progress_frequency == 0 {
+            return Err(LightweightWalletError::InvalidArgument {
+                argument: "progress_frequency".to_string(),
+                value: self.progress_frequency.to_string(),
+                message: "Progress frequency must be greater than 0".to_string(),
+            });
+        }
+
+        // Validate timeout
+        if self.request_timeout.as_secs() == 0 {
+            return Err(LightweightWalletError::InvalidArgument {
+                argument: "request_timeout".to_string(),
+                value: format!("{:?}", self.request_timeout),
+                message: "Request timeout must be greater than 0".to_string(),
+            });
+        }
+
+        if self.request_timeout.as_secs() > 300 {
+            return Err(LightweightWalletError::InvalidArgument {
+                argument: "request_timeout".to_string(),
+                value: format!("{:?}", self.request_timeout),
+                message: "Request timeout should not exceed 5 minutes".to_string(),
+            });
+        }
+
+        // Validate block range
+        if let Some(end_height) = self.end_height {
+            if end_height < self.start_height {
+                return Err(LightweightWalletError::InvalidArgument {
+                    argument: "end_height".to_string(),
+                    value: end_height.to_string(),
+                    message: format!("End height ({}) cannot be less than start height ({})", end_height, self.start_height),
+                });
+            }
+        }
+
+        // Validate specific blocks
+        if let Some(ref blocks) = self.specific_blocks {
+            if blocks.is_empty() {
+                return Err(LightweightWalletError::InvalidArgument {
+                    argument: "specific_blocks".to_string(),
+                    value: "empty".to_string(),
+                    message: "Specific blocks list cannot be empty".to_string(),
+                });
+            }
+
+            // Check for duplicates
+            let mut sorted_blocks = blocks.clone();
+            sorted_blocks.sort_unstable();
+            sorted_blocks.dedup();
+            if sorted_blocks.len() != blocks.len() {
+                return Err(LightweightWalletError::InvalidArgument {
+                    argument: "specific_blocks".to_string(),
+                    value: format!("{:?}", blocks),
+                    message: "Specific blocks list contains duplicates".to_string(),
+                });
+            }
+        }
+
+        // Validate max addresses per account
+        if self.max_addresses_per_account == 0 {
+            return Err(LightweightWalletError::InvalidArgument {
+                argument: "max_addresses_per_account".to_string(),
+                value: self.max_addresses_per_account.to_string(),
+                message: "Max addresses per account must be greater than 0".to_string(),
+            });
+        }
+
+        if self.max_addresses_per_account > 10000 {
+            return Err(LightweightWalletError::InvalidArgument {
+                argument: "max_addresses_per_account".to_string(),
+                value: self.max_addresses_per_account.to_string(),
+                message: "Max addresses per account should not exceed 10000 for performance reasons".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Get the total number of blocks to scan
+    pub fn get_total_blocks(&self) -> Option<u64> {
+        if let Some(ref blocks) = self.specific_blocks {
+            Some(blocks.len() as u64)
+        } else if let Some(end_height) = self.end_height {
+            Some(end_height.saturating_sub(self.start_height) + 1)
+        } else {
+            None // Scanning to tip
+        }
+    }
+
+    /// Check if scanning specific blocks
+    pub fn is_scanning_specific_blocks(&self) -> bool {
+        self.specific_blocks.is_some()
+    }
+
+    /// Get the blocks to scan (either range or specific)
+    pub fn get_blocks_to_scan(&self) -> ScanBlocks {
+        if let Some(ref blocks) = self.specific_blocks {
+            ScanBlocks::Specific(blocks.clone())
+        } else {
+            ScanBlocks::Range {
+                start: self.start_height,
+                end: self.end_height,
+            }
+        }
+    }
+}
+
+/// Represents the blocks to scan
+#[derive(Debug, Clone)]
+pub enum ScanBlocks {
+    /// Scan a range of blocks
+    Range {
+        start: u64,
+        end: Option<u64>,
+    },
+    /// Scan specific blocks
+    Specific(Vec<u64>),
 }
 
 /// Wallet source for initialization options
@@ -34,19 +331,142 @@ impl Default for ScanConfiguration {
 pub enum WalletSource {
     /// Create from seed phrase
     SeedPhrase(String),
-    /// Create from view key
+    /// Create from view key (hex format)
     ViewKey(String),
-    /// Use existing wallet
-    Existing,
+    /// Use existing wallet from database
+    Existing(String),
+    /// Generate new wallet
+    Generated,
+}
+
+impl WalletSource {
+    /// Validate the wallet source
+    pub fn validate(&self) -> LightweightWalletResult<()> {
+        match self {
+            WalletSource::SeedPhrase(phrase) => {
+                if phrase.trim().is_empty() {
+                    return Err(LightweightWalletError::InvalidArgument {
+                        argument: "seed_phrase".to_string(),
+                        value: "empty".to_string(),
+                        message: "Seed phrase cannot be empty".to_string(),
+                    });
+                }
+                // Basic word count validation (12 or 24 words typical)
+                let word_count = phrase.split_whitespace().count();
+                if word_count < 12 || word_count > 24 {
+                    return Err(LightweightWalletError::InvalidArgument {
+                        argument: "seed_phrase".to_string(),
+                        value: format!("{} words", word_count),
+                        message: "Seed phrase should contain 12-24 words".to_string(),
+                    });
+                }
+            }
+            WalletSource::ViewKey(key) => {
+                if key.trim().is_empty() {
+                    return Err(LightweightWalletError::InvalidArgument {
+                        argument: "view_key".to_string(),
+                        value: "empty".to_string(),
+                        message: "View key cannot be empty".to_string(),
+                    });
+                }
+                // Validate hex format and length (64 characters for 32 bytes)
+                if key.len() != 64 {
+                    return Err(LightweightWalletError::InvalidArgument {
+                        argument: "view_key".to_string(),
+                        value: format!("{} characters", key.len()),
+                        message: "View key must be exactly 64 hex characters (32 bytes)".to_string(),
+                    });
+                }
+                if !key.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(LightweightWalletError::InvalidArgument {
+                        argument: "view_key".to_string(),
+                        value: "invalid_format".to_string(),
+                        message: "View key must contain only hexadecimal characters".to_string(),
+                    });
+                }
+            }
+            WalletSource::Existing(name) => {
+                if name.trim().is_empty() {
+                    return Err(LightweightWalletError::InvalidArgument {
+                        argument: "wallet_name".to_string(),
+                        value: "empty".to_string(),
+                        message: "Wallet name cannot be empty".to_string(),
+                    });
+                }
+            }
+            WalletSource::Generated => {
+                // Always valid
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Wallet context for scanner initialization
-#[derive(Debug, Clone)]
 pub struct WalletContext {
     /// Wallet source
     pub source: WalletSource,
     /// Extraction configuration
     pub extraction_config: ExtractionConfig,
+    /// Key manager for wallet key derivation
+    pub key_manager: Option<Box<dyn KeyManager + Send + Sync>>,
+    /// Key store for imported keys
+    pub key_store: Option<KeyStore>,
+}
+
+impl std::fmt::Debug for WalletContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WalletContext")
+            .field("source", &self.source)
+            .field("extraction_config", &self.extraction_config)
+            .field("key_manager", &self.key_manager.as_ref().map(|_| "KeyManager"))
+            .field("key_store", &self.key_store)
+            .finish()
+    }
+}
+
+impl Clone for WalletContext {
+    fn clone(&self) -> Self {
+        Self {
+            source: self.source.clone(),
+            extraction_config: self.extraction_config.clone(),
+            // Note: KeyManager cannot be cloned, so we set it to None
+            // The caller should re-set the key manager if needed
+            key_manager: None,
+            key_store: self.key_store.clone(),
+        }
+    }
+}
+
+impl WalletContext {
+    /// Create a new wallet context
+    pub fn new(source: WalletSource, extraction_config: ExtractionConfig) -> Self {
+        Self {
+            source,
+            extraction_config,
+            key_manager: None,
+            key_store: None,
+        }
+    }
+
+    /// Set the key manager
+    pub fn with_key_manager(mut self, key_manager: Box<dyn KeyManager + Send + Sync>) -> Self {
+        self.key_manager = Some(key_manager);
+        self
+    }
+
+    /// Set the key store
+    pub fn with_key_store(mut self, key_store: KeyStore) -> Self {
+        self.key_store = Some(key_store);
+        self
+    }
+
+    /// Validate the wallet context
+    pub fn validate(&self) -> LightweightWalletResult<()> {
+        self.source.validate()?;
+        // Could add extraction config validation here if needed
+        Ok(())
+    }
 }
 
 // Helper module for Duration serialization

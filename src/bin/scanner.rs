@@ -123,7 +123,10 @@ use lightweight_wallet_libs::{
         key_derivation,
         seed_phrase::{mnemonic_to_bytes, CipherSeed},
     },
-    scanning::{BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder},
+    scanning::{
+        BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder,
+        ScanConfiguration, scan_configuration::OutputFormat,
+    },
     wallet::Wallet,
     KeyManagementError, LightweightWalletError,
 };
@@ -222,45 +225,58 @@ pub struct CliArgs {
     wallet_name: Option<String>,
 }
 
-/// Configuration for wallet scanning
+/// Configuration for CLI-specific scanner options (extends library ScanConfiguration)
 #[cfg(feature = "grpc")]
 #[derive(Debug, Clone)]
-pub struct ScanConfig {
-    pub from_block: u64,
-    pub to_block: u64,
-    pub block_heights: Option<Vec<u64>>,
-    pub progress_frequency: usize,
-    pub quiet: bool,
-    pub output_format: OutputFormat,
-    pub batch_size: usize,
+pub struct CliScanConfig {
+    /// Core scan configuration from library
+    pub scan_config: ScanConfiguration,
+    /// Database path for storage
     pub database_path: Option<String>,
+    /// Wallet name for database operations
     pub wallet_name: Option<String>,
+    /// Explicit from block override
     pub explicit_from_block: Option<u64>,
+    /// Whether to use database storage
     pub use_database: bool,
 }
 
-/// Output format options
-#[cfg(feature = "grpc")]
-#[derive(Debug, Clone)]
-pub enum OutputFormat {
-    Detailed,
-    Summary,
-    Json,
-}
+impl CliScanConfig {
+    /// Get the starting block height
+    pub fn from_block(&self) -> u64 {
+        self.scan_config.start_height
+    }
 
-#[cfg(feature = "grpc")]
-impl std::str::FromStr for OutputFormat {
-    type Err = String;
+    /// Get the ending block height
+    pub fn to_block(&self) -> u64 {
+        self.scan_config.end_height.unwrap_or_else(|| {
+            // If scanning specific blocks, use the max block
+            if let Some(ref blocks) = self.scan_config.specific_blocks {
+                *blocks.iter().max().unwrap_or(&self.scan_config.start_height)
+            } else {
+                self.scan_config.start_height + 1000 // Default range when no end specified
+            }
+        })
+    }
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "detailed" => Ok(OutputFormat::Detailed),
-            "summary" => Ok(OutputFormat::Summary),
-            "json" => Ok(OutputFormat::Json),
-            _ => Err(format!(
-                "Invalid output format: {s}. Valid options: detailed, summary, json"
-            )),
-        }
+    /// Get the block heights (specific blocks or None for range)
+    pub fn block_heights(&self) -> Option<&Vec<u64>> {
+        self.scan_config.specific_blocks.as_ref()
+    }
+
+    /// Get batch size as usize for compatibility
+    pub fn batch_size(&self) -> usize {
+        self.scan_config.batch_size as usize
+    }
+
+    /// Get progress frequency as usize for compatibility
+    pub fn progress_frequency(&self) -> usize {
+        self.scan_config.progress_frequency as usize
+    }
+
+    /// Check if scanning specific blocks
+    pub fn has_specific_blocks(&self) -> bool {
+        self.scan_config.specific_blocks.is_some()
     }
 }
 
@@ -481,7 +497,7 @@ impl ScannerStorage {
     #[cfg(feature = "storage")]
     pub async fn handle_wallet_operations(
         &mut self,
-        config: &ScanConfig,
+        config: &CliScanConfig,
         scan_context: Option<&ScanContext>,
     ) -> LightweightWalletResult<Option<ScanContext>> {
         // Only perform database operations if database is available
@@ -494,7 +510,7 @@ impl ScannerStorage {
 
         // Load scan context from database if needed
         if scan_context.is_none() && self.wallet_id.is_some() {
-            self.load_scan_context_from_wallet(config.quiet).await
+            self.load_scan_context_from_wallet(config.scan_config.quiet).await
         } else {
             Ok(None)
         }
@@ -504,7 +520,7 @@ impl ScannerStorage {
     #[cfg(feature = "storage")]
     async fn select_or_create_wallet(
         &self,
-        config: &ScanConfig,
+        config: &CliScanConfig,
         scan_context: Option<&ScanContext>,
     ) -> LightweightWalletResult<Option<u32>> {
         let storage = self.database.as_ref().unwrap();
@@ -1074,8 +1090,8 @@ impl ScannerStorage {
     }
 
     /// Display storage information
-    pub async fn display_storage_info(&self, config: &ScanConfig) -> LightweightWalletResult<()> {
-        if config.quiet {
+    pub async fn display_storage_info(&self, config: &CliScanConfig) -> LightweightWalletResult<()> {
+        if config.scan_config.quiet {
             return Ok(());
         }
 
@@ -1111,9 +1127,9 @@ impl ScannerStorage {
     /// Display completion information
     pub async fn display_completion_info(
         &self,
-        config: &ScanConfig,
+        config: &CliScanConfig,
     ) -> LightweightWalletResult<()> {
-        if config.quiet {
+        if config.scan_config.quiet {
             return Ok(());
         }
 
@@ -1279,20 +1295,24 @@ impl BlockHeightRange {
         }
     }
 
-    pub fn into_scan_config(self, args: &CliArgs) -> LightweightWalletResult<ScanConfig> {
-        let output_format = args
+    pub fn into_scan_config(self, args: &CliArgs) -> LightweightWalletResult<CliScanConfig> {
+        let output_format: OutputFormat = args
             .format
             .parse()
-            .map_err(|e: String| KeyManagementError::key_derivation_failed(&e))?;
+            .map_err(|e: LightweightWalletError| e)?;
 
-        Ok(ScanConfig {
-            from_block: self.from_block,
-            to_block: self.to_block,
-            block_heights: self.block_heights,
-            progress_frequency: args.progress_frequency,
-            quiet: args.quiet,
-            output_format,
-            batch_size: args.batch_size,
+        let scan_config = if let Some(ref blocks) = self.block_heights {
+            ScanConfiguration::new_specific_blocks(blocks.clone())
+        } else {
+            ScanConfiguration::new_range(self.from_block, self.to_block)
+        }
+        .with_batch_size(args.batch_size as u64)
+        .with_progress_frequency(args.progress_frequency as u64)
+        .with_quiet(args.quiet)
+        .with_output_format(output_format);
+
+        Ok(CliScanConfig {
+            scan_config,
             database_path: Some(args.database.clone()),
             wallet_name: args.wallet_name.clone(),
             explicit_from_block: args.from_block,
@@ -1786,56 +1806,56 @@ fn compute_output_hash(output: &LightweightTransactionOutput) -> LightweightWall
 async fn scan_wallet_across_blocks_with_cancellation(
     scanner: &mut GrpcBlockchainScanner,
     scan_context: &ScanContext,
-    config: &ScanConfig,
+    config: &CliScanConfig,
     storage_backend: &mut ScannerStorage,
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> LightweightWalletResult<ScanResult> {
-    let has_specific_blocks = config.block_heights.is_some();
+    let has_specific_blocks = config.has_specific_blocks();
 
     // Handle automatic resume functionality for database storage
     let (from_block, to_block) = if config.use_database
         && config.explicit_from_block.is_none()
-        && config.block_heights.is_none()
+        && !config.has_specific_blocks()
     {
         #[cfg(feature = "storage")]
         if let Some(_wallet_id) = storage_backend.wallet_id {
             // Get the wallet to check its resume block
             if let Some(wallet_birthday) = storage_backend.get_wallet_birthday().await? {
-                if !config.quiet {
+                if !config.scan_config.quiet {
                     println!(
                         "📄 Resuming wallet from last scanned block {}",
                         format_number(wallet_birthday)
                     );
                 }
-                (wallet_birthday, config.to_block)
+                (wallet_birthday, config.to_block())
             } else {
-                if !config.quiet {
+                if !config.scan_config.quiet {
                     println!("📄 Wallet not found, starting from configuration");
                 }
-                (config.from_block, config.to_block)
+                (config.from_block(), config.to_block())
             }
         } else {
-            if !config.quiet {
+            if !config.scan_config.quiet {
                 println!("⚠️  Resume requires a selected wallet");
             }
-            (config.from_block, config.to_block)
+            (config.from_block(), config.to_block())
         }
 
         #[cfg(not(feature = "storage"))]
         {
-            (config.from_block, config.to_block)
+            (config.from_block(), config.to_block())
         }
     } else {
         // Use explicit from_block or default from_block
-        (config.from_block, config.to_block)
+        (config.from_block(), config.to_block())
     };
 
     let block_heights = config
-        .block_heights
-        .clone()
+        .block_heights()
+        .cloned()
         .unwrap_or_else(|| (from_block..=to_block).collect());
 
-    if !config.quiet {
+    if !config.scan_config.quiet {
         display_scan_info(config, &block_heights, has_specific_blocks);
     }
 
@@ -1846,13 +1866,13 @@ async fn scan_wallet_across_blocks_with_cancellation(
     storage_backend.last_saved_transaction_count = 0;
 
     let _progress = ScanProgress::new(block_heights.len());
-    let batch_size = config.batch_size;
+    let batch_size = config.batch_size();
 
     // Process blocks in batches
     for (batch_index, batch_heights) in block_heights.chunks(batch_size).enumerate() {
         // Check for cancellation at the start of each batch
         if *cancel_rx.borrow() {
-            if !config.quiet {
+            if !config.scan_config.quiet {
                 println!("\n🛑 Scan cancelled - returning partial results...");
             }
             return Ok(ScanResult::Interrupted(wallet_state));
@@ -1861,7 +1881,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
         let batch_start_index = batch_index * batch_size;
 
         // Display progress at the start of each batch
-        if !config.quiet && batch_index % config.progress_frequency == 0 {
+        if !config.scan_config.quiet && batch_index % config.progress_frequency() == 0 {
             let progress_bar = wallet_state.format_progress_bar(
                 batch_start_index as u64 + 1,
                 block_heights.len() as u64,
@@ -1888,7 +1908,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
                     batch_heights[0],
                     remaining_blocks,
                     has_specific_blocks,
-                    config.to_block,
+                    config.to_block(),
                 ) {
                     // Check for cancellation before continuing
                     if *cancel_rx.borrow() {
@@ -1909,7 +1929,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
             let block_info = match batch_results.iter().find(|b| b.height == *block_height) {
                 Some(block) => block.clone(),
                 None => {
-                    if !config.quiet {
+                    if !config.scan_config.quiet {
                         println!("\n⚠️  Block {block_height} not found in batch, skipping...");
                     }
                     continue;
@@ -2009,7 +2029,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
                                         {
                                             Ok(count) => count,
                                             Err(e) => {
-                                                if !config.quiet {
+                                                if !config.scan_config.quiet {
                                                     println!("\n⚠️  Warning: Failed to batch mark transactions as spent: {e}");
                                                 }
                                                 0
@@ -2035,7 +2055,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
                                 .save_transactions_incremental(&all_transactions)
                                 .await
                             {
-                                if !config.quiet {
+                                if !config.scan_config.quiet {
                                     println!("\n⚠️  Warning: Failed to save new transactions to database: {e}");
                                 }
                             } else {
@@ -2050,7 +2070,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
                                 for tx in new_transactions {
                                     if tx.transaction_direction == TransactionDirection::Outbound
                                         && tx.input_index.is_none()
-                                        && !config.quiet
+                                        && !config.scan_config.quiet
                                     {
                                         println!("\n⚠️  Warning: Outbound transaction missing input_index");
                                     }
@@ -2071,7 +2091,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
                                     if let Err(e) =
                                         storage_backend.save_outputs(&utxo_outputs).await
                                     {
-                                        if !config.quiet {
+                                        if !config.scan_config.quiet {
                                             println!("\n⚠️  Warning: Failed to save {} UTXO outputs from block {} to database: {}", 
                                                 format_number(utxo_outputs.len()), format_number(*block_height), e);
                                         }
@@ -2079,7 +2099,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
                                 }
                             }
                             Err(e) => {
-                                if !config.quiet {
+                                if !config.scan_config.quiet {
                                     println!(
                                         "\n⚠️  Warning: Failed to extract UTXO data from block {}: {}",
                                         format_number(*block_height), e
@@ -2101,7 +2121,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
                         *block_height,
                         remaining_blocks,
                         has_specific_blocks,
-                        config.to_block,
+                        config.to_block(),
                     ) {
                         // Check for cancellation before continuing
                         if *cancel_rx.borrow() {
@@ -2123,7 +2143,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
                     .update_wallet_scanned_block(*last_block_height)
                     .await
                 {
-                    if !config.quiet {
+                    if !config.scan_config.quiet {
                         println!(
                             "\n⚠️  Warning: Failed to update wallet scanned block to {}: {}",
                             format_number(*last_block_height),
@@ -2134,7 +2154,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
             }
         }
         // Update progress display after processing each batch
-        if !config.quiet {
+        if !config.scan_config.quiet {
             let processed_blocks =
                 std::cmp::min(batch_start_index + batch_size, block_heights.len());
             let progress_bar = wallet_state.format_progress_bar(
@@ -2160,14 +2180,14 @@ async fn scan_wallet_across_blocks_with_cancellation(
                 .update_wallet_scanned_block(*highest_block)
                 .await
             {
-                if !config.quiet {
+                if !config.scan_config.quiet {
                     println!(
                         "\n⚠️  Warning: Failed to final update wallet scanned block to {}: {}",
                         format_number(*highest_block),
                         e
                     );
                 }
-            } else if !config.quiet {
+            } else if !config.scan_config.quiet {
                 println!(
                     "\n💾 Final wallet scanned block updated to: {}",
                     format_number(*highest_block)
@@ -2176,7 +2196,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
         }
     }
 
-    if !config.quiet {
+    if !config.scan_config.quiet {
         // Ensure final progress bar shows 100%
         let final_progress_bar = wallet_state.format_progress_bar(
             block_heights.len() as u64,
@@ -2200,7 +2220,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
 
 /// Display scan configuration information
 #[cfg(feature = "grpc")]
-fn display_scan_info(config: &ScanConfig, block_heights: &[u64], has_specific_blocks: bool) {
+fn display_scan_info(config: &CliScanConfig, block_heights: &[u64], has_specific_blocks: bool) {
     if has_specific_blocks {
         println!(
             "🔍 Scanning {} specific blocks: {:?}",
@@ -2221,11 +2241,11 @@ fn display_scan_info(config: &ScanConfig, block_heights: &[u64], has_specific_bl
             }
         );
     } else {
-        let block_range = config.to_block - config.from_block + 1;
+        let block_range = config.to_block() - config.from_block() + 1;
         println!(
             "🔍 Scanning blocks {} to {} ({} blocks total)...",
-            format_number(config.from_block),
-            format_number(config.to_block),
+            format_number(config.from_block()),
+            format_number(config.to_block()),
             format_number(block_range)
         );
     }
@@ -2733,11 +2753,11 @@ async fn main() -> LightweightWalletResult<()> {
     match scan_result {
         Some(Ok(ScanResult::Completed(wallet_state))) => {
             // Display results based on output format
-            match config.output_format {
+            match config.scan_config.output_format {
                 OutputFormat::Json => display_json_results(&wallet_state),
                 OutputFormat::Summary => display_summary_results(&wallet_state, &config),
                 OutputFormat::Detailed => {
-                    display_wallet_activity(&wallet_state, config.from_block, config.to_block)
+                    display_wallet_activity(&wallet_state, config.from_block(), config.to_block())
                 }
             }
 
@@ -2773,11 +2793,11 @@ async fn main() -> LightweightWalletResult<()> {
             }
 
             // Display partial results based on output format
-            match config.output_format {
+            match config.scan_config.output_format {
                 OutputFormat::Json => display_json_results(&wallet_state),
                 OutputFormat::Summary => display_summary_results(&wallet_state, &config),
                 OutputFormat::Detailed => {
-                    display_wallet_activity(&wallet_state, config.from_block, config.to_block)
+                    display_wallet_activity(&wallet_state, config.from_block(), config.to_block())
                 }
             }
 
@@ -2788,7 +2808,7 @@ async fn main() -> LightweightWalletResult<()> {
                         .map(|tx| tx.block_height)
                         .max()
                         .map(|h| h + 1)
-                        .unwrap_or(config.from_block))
+                        .unwrap_or(config.from_block()))
                 );
             }
             std::process::exit(130); // Standard exit code for SIGINT
@@ -2850,7 +2870,7 @@ fn display_json_results(wallet_state: &WalletState) {
 
 /// Display summary results
 #[cfg(feature = "grpc")]
-fn display_summary_results(wallet_state: &WalletState, config: &ScanConfig) {
+fn display_summary_results(wallet_state: &WalletState, config: &CliScanConfig) {
     let (total_received, total_spent, balance, unspent_count, spent_count) =
         wallet_state.get_summary();
     let (inbound_count, outbound_count, _) = wallet_state.get_direction_counts();
@@ -2859,8 +2879,8 @@ fn display_summary_results(wallet_state: &WalletState, config: &ScanConfig) {
     println!("=====================");
     println!(
         "Scan range: Block {} to {}",
-        format_number(config.from_block),
-        format_number(config.to_block)
+        format_number(config.from_block()),
+        format_number(config.to_block())
     );
     println!(
         "Total transactions: {}",
