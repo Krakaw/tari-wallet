@@ -470,6 +470,10 @@
                     <h3>📈 Results</h3>
                     <div class="results-grid" id="resultsGrid">
                         <div class="result-card">
+                            <h4>Chain Tip Height</h4>
+                            <div class="result-value" id="chainTipHeight">-</div>
+                        </div>
+                        <div class="result-card">
                             <h4>Current Block Height</h4>
                             <div class="result-value" id="currentBlockHeight">-</div>
                         </div>
@@ -924,6 +928,7 @@
 
             if (!baseNodeUrl) {
                 updateConnectionStatus('disconnected', 'No URL provided');
+                document.getElementById('chainTipHeight').textContent = '-';
                 return;
             }
 
@@ -935,16 +940,27 @@
             try {
                 log('info', `🔗 Connecting to ${baseNodeUrl}...`);
 
+                // Test connection with genesis block
                 const header = await httpClient.getHeaderByHeight(1);
+                
+                // Get current tip height
+                const tipInfo = await httpClient.getTipInfo();
+                const tipHeight = tipInfo.metadata.best_block_height;
+                
                 updateConnectionStatus('connected', `Connected to ${baseNodeUrl}`);
                 log('success', '✅ Successfully connected to base node');
                 log('info', `   Genesis block hash: ${httpClient.arrayToHex(header.hash).substring(0, 16)}...`);
                 log('info', `   Timestamp: ${new Date(header.timestamp * 1000).toISOString()}`);
+                log('info', `   Chain tip height: ${tipHeight.toLocaleString()}`);
+                
+                // Update the chain tip height in results
+                document.getElementById('chainTipHeight').textContent = tipHeight.toLocaleString();
 
             } catch (error) {
                 updateConnectionStatus('error', `Failed to connect: ${error.message}`);
                 log('error', `❌ Failed to connect to base node: ${error.message}`);
                 log('info', `   Make sure the Tari base node is running on ${baseNodeUrl}`);
+                document.getElementById('chainTipHeight').textContent = '-';
                 console.error(error);
             }
         };
