@@ -443,10 +443,6 @@
                             <textarea id="specificHeights" placeholder="e.g., 100, 200, 300, 1000"></textarea>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label for="limit">Batch Size:</label>
-                        <input type="number" id="limit" value="100" min="1" max="1000">
-                    </div>
                 </div>
 
                
@@ -537,7 +533,7 @@
                     <h3>🧹 Memory Management</h3>
                     <div class="form-group">
                         <label for="maxTransactions">Max Transactions to Keep:</label>
-                        <input type="number" id="maxTransactions" value="5000" min="1000" max="50000" 
+                        <input type="number" id="maxTransactions" value="1000000" min="1000" max="1000000000" 
                                title="Limits memory usage by keeping only the most recent transactions. Balance calculations remain accurate.">
                     </div>
                     <p style="font-size: 0.9em; color: #666; margin-top: 10px;">
@@ -1151,7 +1147,7 @@
 
                 const baseNodeUrl = document.getElementById('baseNodeUrl').value;
                 const scanMode = document.getElementById('scanMode').value;
-                const limit = parseInt(document.getElementById('limit').value);
+                const limit = 10;
 
                 const httpClient = new HttpClient(baseNodeUrl);
 
@@ -1382,7 +1378,7 @@
 
         function loadSavedValues() {
             // Load all saved values except scannerData
-            const fieldsToLoad = ['scannerData', 'baseNodeUrl', 'startHeight', 'endHeight', 'limit', 'scanMode', 'specificHeights', 'maxTransactions'];
+            const fieldsToLoad = ['scannerData', 'baseNodeUrl', 'startHeight', 'endHeight', 'scanMode', 'specificHeights', 'maxTransactions'];
 
             fieldsToLoad.forEach(fieldId => {
                 const element = document.getElementById(fieldId);
@@ -1400,7 +1396,7 @@
 
         function setupInputSaving() {
             // Fields to save (excluding scannerData)
-            const fieldsToSave = ['scannerData', 'baseNodeUrl', 'startHeight', 'endHeight', 'limit', 'scanMode', 'specificHeights', 'maxTransactions'];
+            const fieldsToSave = ['scannerData', 'baseNodeUrl', 'startHeight', 'endHeight', 'scanMode', 'specificHeights', 'maxTransactions'];
 
             fieldsToSave.forEach(fieldId => {
                 const element = document.getElementById(fieldId);
