@@ -1191,10 +1191,10 @@ impl WalletStorage for SqliteStorage {
                 }
                 Ok(output_id)
             } else {
-                // Insert new output
+                // Insert new output (ignore if already exists due to unique constraint)
                 conn.execute(
                     r#"
-                    INSERT INTO outputs
+                    INSERT OR IGNORE INTO outputs
                     (wallet_id, commitment, hash, value, spending_key, script_private_key,
                      script, input_data, covenant, output_type, features_json, maturity,
                      script_lock_height, sender_offset_public_key, metadata_signature_ephemeral_commitment,
@@ -1293,10 +1293,10 @@ impl WalletStorage for SqliteStorage {
                         output_ids.push(output_id);
                     }
                 } else {
-                    // Insert new
+                    // Insert new (ignore if already exists due to unique constraint)
                     tx.execute(
                         r#"
-                        INSERT INTO outputs
+                        INSERT OR IGNORE INTO outputs
                         (wallet_id, commitment, hash, value, spending_key, script_private_key,
                          script, input_data, covenant, output_type, features_json, maturity,
                          script_lock_height, sender_offset_public_key, metadata_signature_ephemeral_commitment,
