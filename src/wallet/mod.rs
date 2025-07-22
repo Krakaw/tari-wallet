@@ -316,6 +316,22 @@ impl Wallet {
     pub fn master_key_bytes(&self) -> [u8; 32] {
         *self.master_key.as_bytes()
     }
+
+    /// Get the view key for this wallet
+    pub fn get_view_key(&self) -> Result<PrivateKey, KeyManagementError> {
+        let (view_key, _) = self.derive_key_pair()?;
+        Ok(view_key)
+    }
+
+    /// Get entropy for scanning operations (uses master key as entropy)
+    pub fn get_entropy(&self) -> Result<[u8; 32], KeyManagementError> {
+        Ok(*self.master_key.as_bytes())
+    }
+
+    /// Get the current birthday calculation (public version)
+    pub fn current_birthday() -> u64 {
+        Self::calculate_current_birthday()
+    }
 }
 
 impl Zeroize for Wallet {

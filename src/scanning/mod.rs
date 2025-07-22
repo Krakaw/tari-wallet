@@ -33,6 +33,7 @@ pub mod scan_configuration;
 pub mod scan_results;
 pub mod scanner_engine;
 pub mod storage_manager;
+pub mod wallet_source;
 
 // Include GRPC scanner when the feature is enabled
 #[cfg(feature = "grpc")]
@@ -42,10 +43,11 @@ pub mod grpc_scanner;
 pub mod http_scanner;
 
 // Re-export core library components
-pub use scan_configuration::{ScanConfiguration, WalletSource, WalletContext};
+pub use scan_configuration::ScanConfiguration;
 pub use scan_results::{ScanResults, ScanProgress as LibraryScanProgress};
 pub use scanner_engine::ScannerEngine;
 pub use storage_manager::{StorageManager, BackgroundWriterAdapter, DirectStorageAdapter};
+pub use wallet_source::{WalletContext, WalletSource, WalletSourceType};
 
 // Re-export GRPC scanner types
 #[cfg(feature = "grpc")]

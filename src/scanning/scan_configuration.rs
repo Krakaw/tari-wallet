@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::extraction::ExtractionConfig;
 use crate::errors::{LightweightWalletError, LightweightWalletResult};
 use crate::key_management::{KeyManager, KeyStore};
+use crate::scanning::wallet_source::{WalletSource as LibWalletSource, WalletContext as LibWalletContext};
 
 /// Comprehensive configuration structure for all scan parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +33,9 @@ pub struct ScanConfiguration {
     /// Extraction configuration (excluded from serialization for security)
     #[serde(skip)]
     pub extraction_config: ExtractionConfig,
+    /// Wallet source for initialization
+    #[serde(skip)]
+    pub wallet_source: Option<LibWalletSource>,
     /// Output format for progress reporting
     #[serde(default)]
     pub output_format: OutputFormat,
@@ -86,6 +90,7 @@ impl Default for ScanConfiguration {
             max_addresses_per_account: 1000,
             scan_imported_keys: true,
             extraction_config: ExtractionConfig::default(),
+            wallet_source: None,
             output_format: OutputFormat::default(),
             quiet: false,
         }
@@ -172,6 +177,23 @@ impl ScanConfiguration {
     pub fn with_extraction_config(mut self, config: ExtractionConfig) -> Self {
         self.extraction_config = config;
         self
+    }
+
+    /// Set the wallet source
+    pub fn with_wallet_source(mut self, wallet_source: LibWalletSource) -> Self {
+        self.wallet_source = Some(wallet_source);
+        self
+    }
+
+    /// Initialize the wallet from the configured source
+    pub fn initialize_wallet(&self) -> LightweightWalletResult<Option<LibWalletContext>> {
+        match &self.wallet_source {
+            Some(source) => {
+                let context = source.clone().initialize_wallet()?;
+                Ok(Some(context))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Set the output format
