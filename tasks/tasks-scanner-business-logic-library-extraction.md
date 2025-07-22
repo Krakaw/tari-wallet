@@ -26,7 +26,7 @@
 - [ ] 1.0 Create Core Scanner Library Infrastructure
   - [x] 1.1 Create `src/scanning/` module directory and `mod.rs` with proper module declarations
   - [x] 1.2 Implement `ScanConfiguration` struct in `scan_configuration.rs` with validation and defaults
-  - [ ] 1.3 Implement `ScanResults` and `ScanProgress` structs in `scan_results.rs` for progress reporting
+  - [x] 1.3 Implement `ScanResults` and `ScanProgress` structs in `scan_results.rs` for progress reporting
   - [ ] 1.4 Create `WalletSource` enum and `WalletContext` struct for wallet initialization options
   - [ ] 1.5 Implement core `ScannerEngine` struct in `scanner_engine.rs` with initialization methods
   - [ ] 1.6 Add scanner-specific error types to existing error handling system

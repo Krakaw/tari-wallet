@@ -24,28 +24,53 @@ impl ScannerEngine {
     }
 
     /// Scan a range of blocks
-    pub async fn scan_range(&mut self, _config: ScanConfiguration) -> LightweightWalletResult<ScanResults> {
+    pub async fn scan_range(&mut self, config: ScanConfiguration) -> LightweightWalletResult<ScanResults> {
         // TODO: Implement scan range logic
-        Ok(ScanResults {
-            block_results: Vec::new(),
-            total_wallet_outputs: 0,
-            total_value: 0,
-            addresses_scanned: 0,
-            accounts_scanned: 0,
-            scan_duration: std::time::Duration::from_secs(0),
-        })
+        use crate::data_structures::wallet_transaction::WalletState;
+        use super::scan_results::{ScanConfigSummary, ScanProgress};
+        use std::time::Instant;
+
+        let start_time = Instant::now();
+        let progress = ScanProgress::new(config.start_height, config.end_height);
+        let config_summary = ScanConfigSummary {
+            start_height: config.start_height,
+            end_height: config.end_height,
+            specific_blocks: config.specific_blocks,
+            batch_size: config.batch_size,
+            total_blocks_scanned: 0,
+        };
+        
+        Ok(ScanResults::new(
+            config_summary,
+            WalletState::new(),
+            progress,
+            start_time,
+        ))
     }
 
     /// Scan specific blocks
-    pub async fn scan_blocks(&mut self, _heights: Vec<u64>) -> LightweightWalletResult<ScanResults> {
+    pub async fn scan_blocks(&mut self, heights: Vec<u64>) -> LightweightWalletResult<ScanResults> {
         // TODO: Implement scan blocks logic
-        Ok(ScanResults {
-            block_results: Vec::new(),
-            total_wallet_outputs: 0,
-            total_value: 0,
-            addresses_scanned: 0,
-            accounts_scanned: 0,
-            scan_duration: std::time::Duration::from_secs(0),
-        })
+        use crate::data_structures::wallet_transaction::WalletState;
+        use super::scan_results::{ScanConfigSummary, ScanProgress};
+        use std::time::Instant;
+
+        let start_time = Instant::now();
+        let start_height = heights.iter().min().copied().unwrap_or(0);
+        let progress = ScanProgress::new(start_height, None);
+        let config_summary = ScanConfigSummary {
+            start_height,
+            end_height: None,
+            specific_blocks: Some(heights),
+            batch_size: 100, // Default batch size
+            total_blocks_scanned: 0,
+        };
+        
+        Ok(ScanResults::new(
+            config_summary,
+            WalletState::new(),
+            progress,
+            start_time,
+        ))
     }
 }
