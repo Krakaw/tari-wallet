@@ -46,7 +46,9 @@ pub mod http_scanner;
 pub use scan_configuration::ScanConfiguration;
 pub use scan_results::{ScanResults, ScanProgress as LibraryScanProgress};
 pub use scanner_engine::ScannerEngine;
-pub use storage_manager::{StorageManager, BackgroundWriterAdapter, DirectStorageAdapter};
+pub use storage_manager::StorageManager;
+#[cfg(feature = "storage")]
+pub use storage_manager::{BackgroundWriterAdapter, DirectStorageAdapter, StorageManagerBuilder};
 pub use wallet_source::{WalletContext, WalletSource, WalletSourceType};
 
 // Re-export GRPC scanner types
