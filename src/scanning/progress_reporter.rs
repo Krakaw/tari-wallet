@@ -77,9 +77,15 @@ pub struct ProgressInfo {
     pub blocks_scanned: u64,
     /// Total blocks to scan
     pub total_blocks: Option<u64>,
-    /// Elapsed time since start
+    /// Elapsed time since start (seconds for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub elapsed_seconds: f64,
+    #[cfg(not(target_arch = "wasm32"))]
     pub elapsed: std::time::Duration,
-    /// Estimated remaining time
+    /// Estimated remaining time (seconds for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub estimated_remaining_seconds: Option<f64>,
+    #[cfg(not(target_arch = "wasm32"))]
     pub estimated_remaining: Option<std::time::Duration>,
     /// Current scan rate (blocks per second)
     pub scan_rate: f64,
@@ -117,7 +123,13 @@ impl From<ScanProgress> for ProgressInfo {
             total_value: progress.total_value,
             blocks_scanned: progress.blocks_scanned,
             total_blocks: progress.total_blocks,
+            #[cfg(target_arch = "wasm32")]
+            elapsed_seconds: progress.elapsed_seconds,
+            #[cfg(not(target_arch = "wasm32"))]
             elapsed: progress.elapsed,
+            #[cfg(target_arch = "wasm32")]
+            estimated_remaining_seconds: progress.estimated_remaining_seconds,
+            #[cfg(not(target_arch = "wasm32"))]
             estimated_remaining: progress.estimated_remaining,
             scan_rate: progress.scan_rate,
             report_type,
@@ -235,8 +247,17 @@ impl ConsoleProgressReporter {
         }
 
         if config.show_eta && progress.scan_rate > 0.0 {
-            if let Some(eta) = progress.estimated_remaining {
-                progress_line.push_str(&format!(" | ETA: {}s", eta.as_secs()));
+            #[cfg(target_arch = "wasm32")]
+            {
+                if let Some(eta_seconds) = progress.estimated_remaining_seconds {
+                    progress_line.push_str(&format!(" | ETA: {}s", eta_seconds as u64));
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if let Some(eta) = progress.estimated_remaining {
+                    progress_line.push_str(&format!(" | ETA: {}s", eta.as_secs()));
+                }
             }
             progress_line.push_str(&format!(" | {:.1} blocks/s", progress.scan_rate));
         }
@@ -300,6 +321,14 @@ impl ProgressReporter for ConsoleProgressReporter {
 
         println!("\n✅ Scan completed successfully!");
         if progress.outputs_found > 0 {
+            #[cfg(target_arch = "wasm32")]
+            println!(
+                "📊 Found {} outputs totaling {:.6} T in {:.2} seconds",
+                format_number(progress.outputs_found),
+                progress.total_value as f64 / 1_000_000.0,
+                progress.elapsed_seconds
+            );
+            #[cfg(not(target_arch = "wasm32"))]
             println!(
                 "📊 Found {} outputs totaling {:.6} T in {:.2} seconds",
                 format_number(progress.outputs_found),

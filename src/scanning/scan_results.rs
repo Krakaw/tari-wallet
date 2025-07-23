@@ -6,7 +6,10 @@ use crate::data_structures::{
     wallet_transaction::WalletState,
 };
 use crate::errors::{LightweightWalletError, LightweightWalletResult};
+#[cfg(target_arch = "wasm32")]
+use js_sys;
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 
 /// Structured progress reporting for scan operations
@@ -28,10 +31,16 @@ pub struct ScanProgress {
     pub total_value: u64,
     /// Current scan rate (blocks per second)
     pub scan_rate: f64,
-    /// Time elapsed since scan started
+    /// Time elapsed since scan started (seconds for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub elapsed_seconds: f64,
+    #[cfg(not(target_arch = "wasm32"))]
     #[serde(with = "duration_serde")]
     pub elapsed: Duration,
-    /// Estimated time remaining (if target_height is known)
+    /// Estimated time remaining (seconds for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub estimated_remaining_seconds: Option<f64>,
+    #[cfg(not(target_arch = "wasm32"))]
     #[serde(with = "duration_option_serde")]
     pub estimated_remaining: Option<Duration>,
     /// Current scan phase description
@@ -84,13 +93,20 @@ impl ScanProgress {
             outputs_spent: 0,
             total_value: 0,
             scan_rate: 0.0,
+            #[cfg(target_arch = "wasm32")]
+            elapsed_seconds: 0.0,
+            #[cfg(not(target_arch = "wasm32"))]
             elapsed: Duration::from_secs(0),
+            #[cfg(target_arch = "wasm32")]
+            estimated_remaining_seconds: None,
+            #[cfg(not(target_arch = "wasm32"))]
             estimated_remaining: None,
             phase: ScanPhase::Initializing,
         }
     }
 
     /// Update progress with current scan state
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn update(
         &mut self,
         current_height: u64,
@@ -118,6 +134,39 @@ impl ScanProgress {
             if self.scan_rate > 0.0 && remaining_blocks > 0 {
                 let remaining_seconds = remaining_blocks as f64 / self.scan_rate;
                 self.estimated_remaining = Some(Duration::from_secs_f64(remaining_seconds));
+            }
+        }
+    }
+
+    /// Update progress with current scan state (WASM version with seconds)
+    #[cfg(target_arch = "wasm32")]
+    pub fn update_wasm(
+        &mut self,
+        current_height: u64,
+        blocks_scanned: u64,
+        outputs_found: u64,
+        outputs_spent: u64,
+        total_value: u64,
+        elapsed_seconds: f64,
+    ) {
+        self.current_height = current_height;
+        self.blocks_scanned = blocks_scanned;
+        self.outputs_found = outputs_found;
+        self.outputs_spent = outputs_spent;
+        self.total_value = total_value;
+        self.elapsed_seconds = elapsed_seconds;
+
+        // Calculate scan rate (blocks per second)
+        if elapsed_seconds > 0.0 {
+            self.scan_rate = blocks_scanned as f64 / elapsed_seconds;
+        }
+
+        // Calculate estimated time remaining
+        if let Some(total) = self.total_blocks {
+            let remaining_blocks = total.saturating_sub(blocks_scanned);
+            if self.scan_rate > 0.0 && remaining_blocks > 0 {
+                let remaining_seconds = remaining_blocks as f64 / self.scan_rate;
+                self.estimated_remaining_seconds = Some(remaining_seconds);
             }
         }
     }
@@ -200,9 +249,15 @@ pub struct ScanResults {
     pub block_results: Vec<BlockScanResult>,
     /// Final scan progress
     pub final_progress: ScanProgress,
-    /// Scan start time
+    /// Scan start time (timestamp for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub start_timestamp: f64,
+    #[cfg(not(target_arch = "wasm32"))]
     pub start_time: Instant,
-    /// Scan end time
+    /// Scan end time (timestamp for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub end_timestamp: f64,
+    #[cfg(not(target_arch = "wasm32"))]
     pub end_time: Instant,
     /// Whether the scan completed successfully
     pub completed_successfully: bool,
@@ -230,7 +285,10 @@ pub struct ScanConfigSummary {
 /// Detailed statistics about the scan operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanStatistics {
-    /// Total scan duration
+    /// Total scan duration (seconds for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub total_duration_seconds: f64,
+    #[cfg(not(target_arch = "wasm32"))]
     pub total_duration: Duration,
     /// Average scan rate (blocks per second)
     pub average_scan_rate: f64,
@@ -238,7 +296,10 @@ pub struct ScanStatistics {
     pub peak_scan_rate: f64,
     /// Number of batches processed
     pub batches_processed: usize,
-    /// Average batch processing time
+    /// Average batch processing time (seconds for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub average_batch_time_seconds: f64,
+    #[cfg(not(target_arch = "wasm32"))]
     pub average_batch_time: Duration,
     /// Total outputs found
     pub total_outputs_found: u64,
@@ -267,9 +328,15 @@ pub struct StorageStatistics {
     pub transactions_saved: u64,
     /// Number of spent output updates
     pub spent_updates: u64,
-    /// Total storage operation time
+    /// Total storage operation time (seconds for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub total_storage_time_seconds: f64,
+    #[cfg(not(target_arch = "wasm32"))]
     pub total_storage_time: Duration,
-    /// Average time per storage operation
+    /// Average time per storage operation (seconds for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub average_storage_time_seconds: f64,
+    #[cfg(not(target_arch = "wasm32"))]
     pub average_storage_time: Duration,
 }
 
@@ -279,14 +346,21 @@ impl Default for StorageStatistics {
             outputs_saved: 0,
             transactions_saved: 0,
             spent_updates: 0,
+            #[cfg(target_arch = "wasm32")]
+            total_storage_time_seconds: 0.0,
+            #[cfg(not(target_arch = "wasm32"))]
             total_storage_time: Duration::from_secs(0),
+            #[cfg(target_arch = "wasm32")]
+            average_storage_time_seconds: 0.0,
+            #[cfg(not(target_arch = "wasm32"))]
             average_storage_time: Duration::from_secs(0),
         }
     }
 }
 
 impl ScanResults {
-    /// Create new scan results
+    /// Create new scan results (native version)
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(
         scan_config_summary: ScanConfigSummary,
         wallet_state: WalletState,
@@ -323,6 +397,44 @@ impl ScanResults {
         }
     }
 
+    /// Create new scan results (WASM version with timestamps)
+    #[cfg(target_arch = "wasm32")]
+    pub fn new(
+        scan_config_summary: ScanConfigSummary,
+        wallet_state: WalletState,
+        final_progress: ScanProgress,
+        start_timestamp: f64,
+    ) -> Self {
+        let end_timestamp = js_sys::Date::now();
+        let total_duration_seconds = (end_timestamp - start_timestamp) / 1000.0;
+
+        Self {
+            scan_config_summary: scan_config_summary.clone(),
+            wallet_state,
+            block_results: Vec::new(),
+            final_progress: final_progress.clone(),
+            start_timestamp,
+            end_timestamp,
+            completed_successfully: final_progress.is_complete(),
+            error_message: None,
+            statistics: ScanStatistics {
+                total_duration_seconds,
+                average_scan_rate: final_progress.scan_rate,
+                peak_scan_rate: final_progress.scan_rate,
+                batches_processed: 0,
+                average_batch_time_seconds: 0.0,
+                total_outputs_found: final_progress.outputs_found,
+                total_outputs_spent: final_progress.outputs_spent,
+                total_value_found: final_progress.total_value,
+                total_value_spent: 0, // Would need to calculate from wallet state
+                net_value_change: final_progress.total_value as i64,
+                active_addresses: 0, // Would need to calculate from results
+                transactions_processed: scan_config_summary.total_blocks_scanned,
+                storage_operations: StorageStatistics::default(),
+            },
+        }
+    }
+
     /// Add block scan results
     pub fn add_block_results(&mut self, results: Vec<BlockScanResult>) {
         self.block_results.extend(results);
@@ -341,12 +453,20 @@ impl ScanResults {
         self.final_progress.set_phase(ScanPhase::Interrupted);
     }
 
-    /// Get scan duration
+    /// Get scan duration (native version)
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn duration(&self) -> Duration {
         self.statistics.total_duration
     }
 
-    /// Get summary statistics
+    /// Get scan duration in seconds (WASM version)
+    #[cfg(target_arch = "wasm32")]
+    pub fn duration_seconds(&self) -> f64 {
+        self.statistics.total_duration_seconds
+    }
+
+    /// Get summary statistics (native version)
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn summary(&self) -> ScanResultSummary {
         ScanResultSummary {
             blocks_scanned: self.scan_config_summary.total_blocks_scanned,
@@ -355,6 +475,22 @@ impl ScanResults {
             total_value_found: self.statistics.total_value_found,
             net_value_change: self.statistics.net_value_change,
             scan_duration: self.statistics.total_duration,
+            average_scan_rate: self.statistics.average_scan_rate,
+            completed_successfully: self.completed_successfully,
+            error_message: self.error_message.clone(),
+        }
+    }
+
+    /// Get summary statistics (WASM version)
+    #[cfg(target_arch = "wasm32")]
+    pub fn summary(&self) -> ScanResultSummary {
+        ScanResultSummary {
+            blocks_scanned: self.scan_config_summary.total_blocks_scanned,
+            outputs_found: self.statistics.total_outputs_found,
+            outputs_spent: self.statistics.total_outputs_spent,
+            total_value_found: self.statistics.total_value_found,
+            net_value_change: self.statistics.net_value_change,
+            scan_duration_seconds: self.statistics.total_duration_seconds,
             average_scan_rate: self.statistics.average_scan_rate,
             completed_successfully: self.completed_successfully,
             error_message: self.error_message.clone(),
@@ -385,7 +521,10 @@ pub struct ScanResultSummary {
     pub total_value_found: u64,
     /// Net value change (found - spent)
     pub net_value_change: i64,
-    /// Scan duration
+    /// Scan duration (seconds for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub scan_duration_seconds: f64,
+    #[cfg(not(target_arch = "wasm32"))]
     pub scan_duration: Duration,
     /// Average scan rate (blocks per second)
     pub average_scan_rate: f64,
@@ -410,7 +549,10 @@ pub struct BlockScanResult {
     pub mined_timestamp: u64,
     /// Number of transactions in this block
     pub transaction_count: usize,
-    /// Time taken to process this block
+    /// Time taken to process this block (seconds for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub processing_time_seconds: Option<f64>,
+    #[cfg(not(target_arch = "wasm32"))]
     pub processing_time: Option<Duration>,
     /// Any errors encountered processing this block
     pub errors: Vec<String>,
@@ -426,6 +568,9 @@ impl BlockScanResult {
             wallet_outputs: Vec::new(),
             mined_timestamp,
             transaction_count: 0,
+            #[cfg(target_arch = "wasm32")]
+            processing_time_seconds: None,
+            #[cfg(not(target_arch = "wasm32"))]
             processing_time: None,
             errors: Vec::new(),
         }
@@ -441,9 +586,16 @@ impl BlockScanResult {
         self.outputs.extend(outputs);
     }
 
-    /// Set processing time
+    /// Set processing time (native version)
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_processing_time(&mut self, duration: Duration) {
         self.processing_time = Some(duration);
+    }
+
+    /// Set processing time in seconds (WASM version)
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_processing_time_seconds(&mut self, seconds: f64) {
+        self.processing_time_seconds = Some(seconds);
     }
 
     /// Add an error
@@ -477,7 +629,10 @@ pub struct BatchScanResult {
     pub block_heights: Vec<u64>,
     /// Individual block results
     pub block_results: Vec<BlockScanResult>,
-    /// Batch processing time
+    /// Batch processing time (seconds for WASM compatibility)
+    #[cfg(target_arch = "wasm32")]
+    pub processing_time_seconds: f64,
+    #[cfg(not(target_arch = "wasm32"))]
     pub processing_time: Duration,
     /// Total outputs found in this batch
     pub outputs_found: u64,
@@ -494,6 +649,9 @@ impl BatchScanResult {
             batch_index,
             block_heights,
             block_results: Vec::new(),
+            #[cfg(target_arch = "wasm32")]
+            processing_time_seconds: 0.0,
+            #[cfg(not(target_arch = "wasm32"))]
             processing_time: Duration::from_secs(0),
             outputs_found: 0,
             total_value: 0,
@@ -511,9 +669,16 @@ impl BatchScanResult {
         self.block_results.append(&mut results);
     }
 
-    /// Set batch processing time
+    /// Set batch processing time (native version)
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_processing_time(&mut self, duration: Duration) {
         self.processing_time = duration;
+    }
+
+    /// Set batch processing time in seconds (WASM version)
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_processing_time_seconds(&mut self, seconds: f64) {
+        self.processing_time_seconds = seconds;
     }
 
     /// Add a batch-level error
@@ -528,7 +693,8 @@ fn format_tari_amount(micro_minotari: u64) -> String {
     format!("{:.6}", tari)
 }
 
-/// Helper function to create scan result summary from wallet state
+/// Helper function to create scan result summary from wallet state (native version)
+#[cfg(not(target_arch = "wasm32"))]
 pub fn create_scan_result_summary(
     wallet_state: &WalletState,
     start_height: u64,
@@ -555,7 +721,36 @@ pub fn create_scan_result_summary(
     }
 }
 
-// Helper modules for Duration serialization
+/// Helper function to create scan result summary from wallet state (WASM version)
+#[cfg(target_arch = "wasm32")]
+pub fn create_scan_result_summary_wasm(
+    wallet_state: &WalletState,
+    start_height: u64,
+    end_height: Option<u64>,
+    duration_seconds: f64,
+) -> ScanResultSummary {
+    let (total_received, total_spent, _, unspent_count, spent_count) = wallet_state.get_summary();
+    let blocks_scanned = end_height.map(|end| end - start_height + 1).unwrap_or(0);
+
+    ScanResultSummary {
+        blocks_scanned,
+        outputs_found: unspent_count as u64,
+        outputs_spent: spent_count as u64,
+        total_value_found: total_received,
+        net_value_change: total_received as i64 - total_spent as i64,
+        scan_duration_seconds: duration_seconds,
+        average_scan_rate: if duration_seconds > 0.0 {
+            blocks_scanned as f64 / duration_seconds
+        } else {
+            0.0
+        },
+        completed_successfully: true,
+        error_message: None,
+    }
+}
+
+// Helper modules for Duration serialization (native only)
+#[cfg(not(target_arch = "wasm32"))]
 mod duration_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::time::Duration;
@@ -576,6 +771,7 @@ mod duration_serde {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 mod duration_option_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::time::Duration;

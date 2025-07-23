@@ -63,6 +63,7 @@
 
 - [ ] 4.0 Enhance WASM Integration with Library Components
   - [x] 4.1 Update `src/wasm.rs` to use `ScannerEngine` instead of duplicated logic
+  - [x] 4.1.1 Use lib to extract all transactions to maintain the same functionality as was built into `src/wasm.rs` but now is exposed via the lib.
   - [ ] 4.2 Implement async wrapper functions for browser compatibility
   - [ ] 4.3 Add memory management optimizations for large scans in WASM environment
   - [ ] 4.4 Create WASM-specific configuration defaults and error handling

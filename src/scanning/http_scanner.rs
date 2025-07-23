@@ -185,7 +185,7 @@ impl HttpBlockchainScanner {
             })?;
 
             // Test the connection
-            let test_url = format!("{base_url}/api/tip");
+            let test_url = format!("{base_url}/get_tip_info");
             let response = client.get(&test_url).send().await;
             if response.is_err() {
                 return Err(LightweightWalletError::ScanningError(
@@ -208,7 +208,7 @@ impl HttpBlockchainScanner {
             // web-sys creates requests on-demand
 
             // Test the connection with a simple GET request
-            let test_url = format!("{}/api/tip", base_url);
+            let test_url = format!("{}/get_tip_info", base_url);
 
             let opts = RequestInit::new();
             opts.set_method("GET");
@@ -262,7 +262,7 @@ impl HttpBlockchainScanner {
         })?;
 
         // Test the connection
-        let test_url = format!("{base_url}/api/tip");
+        let test_url = format!("{base_url}/get_tip_info");
         let response = client.get(&test_url).send().await;
         if response.is_err() {
             return Err(LightweightWalletError::ScanningError(
@@ -597,13 +597,58 @@ impl HttpBlockchainScanner {
         Ok(None)
     }
 
-    /// Fetch blocks by heights using HTTP API
+    /// Fetch blocks by heights using HTTP API - converts to header-based requests
     async fn fetch_blocks_by_heights(
         &self,
         heights: Vec<u64>,
     ) -> LightweightWalletResult<HttpBlockResponse> {
-        let url = format!("{}/api/blocks", self.base_url);
-        let request = HttpGetBlocksRequest { heights };
+        // Sort heights for sequential processing
+        let mut sorted_heights = heights;
+        sorted_heights.sort();
+
+        if sorted_heights.is_empty() {
+            return Ok(HttpBlockResponse {
+                blocks: vec![],
+                has_next_page: false,
+            });
+        }
+
+        // For the Tari base node API, we need to fetch blocks sequentially using header hashes
+        // We will fetch each height individually
+
+        // Fetch blocks for all heights individually using the base node API
+        let mut all_blocks = Vec::new();
+
+        for &height in &sorted_heights {
+            match self.get_header_by_height(height).await {
+                Ok(block_response) => {
+                    // Add all blocks from this response to our collection
+                    all_blocks.extend(block_response.blocks);
+                }
+                Err(e) => {
+                    eprintln!("Failed to fetch block at height {}: {}", height, e);
+                    // Continue with other blocks rather than failing completely
+                }
+            }
+        }
+
+        Ok(HttpBlockResponse {
+            blocks: all_blocks,
+            has_next_page: false, // We've fetched the specific heights requested
+        })
+    }
+
+    /// Get header by height using Tari base node API
+    async fn get_header_by_height(
+        &self,
+        height: u64,
+    ) -> LightweightWalletResult<HttpBlockResponse> {
+        let url = format!("{}/get_header_by_height", self.base_url);
+
+        // Create request body with height
+        let request_body = serde_json::json!({
+            "height": height
+        });
 
         // Native implementation using reqwest
         #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
@@ -611,7 +656,7 @@ impl HttpBlockchainScanner {
             let response = self
                 .client
                 .post(&url)
-                .json(&request)
+                .json(&request_body)
                 .send()
                 .await
                 .map_err(|e| {
@@ -645,7 +690,7 @@ impl HttpBlockchainScanner {
         // WASM implementation using web-sys
         #[cfg(all(feature = "http", target_arch = "wasm32"))]
         {
-            let json_body = serde_json::to_string(&request).map_err(|e| {
+            let json_body = serde_json::to_string(&request_body).map_err(|e| {
                 LightweightWalletError::ScanningError(
                     crate::errors::ScanningError::blockchain_connection_failed(&format!(
                         "Failed to serialize request: {}",
@@ -872,7 +917,7 @@ impl BlockchainScanner for HttpBlockchainScanner {
     }
 
     async fn get_tip_info(&mut self) -> LightweightWalletResult<TipInfo> {
-        let url = format!("{}/api/tip", self.base_url);
+        let url = format!("{}/get_tip_info", self.base_url);
 
         // Native implementation using reqwest
         #[cfg(all(feature = "http", not(target_arch = "wasm32")))]

@@ -1011,7 +1011,7 @@
 
         function scanHttpBlocks(httpResponse) {
             try {
-                // Process HTTP response
+                // Process HTTP response using the original synchronous method
                 let httpResponseJson = JSON.stringify(httpResponse);
                 
                 const resultJson = wasm.process_http_blocks(scanner, httpResponseJson);

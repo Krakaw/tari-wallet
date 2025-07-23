@@ -6,11 +6,26 @@
 use crate::data_structures::wallet_transaction::WalletState;
 use crate::errors::{LightweightWalletError, LightweightWalletResult};
 use crate::extraction::ExtractionConfig;
+#[cfg(target_arch = "wasm32")]
+use js_sys;
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 #[cfg(feature = "storage")]
 use super::storage_manager::{ScannerStorageConfig, StorageManager};
+
+/// Get current time for timing measurements
+#[cfg(not(target_arch = "wasm32"))]
+fn get_current_time() -> Instant {
+    Instant::now()
+}
+
+/// Get current time for timing measurements (WASM version)
+#[cfg(target_arch = "wasm32")]
+fn get_current_time() -> f64 {
+    js_sys::Date::now()
+}
 
 /// Error recovery strategy for handling scanning errors
 #[derive(Debug, Clone, PartialEq)]
@@ -303,7 +318,7 @@ impl ScannerEngine {
         progress_callback: Option<Arc<dyn Fn(ScanProgress) + Send + Sync>>,
         cancellation_receiver: Option<&mut tokio::sync::watch::Receiver<bool>>,
     ) -> LightweightWalletResult<ScanResults> {
-        let start_time = Instant::now();
+        let start_time = get_current_time();
 
         // Determine the block range to scan
         let (start_height, end_height) = self.determine_scan_range().await?;
@@ -584,7 +599,7 @@ impl ScannerEngine {
         &mut self,
         progress_callback: Option<Arc<dyn Fn(ScanProgress) + Send + Sync>>,
     ) -> LightweightWalletResult<ScanResults> {
-        let start_time = Instant::now();
+        let start_time = get_current_time();
 
         // Determine the block range to scan
         let (start_height, end_height) = self.determine_scan_range().await?;
@@ -667,7 +682,7 @@ impl ScannerEngine {
         progress_callback: Option<Arc<dyn Fn(ScanProgress) + Send + Sync>>,
         cancellation_receiver: Option<&mut tokio::sync::watch::Receiver<bool>>,
     ) -> LightweightWalletResult<ScanResults> {
-        let start_time = Instant::now();
+        let start_time = get_current_time();
 
         if heights.is_empty() {
             return Err(LightweightWalletError::InvalidArgument {
@@ -933,7 +948,7 @@ impl ScannerEngine {
         heights: Vec<u64>,
         progress_callback: Option<Arc<dyn Fn(ScanProgress) + Send + Sync>>,
     ) -> LightweightWalletResult<ScanResults> {
-        let start_time = Instant::now();
+        let start_time = get_current_time();
 
         if heights.is_empty() {
             return Err(LightweightWalletError::InvalidArgument {
@@ -995,9 +1010,12 @@ impl ScannerEngine {
                     outputs: scanner_result.outputs,
                     wallet_outputs: scanner_result.wallet_outputs,
                     mined_timestamp: scanner_result.mined_timestamp,
-                    transaction_count: 0,  // Not provided by scanner
+                    transaction_count: 0, // Not provided by scanner
+                    #[cfg(target_arch = "wasm32")]
+                    processing_time_seconds: None, // Not tracked yet
+                    #[cfg(not(target_arch = "wasm32"))]
                     processing_time: None, // Not tracked yet
-                    errors: vec![],        // Not tracked yet
+                    errors: vec![],       // Not tracked yet
                 }
             })
             .collect();
@@ -1026,7 +1044,7 @@ impl ScannerEngine {
         &mut self,
         commitments: Vec<Vec<u8>>,
     ) -> LightweightWalletResult<ScanResults> {
-        let start_time = Instant::now();
+        let start_time = get_current_time();
 
         let scanner_results = self.scanner.search_utxos(commitments).await?;
 
@@ -1040,9 +1058,12 @@ impl ScannerEngine {
                     outputs: scanner_result.outputs,
                     wallet_outputs: scanner_result.wallet_outputs,
                     mined_timestamp: scanner_result.mined_timestamp,
-                    transaction_count: 0,  // Not provided by scanner
+                    transaction_count: 0, // Not provided by scanner
+                    #[cfg(target_arch = "wasm32")]
+                    processing_time_seconds: None, // Not tracked yet
+                    #[cfg(not(target_arch = "wasm32"))]
                     processing_time: None, // Not tracked yet
-                    errors: vec![],        // Not tracked yet
+                    errors: vec![],       // Not tracked yet
                 }
             })
             .collect();
@@ -1104,18 +1125,24 @@ impl ScannerEngine {
         // Convert Arc callback to the format expected by the scanner
         let callback_fn: Option<super::ProgressCallback> = progress_callback.map(|cb| {
             Box::new(move |old_progress: super::ScanProgress| {
-                // Convert old ScanProgress to new ScanProgress
+                // Convert simple scanning::ScanProgress to comprehensive scan_results::ScanProgress
                 let new_progress = ScanProgress {
                     current_height: old_progress.current_height,
                     target_height: Some(old_progress.target_height),
-                    outputs_found: old_progress.outputs_found,
-                    outputs_spent: 0,
-                    total_value: old_progress.total_value,
-                    scan_rate: 0.0, // Will be calculated by the new progress tracker
-                    blocks_scanned: 0, // Will be calculated
+                    blocks_scanned: 0,  // Not available in simple version
                     total_blocks: None, // Will be calculated
+                    outputs_found: old_progress.outputs_found,
+                    outputs_spent: 0, // Not available in simple version
+                    total_value: old_progress.total_value,
+                    scan_rate: 0.0, // Not available in simple version
+                    #[cfg(target_arch = "wasm32")]
+                    elapsed_seconds: old_progress.elapsed.as_secs_f64(),
+                    #[cfg(not(target_arch = "wasm32"))]
                     elapsed: old_progress.elapsed,
-                    estimated_remaining: None, // Will be calculated by the new progress tracker
+                    #[cfg(target_arch = "wasm32")]
+                    estimated_remaining_seconds: None, // Not available in simple version
+                    #[cfg(not(target_arch = "wasm32"))]
+                    estimated_remaining: None, // Not available in simple version
                     phase: ScanPhase::Scanning {
                         batch_index: 0,
                         total_batches: None,
@@ -1149,9 +1176,12 @@ impl ScannerEngine {
                     outputs: scanner_result.outputs,
                     wallet_outputs: scanner_result.wallet_outputs,
                     mined_timestamp: scanner_result.mined_timestamp,
-                    transaction_count: 0,  // Not provided by scanner
+                    transaction_count: 0, // Not provided by scanner
+                    #[cfg(target_arch = "wasm32")]
+                    processing_time_seconds: None, // Not tracked yet
+                    #[cfg(not(target_arch = "wasm32"))]
                     processing_time: None, // Not tracked yet
-                    errors: vec![],        // Not tracked yet
+                    errors: vec![],       // Not tracked yet
                 }
             })
             .collect();
@@ -1166,7 +1196,8 @@ impl ScannerEngine {
         end_height: Option<u64>,
         specific_blocks: Option<Vec<u64>>,
         block_results: Vec<BlockScanResult>,
-        start_time: Instant,
+        #[cfg(target_arch = "wasm32")] start_time: f64,
+        #[cfg(not(target_arch = "wasm32"))] start_time: Instant,
     ) -> LightweightWalletResult<ScanResults> {
         // Calculate summary statistics
         let total_outputs = block_results
