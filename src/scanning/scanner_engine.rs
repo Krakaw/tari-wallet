@@ -41,6 +41,9 @@ impl ScannerEngine {
     }
 
     /// Initialize the wallet context from the configuration
+    /// Currently handles wallet sources (seed phrase, view key) from configuration.
+    /// TODO: Future task should extract database wallet loading from scanner.rs
+    /// to ScannerEngine for better organization (without creating new wallets)
     pub async fn initialize_wallet(&mut self) -> LightweightWalletResult<()> {
         if let Some(wallet_context) = self.configuration.initialize_wallet()? {
             self.wallet_context = Some(wallet_context);

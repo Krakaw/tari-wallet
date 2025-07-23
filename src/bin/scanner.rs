@@ -2585,12 +2585,13 @@ async fn main() -> LightweightWalletResult<()> {
         println!("===============================");
     }
 
-    // Create scan context based on input method (or defer if resuming from database)
+    // Create scan context based on input method (minimal wallet operations for scanning only)
     let (scan_context, default_from_block) = if keys_provided {
         if let Some(seed_phrase) = &args.seed_phrase {
             if !args.quiet {
-                println!("🔨 Creating wallet from seed phrase...");
+                println!("🔨 Creating scan context from seed phrase...");
             }
+            // Create minimal wallet instance just to extract scan context
             let wallet = Wallet::new_from_seed_phrase(seed_phrase, None)?;
             let scan_context = ScanContext::from_wallet(&wallet)?;
             let default_from_block = wallet.birthday();
@@ -2606,7 +2607,7 @@ async fn main() -> LightweightWalletResult<()> {
             unreachable!("Keys provided but neither seed phrase nor view key found");
         }
     } else {
-        // Keys will be loaded from database wallet
+        // Keys will be loaded from database wallet via ScannerEngine
         if !args.quiet {
             println!("🔑 Will load wallet keys from database...");
         }

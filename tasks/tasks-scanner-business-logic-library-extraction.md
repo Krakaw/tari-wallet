@@ -25,6 +25,7 @@
    - wasm-pack build --target web --out-dir examples/wasm/pkg --features http
    - cargo run --bin scanner --features grpc-storage -- --from-block=16000 --to-block=16020
    - cargo run --bin wallet --features grpc-storage 
+- **IMPORTANT** The goal of these tasks is to make the binaries slim wrappers around the libs.
 
 ## Tasks
 
@@ -48,7 +49,7 @@
 
 - [ ] 3.0 Extract Business Logic from CLI Scanner
   - [x] 3.1 Analyze existing `src/bin/scanner.rs` to identify all business logic components
-  - [ ] 3.2 Move wallet creation and selection logic to `ScannerEngine::initialize_wallet()`
+  - [x] 3.2 Move wallet creation and selection logic to `ScannerEngine::initialize_wallet()`
   - [ ] 3.3 Move blockchain scanning coordination logic to `ScannerEngine::scan_range()` and `scan_blocks()`
   - [ ] 3.4 Extract progress reporting and output formatting to library components
   - [ ] 3.5 Move error handling and recovery logic to scanner engine
