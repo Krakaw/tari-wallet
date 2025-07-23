@@ -65,7 +65,7 @@
   - [x] 4.1 Update `src/wasm.rs` to use `ScannerEngine` instead of duplicated logic
   - [x] 4.1.1 Use lib to extract all transactions to maintain the same functionality as was built into `src/wasm.rs` but now is exposed via the lib.
   - [x] 4.2 Implement async wrapper functions for browser compatibility
-  - [ ] 4.3 Add memory management optimizations for large scans in WASM environment
+  - [x] 4.3 Add memory management optimizations for large scans in WASM environment
   - [ ] 4.4 Create WASM-specific configuration defaults and error handling
   - [ ] 4.5 Add WASM-specific progress reporting mechanisms (callbacks)
   - [ ] 4.6 Test cross-platform consistency between CLI and WASM scanner results

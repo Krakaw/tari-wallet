@@ -46,6 +46,7 @@ impl TestBlockchainScanner {
             outputs,
             inputs: vec![],
             kernels: vec![],
+            http_output_hashes: None,
         };
         self.blocks.insert(height, block);
         self.tip_height = self.tip_height.max(height);

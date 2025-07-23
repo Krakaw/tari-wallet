@@ -519,30 +519,18 @@
                 </div>
 
                 <div class="section">
-                    <h3>📝 Console Logs</h3>
-                    <div class="log-controls">
-                        <label class="checkbox-label">
-                            <div class="custom-checkbox">
-                                <input type="checkbox" id="showTrace" onchange="toggleTraceLogs()">
-                                <span class="checkbox-custom"></span>
-                            </div>
-                            Show Trace Logs
-                        </label>
-                    </div>
-
-                    <div class="logs" id="logsContainer"></div>
+                <h3>📝 Console Logs</h3>
+                <div class="log-controls">
+                <label class="checkbox-label">
+                <div class="custom-checkbox">
+                <input type="checkbox" id="showTrace" onchange="toggleTraceLogs()">
+                <span class="checkbox-custom"></span>
+                </div>
+                Show Trace Logs
+                </label>
                 </div>
 
-                 <div class="section">
-                    <h3>🧹 Memory Management</h3>
-                    <div class="form-group">
-                        <label for="maxTransactions">Max Transactions to Keep:</label>
-                        <input type="number" id="maxTransactions" value="1000000" min="1000" max="1000000000" 
-                               title="Limits memory usage by keeping only the most recent transactions. Balance calculations remain accurate.">
-                    </div>
-                    <p style="font-size: 0.9em; color: #666; margin-top: 10px;">
-                        Log entries are automatically limited to 1000 entries. Transaction cleanup happens automatically when the limit is exceeded.
-                    </p>
+                <div class="logs" id="logsContainer"></div>
                 </div>
             </div>
         </div>
@@ -1265,13 +1253,6 @@
                     // Clear references to large HTTP response data
                     httpResponse.blocks = null;
                     
-                    // Auto cleanup WASM transactions when they exceed the limit
-                    const maxTransactions = parseInt(document.getElementById('maxTransactions').value) || 5000;
-                    if (cumulativeStats.total_transactions > maxTransactions) {
-                        wasm.cleanup_scanner_transactions(scanner, maxTransactions);
-                        log('info', `🧹 WASM cleanup: limited to ${maxTransactions} recent transactions`, true);
-                    }
-                    
                     // Allow UI to update and garbage collection
                     await new Promise(resolve => setTimeout(resolve, 10));
                 }
@@ -1394,7 +1375,7 @@
 
         function loadSavedValues() {
             // Load all saved values except scannerData
-            const fieldsToLoad = ['scannerData', 'baseNodeUrl', 'startHeight', 'endHeight', 'scanMode', 'specificHeights', 'maxTransactions'];
+            const fieldsToLoad = ['scannerData', 'baseNodeUrl', 'startHeight', 'endHeight', 'scanMode', 'specificHeights'];
 
             fieldsToLoad.forEach(fieldId => {
                 const element = document.getElementById(fieldId);
@@ -1412,7 +1393,7 @@
 
         function setupInputSaving() {
             // Fields to save (excluding scannerData)
-            const fieldsToSave = ['scannerData', 'baseNodeUrl', 'startHeight', 'endHeight', 'scanMode', 'specificHeights', 'maxTransactions'];
+            const fieldsToSave = ['scannerData', 'baseNodeUrl', 'startHeight', 'endHeight', 'scanMode', 'specificHeights'];
 
             fieldsToSave.forEach(fieldId => {
                 const element = document.getElementById(fieldId);

@@ -105,6 +105,7 @@ async fn test_full_wallet_lifecycle() {
             outputs: vec![output],
             inputs: vec![],
             kernels: vec![],
+            http_output_hashes: None,
         };
 
         scanner.add_block(block_info);

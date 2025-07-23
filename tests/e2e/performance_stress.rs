@@ -159,6 +159,7 @@ impl DatasetGenerator {
                 outputs,
                 inputs: vec![],
                 kernels: vec![],
+                http_output_hashes: None,
             };
 
             blocks.push(block);
