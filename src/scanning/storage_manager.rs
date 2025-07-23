@@ -18,6 +18,27 @@ use crate::errors::LightweightWalletResult;
 #[cfg(feature = "storage")]
 use super::scan_results::ScanResults;
 
+/// Public batch operation enum for efficient mixed storage operations
+#[derive(Debug, Clone)]
+#[cfg(feature = "storage")]
+pub enum BatchStorageOperation {
+    /// Save a wallet output to storage
+    SaveWalletOutput {
+        wallet_id: u32,
+        output: LightweightWalletOutput,
+    },
+    /// Mark output as spent by commitment
+    MarkOutputSpent {
+        commitment: Vec<u8>,
+        block_height: u64,
+    },
+    /// Update scanned block height for a wallet
+    UpdateScannedBlock {
+        wallet_id: u32,
+        block_height: u64,
+    },
+}
+
 /// Storage manager trait for unified storage operations in the scanner library
 #[cfg(feature = "storage")]
 #[async_trait(?Send)]
@@ -37,6 +58,12 @@ pub trait StorageManager: Send + Sync {
     /// Mark output as spent by commitment
     async fn mark_output_spent(&mut self, commitment: &[u8], block_height: u64) -> LightweightWalletResult<()>;
     
+    /// Mark multiple outputs as spent in batch for efficient spent output tracking
+    async fn mark_outputs_spent_batch(&mut self, spent_outputs: &[(Vec<u8>, u64)]) -> LightweightWalletResult<Vec<LightweightWalletResult<()>>>;
+    
+    /// Execute a batch of mixed operations (save outputs, mark spent, update blocks) efficiently
+    async fn execute_batch_operations(&mut self, operations: Vec<BatchStorageOperation>) -> LightweightWalletResult<Vec<LightweightWalletResult<()>>>;
+    
     /// Get wallet state with current balances
     async fn get_wallet_state(&self, wallet_id: u32) -> LightweightWalletResult<WalletState>;
     
@@ -45,6 +72,9 @@ pub trait StorageManager: Send + Sync {
     
     /// Get the latest scanned block for a wallet
     async fn get_latest_scanned_block(&self, wallet_id: u32) -> LightweightWalletResult<Option<u64>>;
+    
+    /// Flush any pending batched operations (for background writers)
+    async fn flush_pending_operations(&mut self) -> LightweightWalletResult<()>;
 }
 
 /// Mock storage manager for testing and non-storage scenarios
@@ -89,6 +119,32 @@ impl StorageManager for MockStorageManager {
         Ok(())
     }
     
+    async fn mark_outputs_spent_batch(&mut self, spent_outputs: &[(Vec<u8>, u64)]) -> LightweightWalletResult<Vec<LightweightWalletResult<()>>> {
+        // Mock implementation - return success for all operations
+        let results = (0..spent_outputs.len()).map(|_| Ok(())).collect();
+        Ok(results)
+    }
+    
+    async fn execute_batch_operations(&mut self, operations: Vec<BatchStorageOperation>) -> LightweightWalletResult<Vec<LightweightWalletResult<()>>> {
+        // Mock implementation - return success for all operations
+        let mut results = Vec::with_capacity(operations.len());
+        for operation in operations {
+            match operation {
+                BatchStorageOperation::SaveWalletOutput { .. } => {
+                    results.push(Ok(()));
+                }
+                BatchStorageOperation::MarkOutputSpent { .. } => {
+                    results.push(Ok(()));
+                }
+                BatchStorageOperation::UpdateScannedBlock { wallet_id, block_height } => {
+                    self.latest_scanned_blocks.insert(wallet_id, block_height);
+                    results.push(Ok(()));
+                }
+            }
+        }
+        Ok(results)
+    }
+    
     async fn get_wallet_state(&self, _wallet_id: u32) -> LightweightWalletResult<WalletState> {
         // Mock implementation - return empty wallet state
         Ok(WalletState::new())
@@ -101,6 +157,11 @@ impl StorageManager for MockStorageManager {
     
     async fn get_latest_scanned_block(&self, wallet_id: u32) -> LightweightWalletResult<Option<u64>> {
         Ok(self.latest_scanned_blocks.get(&wallet_id).copied())
+    }
+    
+    async fn flush_pending_operations(&mut self) -> LightweightWalletResult<()> {
+        // Mock implementation - no operations to flush
+        Ok(())
     }
 }
 
@@ -903,6 +964,57 @@ mod storage_adapters {
             self.send_command(command).await
         }
         
+        async fn mark_outputs_spent_batch(&mut self, spent_outputs: &[(Vec<u8>, u64)]) -> LightweightWalletResult<Vec<LightweightWalletResult<()>>> {
+            // Convert to batch operations
+            let batch_ops: Vec<BatchOperation> = spent_outputs.iter()
+                .map(|(commitment, block_height)| BatchOperation::MarkOutputSpent {
+                    commitment: commitment.clone(),
+                    block_height: *block_height,
+                })
+                .collect();
+            
+            let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
+            let command = StorageCommand::BatchOperations {
+                operations: batch_ops,
+                response: response_sender,
+            };
+            
+            self.command_sender.send(command)
+                .map_err(|_| LightweightWalletError::InternalError("Background writer channel closed".to_string()))?;
+                
+            response_receiver.await
+                .map_err(|_| LightweightWalletError::InternalError("Background writer response channel closed".to_string()))?
+        }
+        
+        async fn execute_batch_operations(&mut self, operations: Vec<BatchStorageOperation>) -> LightweightWalletResult<Vec<LightweightWalletResult<()>>> {
+            // Convert public BatchStorageOperation to internal BatchOperation
+            let batch_ops: Vec<BatchOperation> = operations.into_iter()
+                .map(|op| match op {
+                    BatchStorageOperation::SaveWalletOutput { wallet_id, output } => {
+                        BatchOperation::SaveWalletOutput { wallet_id, output }
+                    }
+                    BatchStorageOperation::MarkOutputSpent { commitment, block_height } => {
+                        BatchOperation::MarkOutputSpent { commitment, block_height }
+                    }
+                    BatchStorageOperation::UpdateScannedBlock { wallet_id, block_height } => {
+                        BatchOperation::UpdateScannedBlock { wallet_id, block_height }
+                    }
+                })
+                .collect();
+            
+            let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
+            let command = StorageCommand::BatchOperations {
+                operations: batch_ops,
+                response: response_sender,
+            };
+            
+            self.command_sender.send(command)
+                .map_err(|_| LightweightWalletError::InternalError("Background writer channel closed".to_string()))?;
+                
+            response_receiver.await
+                .map_err(|_| LightweightWalletError::InternalError("Background writer response channel closed".to_string()))?
+        }
+        
         async fn get_wallet_state(&self, wallet_id: u32) -> LightweightWalletResult<WalletState> {
             self.storage.load_wallet_state(wallet_id).await
         }
@@ -919,6 +1031,10 @@ mod storage_adapters {
         async fn get_latest_scanned_block(&self, wallet_id: u32) -> LightweightWalletResult<Option<u64>> {
             let wallet = self.storage.get_wallet_by_id(wallet_id).await?;
             Ok(wallet.and_then(|w| w.latest_scanned_block))
+        }
+        
+        async fn flush_pending_operations(&mut self) -> LightweightWalletResult<()> {
+            self.flush_batch().await
         }
     }
 
@@ -957,6 +1073,40 @@ mod storage_adapters {
             storage_handlers::handle_mark_output_spent(&*self.storage, commitment, block_height).await
         }
         
+        async fn mark_outputs_spent_batch(&mut self, spent_outputs: &[(Vec<u8>, u64)]) -> LightweightWalletResult<Vec<LightweightWalletResult<()>>> {
+            let mut results = Vec::with_capacity(spent_outputs.len());
+            
+            // Process each spent output individually for the direct adapter
+            for (commitment, block_height) in spent_outputs {
+                let result = storage_handlers::handle_mark_output_spent(&*self.storage, commitment, *block_height).await;
+                results.push(result);
+            }
+            
+            Ok(results)
+        }
+        
+        async fn execute_batch_operations(&mut self, operations: Vec<BatchStorageOperation>) -> LightweightWalletResult<Vec<LightweightWalletResult<()>>> {
+            let mut results = Vec::with_capacity(operations.len());
+            
+            // Process each operation individually for the direct adapter
+            for operation in operations {
+                let result = match operation {
+                    BatchStorageOperation::SaveWalletOutput { wallet_id, output } => {
+                        storage_handlers::handle_save_wallet_output(&*self.storage, wallet_id, &output).await
+                    }
+                    BatchStorageOperation::MarkOutputSpent { commitment, block_height } => {
+                        storage_handlers::handle_mark_output_spent(&*self.storage, &commitment, block_height).await
+                    }
+                    BatchStorageOperation::UpdateScannedBlock { wallet_id, block_height } => {
+                        self.storage.update_wallet_scanned_block(wallet_id, block_height).await
+                    }
+                };
+                results.push(result);
+            }
+            
+            Ok(results)
+        }
+        
         async fn get_wallet_state(&self, wallet_id: u32) -> LightweightWalletResult<WalletState> {
             self.storage.load_wallet_state(wallet_id).await
         }
@@ -969,6 +1119,48 @@ mod storage_adapters {
             let wallet = self.storage.get_wallet_by_id(wallet_id).await?;
             Ok(wallet.and_then(|w| w.latest_scanned_block))
         }
+        
+        async fn flush_pending_operations(&mut self) -> LightweightWalletResult<()> {
+            // Direct adapter has no pending operations to flush
+            Ok(())
+        }
+    }
+
+    /// Create a storage manager optimized for the current architecture
+    /// 
+    /// On native platforms, returns a BackgroundWriterAdapter for high-performance scanning.
+    /// On WASM platforms, returns a DirectStorageAdapter for immediate writes.
+    #[allow(dead_code)]
+    pub fn create_optimized_storage_manager(storage: Arc<dyn WalletStorage>) -> Box<dyn StorageManager> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Box::new(BackgroundWriterAdapter::new(storage))
+        }
+        
+        #[cfg(target_arch = "wasm32")]
+        {
+            Box::new(DirectStorageAdapter::new(storage))
+        }
+    }
+    
+    /// Create a storage manager with custom background writer configuration
+    /// 
+    /// Only available on native platforms. For WASM, this falls back to DirectStorageAdapter.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    pub fn create_background_storage_manager(
+        storage: Arc<dyn WalletStorage>,
+        config: BackgroundWriterConfig,
+    ) -> Box<dyn StorageManager> {
+        Box::new(BackgroundWriterAdapter::with_config(storage, config))
+    }
+    
+    /// Create a direct storage manager for immediate writes
+    /// 
+    /// Suitable for WASM environments or when you need immediate consistency.
+    #[allow(dead_code)]
+    pub fn create_direct_storage_manager(storage: Arc<dyn WalletStorage>) -> Box<dyn StorageManager> {
+        Box::new(DirectStorageAdapter::new(storage))
     }
 
     /// Statistics tracking for the background writer
@@ -1518,5 +1710,96 @@ mod tests {
         stats.record_batch(3);
         assert_eq!(stats.total_batches(), 2);
         assert_eq!(stats.average_batch_size(), 4.0); // (5 + 3) / 2
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_batch_spent_outputs_mock() {
+        let mut storage_manager = MockStorageManager::new();
+        
+        // Create some test spent output data
+        let spent_outputs = vec![
+            (vec![1u8; 32], 100u64),
+            (vec![2u8; 32], 101u64),
+            (vec![3u8; 32], 102u64),
+        ];
+        
+        // Test batch marking outputs as spent
+        let results = storage_manager.mark_outputs_spent_batch(&spent_outputs).await;
+        assert!(results.is_ok());
+        
+        let results = results.unwrap();
+        assert_eq!(results.len(), 3);
+        
+        // All operations should succeed
+        for result in results {
+            assert!(result.is_ok());
+        }
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_batch_mixed_operations_mock() {
+        use crate::data_structures::{
+            wallet_output::{LightweightWalletOutput, LightweightKeyId, LightweightOutputFeatures},
+            types::MicroMinotari,
+        };
+        
+        let mut storage_manager = MockStorageManager::new();
+        
+        // Create test output
+        let test_output = LightweightWalletOutput {
+            spending_key_id: LightweightKeyId::String("test_key_1".to_string()),
+            script_key_id: LightweightKeyId::String("script_key_1".to_string()),
+            value: MicroMinotari::from(1000u64),
+            features: LightweightOutputFeatures::default(),
+            ..Default::default()
+        };
+        
+        // Create mixed batch operations
+        let batch_operations = vec![
+            BatchStorageOperation::SaveWalletOutput {
+                wallet_id: 1,
+                output: test_output.clone(),
+            },
+            BatchStorageOperation::MarkOutputSpent {
+                commitment: vec![4u8; 32],
+                block_height: 200,
+            },
+            BatchStorageOperation::UpdateScannedBlock {
+                wallet_id: 1,
+                block_height: 200,
+            },
+            BatchStorageOperation::SaveWalletOutput {
+                wallet_id: 2,
+                output: test_output,
+            },
+        ];
+        
+        // Execute batch operations
+        let results = storage_manager.execute_batch_operations(batch_operations).await;
+        assert!(results.is_ok());
+        
+        let results = results.unwrap();
+        assert_eq!(results.len(), 4);
+        
+        // All operations should succeed
+        for result in results {
+            assert!(result.is_ok());
+        }
+        
+        // Verify that the block update was applied
+        let latest_block = storage_manager.get_latest_scanned_block(1).await.unwrap();
+        assert_eq!(latest_block, Some(200));
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_flush_pending_operations_mock() {
+        let mut storage_manager = MockStorageManager::new();
+        
+        // Mock storage manager has no pending operations, so this should just succeed
+        let result = storage_manager.flush_pending_operations().await;
+        assert!(result.is_ok());
     }
 }

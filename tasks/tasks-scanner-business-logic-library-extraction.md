@@ -16,7 +16,7 @@
 
 ### Notes
 
-- Tests should be placed in the same directory as the code files they are testing following Rust conventions.
+- Tests should be placed in the same file as the code files they are testing following Rust conventions.
 - Use `cargo test` to run all tests, or `cargo test test_name` to run specific tests.
 - Use `cargo test --features grpc-storage` for most comprehensive test coverage.
 - The refactoring must maintain 100% backward compatibility for CLI interfaces.
@@ -41,7 +41,7 @@
   - [x] 2.2 Implement `BackgroundWriterAdapter` for native architecture storage optimization
   - [x] 2.3 Implement `DirectStorageAdapter` for WASM architecture compatibility
   - [x] 2.4 Create automatic architecture detection and adapter selection logic
-  - [ ] 2.5 Implement batch operations interface for efficient spent output tracking
+  - [x] 2.5 Implement batch operations interface for efficient spent output tracking
   - [ ] 2.6 Add incremental transaction saving with memory management
   - [ ] 2.7 Handle database vs memory-only storage mode configuration
 
