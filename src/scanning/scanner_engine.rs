@@ -9,6 +9,12 @@ use crate::extraction::ExtractionConfig;
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(feature = "storage")]
+use super::storage_manager::{ScannerStorageConfig, StorageManager};
+
+#[cfg(feature = "grpc")]
+use crate::data_structures::{block::Block, transaction::TransactionDirection};
+
 #[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
 use super::BlockchainScanner;
 
@@ -27,6 +33,12 @@ pub struct ScannerEngine {
     wallet_context: Option<WalletContext>,
     /// Scan configuration
     configuration: ScanConfiguration,
+    /// Storage manager for persisting scan results (optional)
+    #[cfg(feature = "storage")]
+    storage_manager: Option<Box<dyn StorageManager>>,
+    /// Storage configuration
+    #[cfg(feature = "storage")]
+    storage_config: ScannerStorageConfig,
 }
 
 #[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
@@ -37,6 +49,27 @@ impl ScannerEngine {
             scanner,
             wallet_context: None,
             configuration,
+            #[cfg(feature = "storage")]
+            storage_manager: None,
+            #[cfg(feature = "storage")]
+            storage_config: ScannerStorageConfig::default(),
+        }
+    }
+
+    /// Create a new scanner engine with storage support
+    #[cfg(feature = "storage")]
+    pub fn new_with_storage(
+        scanner: Box<dyn BlockchainScanner>,
+        configuration: ScanConfiguration,
+        storage_manager: Box<dyn StorageManager>,
+        storage_config: ScannerStorageConfig,
+    ) -> Self {
+        Self {
+            scanner,
+            wallet_context: None,
+            configuration,
+            storage_manager: Some(storage_manager),
+            storage_config,
         }
     }
 
@@ -69,6 +102,261 @@ impl ScannerEngine {
     /// Scan a range of blocks using the configured parameters
     pub async fn scan_range(&mut self) -> LightweightWalletResult<ScanResults> {
         self.scan_range_with_progress(None).await
+    }
+
+    /// Scan a range of blocks with full coordination logic including storage, batch processing, and cancellation support
+    #[cfg(feature = "grpc")]
+    pub async fn scan_range_with_coordination(
+        &mut self,
+        progress_callback: Option<Arc<dyn Fn(ScanProgress) + Send + Sync>>,
+        cancellation_receiver: Option<&mut tokio::sync::watch::Receiver<bool>>,
+    ) -> LightweightWalletResult<ScanResults> {
+        let start_time = Instant::now();
+
+        // Determine the block range to scan
+        let (start_height, end_height) = self.determine_scan_range().await?;
+
+        // Initialize progress tracking
+        let mut progress = ScanProgress::new(start_height, Some(end_height));
+        progress.phase = ScanPhase::Initializing;
+
+        // Report initial progress
+        if let Some(callback) = &progress_callback {
+            callback(progress.clone());
+        }
+
+        // Ensure wallet is initialized if needed
+        if self.wallet_context.is_none() && self.configuration.wallet_source.is_some() {
+            progress.phase = ScanPhase::Connecting;
+            if let Some(callback) = &progress_callback {
+                callback(progress.clone());
+            }
+
+            self.initialize_wallet().await?;
+        }
+
+        // Set up extraction config if wallet context is available
+        if let Some(wallet_context) = &self.wallet_context {
+            self.configuration.extraction_config =
+                ExtractionConfig::with_private_key(wallet_context.view_key.clone());
+        }
+
+        // Get wallet context for scanning
+        let scan_context = self.wallet_context.as_ref().ok_or_else(|| {
+            LightweightWalletError::ConfigurationError(
+                "No wallet context available for scanning".to_string(),
+            )
+        })?;
+
+        // Create block height range
+        let block_heights: Vec<u64> = (start_height..=end_height).collect();
+
+        // Initialize wallet state for this scan
+        let mut wallet_state = WalletState::new();
+
+        // Process blocks in batches with coordination logic
+        let batch_size = self.configuration.batch_size as usize;
+        let mut last_saved_transaction_count = 0;
+
+        for (batch_index, batch_heights) in block_heights.chunks(batch_size).enumerate() {
+            // Check for cancellation at the start of each batch
+            if let Some(ref cancel_rx) = cancellation_receiver {
+                if *cancel_rx.borrow() {
+                    if let Some(callback) = &progress_callback {
+                        progress.phase = ScanPhase::Completed;
+                        callback(progress);
+                    }
+                    return self.create_interrupted_results(
+                        wallet_state,
+                        start_height,
+                        end_height,
+                        start_time,
+                    );
+                }
+            }
+
+            let batch_start_index = batch_index * batch_size;
+
+            // Update progress for batch scanning
+            progress.phase = ScanPhase::Scanning {
+                batch_index: batch_index + 1,
+                total_batches: Some((block_heights.len() + batch_size - 1) / batch_size),
+            };
+            progress.current_height = batch_heights[0];
+            if let Some(callback) = &progress_callback {
+                callback(progress.clone());
+            }
+
+            // Fetch blocks via scanner
+            let batch_results = match self
+                .scanner
+                .get_blocks_by_heights(batch_heights.to_vec())
+                .await
+            {
+                Ok(blocks) => blocks,
+                Err(e) => {
+                    // Handle scan error - for now, continue to next batch
+                    // TODO: Implement interactive error handling like CLI
+                    eprintln!(
+                        "Error scanning batch starting at block {}: {}",
+                        batch_heights[0], e
+                    );
+                    continue;
+                }
+            };
+
+            // Process each block in the batch
+            for block_height in batch_heights.iter() {
+                // Find the corresponding block info from the batch results
+                let block_info = match batch_results.iter().find(|b| b.height == *block_height) {
+                    Some(block) => block.clone(),
+                    None => {
+                        eprintln!("Block {} not found in batch, skipping...", block_height);
+                        continue;
+                    }
+                };
+
+                // Process block using the Block struct
+                let block = Block::from_block_info(block_info);
+
+                // Convert 32-byte entropy to 16-byte for block processing
+                let mut entropy_16 = [0u8; 16];
+                entropy_16.copy_from_slice(&scan_context.entropy[..16]);
+
+                let found_outputs =
+                    block.process_outputs(&scan_context.view_key, &entropy_16, &mut wallet_state);
+                let spent_outputs = block.process_inputs(&mut wallet_state);
+
+                let scan_result = match (found_outputs, spent_outputs) {
+                    (Ok(found), Ok(spent)) => Ok((found, spent)),
+                    (Err(e), _) | (_, Err(e)) => Err(e),
+                };
+
+                match scan_result {
+                    Ok(_result) => {
+                        // Handle storage operations if storage manager is available
+                        #[cfg(feature = "storage")]
+                        if let Some(storage_manager) = &mut self.storage_manager {
+                            if let Some(wallet_id) = self.storage_config.wallet_id {
+                                // Save transactions incrementally
+                                let all_transactions: Vec<_> = wallet_state.transactions.to_vec();
+                                if all_transactions.len() > last_saved_transaction_count {
+                                    let new_transactions =
+                                        &all_transactions[last_saved_transaction_count..];
+                                    if !new_transactions.is_empty() {
+                                        if let Err(e) = storage_manager
+                                            .save_transactions_incremental(
+                                                wallet_id,
+                                                new_transactions,
+                                                None,
+                                            )
+                                            .await
+                                        {
+                                            eprintln!("Warning: Failed to save transactions to storage: {}", e);
+                                        } else {
+                                            last_saved_transaction_count = all_transactions.len();
+                                        }
+                                    }
+                                }
+
+                                // Mark spent outputs in storage
+                                let wallet_has_spent_transactions =
+                                    wallet_state.transactions.iter().any(|tx| tx.is_spent);
+                                if wallet_has_spent_transactions && !block.inputs.is_empty() {
+                                    let wallet_commitments: std::collections::HashSet<_> =
+                                        wallet_state
+                                            .transactions
+                                            .iter()
+                                            .filter(|tx| tx.is_spent)
+                                            .map(|tx| tx.commitment.as_bytes().to_vec())
+                                            .collect();
+
+                                    let mut batch_spent_commitments = Vec::new();
+                                    for input in &block.inputs {
+                                        let input_commitment = input.commitment.to_vec();
+                                        if wallet_commitments.contains(&input_commitment) {
+                                            batch_spent_commitments
+                                                .push((input_commitment, *block_height));
+                                        }
+                                    }
+
+                                    if !batch_spent_commitments.is_empty() {
+                                        if let Err(e) = storage_manager
+                                            .mark_outputs_spent_batch(&batch_spent_commitments)
+                                            .await
+                                        {
+                                            eprintln!(
+                                                "Warning: Failed to mark outputs as spent: {}",
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error processing block {}: {}", block_height, e);
+                        // For now, continue to next block
+                        // TODO: Implement interactive error handling
+                        continue;
+                    }
+                }
+            }
+
+            // Update storage with latest scanned block
+            #[cfg(feature = "storage")]
+            if let Some(storage_manager) = &mut self.storage_manager {
+                if let (Some(wallet_id), Some(last_block_height)) =
+                    (self.storage_config.wallet_id, batch_heights.last())
+                {
+                    if let Err(e) = storage_manager
+                        .update_scanned_block(wallet_id, *last_block_height)
+                        .await
+                    {
+                        eprintln!("Warning: Failed to update scanned block: {}", e);
+                    }
+                }
+            }
+
+            // Update progress after processing batch
+            progress.current_height = *batch_heights.last().unwrap_or(&start_height);
+            progress.blocks_scanned = (batch_start_index + batch_heights.len()) as u64;
+            if let Some(callback) = &progress_callback {
+                callback(progress.clone());
+            }
+        }
+
+        // Final storage update
+        #[cfg(feature = "storage")]
+        if let Some(storage_manager) = &mut self.storage_manager {
+            if let Some(wallet_id) = self.storage_config.wallet_id {
+                if let Err(e) = storage_manager
+                    .update_scanned_block(wallet_id, end_height)
+                    .await
+                {
+                    eprintln!("Warning: Failed to final update scanned block: {}", e);
+                }
+            }
+        }
+
+        // Create final scan results
+        let scan_results = self.aggregate_results(
+            start_height,
+            Some(end_height),
+            None,
+            vec![], // TODO: Convert wallet_state to BlockScanResult
+            start_time,
+        )?;
+
+        // Final progress update
+        progress.current_height = end_height;
+        progress.phase = ScanPhase::Completed;
+        if let Some(callback) = &progress_callback {
+            callback(progress);
+        }
+
+        Ok(scan_results)
     }
 
     /// Scan a range of blocks with progress reporting
@@ -149,6 +437,243 @@ impl ScannerEngine {
     /// Scan specific blocks
     pub async fn scan_blocks(&mut self, heights: Vec<u64>) -> LightweightWalletResult<ScanResults> {
         self.scan_blocks_with_progress(heights, None).await
+    }
+
+    /// Scan specific blocks with full coordination logic including storage, progress reporting, and cancellation support
+    #[cfg(feature = "grpc")]
+    pub async fn scan_blocks_with_coordination(
+        &mut self,
+        heights: Vec<u64>,
+        progress_callback: Option<Arc<dyn Fn(ScanProgress) + Send + Sync>>,
+        cancellation_receiver: Option<&mut tokio::sync::watch::Receiver<bool>>,
+    ) -> LightweightWalletResult<ScanResults> {
+        let start_time = Instant::now();
+
+        if heights.is_empty() {
+            return Err(LightweightWalletError::InvalidArgument {
+                argument: "heights".to_string(),
+                value: "empty_vec".to_string(),
+                message: "No block heights provided for scanning".to_string(),
+            });
+        }
+
+        let start_height = *heights.iter().min().unwrap();
+        let end_height = *heights.iter().max().unwrap();
+
+        // Initialize progress tracking
+        let mut progress = ScanProgress::new(start_height, Some(end_height));
+        progress.phase = ScanPhase::Initializing;
+
+        // Report initial progress
+        if let Some(callback) = &progress_callback {
+            callback(progress.clone());
+        }
+
+        // Ensure wallet is initialized if needed
+        if self.wallet_context.is_none() && self.configuration.wallet_source.is_some() {
+            self.initialize_wallet().await?;
+        }
+
+        // Set up extraction config if wallet context is available
+        if let Some(wallet_context) = &self.wallet_context {
+            self.configuration.extraction_config =
+                ExtractionConfig::with_private_key(wallet_context.view_key.clone());
+        }
+
+        // Get wallet context for scanning
+        let scan_context = self.wallet_context.as_ref().ok_or_else(|| {
+            LightweightWalletError::ConfigurationError(
+                "No wallet context available for scanning".to_string(),
+            )
+        })?;
+
+        // Initialize wallet state for this scan
+        let mut wallet_state = WalletState::new();
+
+        // Process blocks in batches with coordination logic
+        let batch_size = self.configuration.batch_size as usize;
+        let mut last_saved_transaction_count = 0;
+
+        for (batch_index, batch_heights) in heights.chunks(batch_size).enumerate() {
+            // Check for cancellation at the start of each batch
+            if let Some(ref cancel_rx) = cancellation_receiver {
+                if *cancel_rx.borrow() {
+                    if let Some(callback) = &progress_callback {
+                        progress.phase = ScanPhase::Completed;
+                        callback(progress);
+                    }
+                    return self.create_interrupted_results(
+                        wallet_state,
+                        start_height,
+                        end_height,
+                        start_time,
+                    );
+                }
+            }
+
+            // Update progress for batch scanning
+            progress.phase = ScanPhase::Scanning {
+                batch_index: batch_index + 1,
+                total_batches: Some((heights.len() + batch_size - 1) / batch_size),
+            };
+            progress.current_height = batch_heights[0];
+            if let Some(callback) = &progress_callback {
+                callback(progress.clone());
+            }
+
+            // Fetch blocks via scanner
+            let batch_results = match self
+                .scanner
+                .get_blocks_by_heights(batch_heights.to_vec())
+                .await
+            {
+                Ok(blocks) => blocks,
+                Err(e) => {
+                    // Handle scan error - for now, continue to next batch
+                    eprintln!(
+                        "Error scanning batch with blocks {:?}: {}",
+                        batch_heights, e
+                    );
+                    continue;
+                }
+            };
+
+            // Process each block in the batch
+            for block_height in batch_heights.iter() {
+                // Find the corresponding block info from the batch results
+                let block_info = match batch_results.iter().find(|b| b.height == *block_height) {
+                    Some(block) => block.clone(),
+                    None => {
+                        eprintln!("Block {} not found in batch, skipping...", block_height);
+                        continue;
+                    }
+                };
+
+                // Process block using the Block struct
+                let block = Block::from_block_info(block_info);
+
+                // Convert 32-byte entropy to 16-byte for block processing
+                let mut entropy_16 = [0u8; 16];
+                entropy_16.copy_from_slice(&scan_context.entropy[..16]);
+
+                let found_outputs =
+                    block.process_outputs(&scan_context.view_key, &entropy_16, &mut wallet_state);
+                let spent_outputs = block.process_inputs(&mut wallet_state);
+
+                let scan_result = match (found_outputs, spent_outputs) {
+                    (Ok(found), Ok(spent)) => Ok((found, spent)),
+                    (Err(e), _) | (_, Err(e)) => Err(e),
+                };
+
+                match scan_result {
+                    Ok(_result) => {
+                        // Handle storage operations if storage manager is available
+                        #[cfg(feature = "storage")]
+                        if let Some(storage_manager) = &mut self.storage_manager {
+                            if let Some(wallet_id) = self.storage_config.wallet_id {
+                                // Save transactions incrementally
+                                let all_transactions: Vec<_> = wallet_state.transactions.to_vec();
+                                if all_transactions.len() > last_saved_transaction_count {
+                                    let new_transactions =
+                                        &all_transactions[last_saved_transaction_count..];
+                                    if !new_transactions.is_empty() {
+                                        if let Err(e) = storage_manager
+                                            .save_transactions_incremental(
+                                                wallet_id,
+                                                new_transactions,
+                                                None,
+                                            )
+                                            .await
+                                        {
+                                            eprintln!("Warning: Failed to save transactions to storage: {}", e);
+                                        } else {
+                                            last_saved_transaction_count = all_transactions.len();
+                                        }
+                                    }
+                                }
+
+                                // Mark spent outputs in storage
+                                let wallet_has_spent_transactions =
+                                    wallet_state.transactions.iter().any(|tx| tx.is_spent);
+                                if wallet_has_spent_transactions && !block.inputs.is_empty() {
+                                    let wallet_commitments: std::collections::HashSet<_> =
+                                        wallet_state
+                                            .transactions
+                                            .iter()
+                                            .filter(|tx| tx.is_spent)
+                                            .map(|tx| tx.commitment.as_bytes().to_vec())
+                                            .collect();
+
+                                    let mut batch_spent_commitments = Vec::new();
+                                    for input in &block.inputs {
+                                        let input_commitment = input.commitment.to_vec();
+                                        if wallet_commitments.contains(&input_commitment) {
+                                            batch_spent_commitments
+                                                .push((input_commitment, *block_height));
+                                        }
+                                    }
+
+                                    if !batch_spent_commitments.is_empty() {
+                                        if let Err(e) = storage_manager
+                                            .mark_outputs_spent_batch(&batch_spent_commitments)
+                                            .await
+                                        {
+                                            eprintln!(
+                                                "Warning: Failed to mark outputs as spent: {}",
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error processing block {}: {}", block_height, e);
+                        // For now, continue to next block
+                        continue;
+                    }
+                }
+            }
+
+            // Update progress after processing batch
+            progress.current_height = *batch_heights.last().unwrap_or(&start_height);
+            progress.blocks_scanned = ((batch_index + 1) * batch_size).min(heights.len()) as u64;
+            if let Some(callback) = &progress_callback {
+                callback(progress.clone());
+            }
+        }
+
+        // Final storage update
+        #[cfg(feature = "storage")]
+        if let Some(storage_manager) = &mut self.storage_manager {
+            if let Some(wallet_id) = self.storage_config.wallet_id {
+                if let Err(e) = storage_manager
+                    .update_scanned_block(wallet_id, end_height)
+                    .await
+                {
+                    eprintln!("Warning: Failed to final update scanned block: {}", e);
+                }
+            }
+        }
+
+        // Create final scan results
+        let scan_results = self.aggregate_results(
+            start_height,
+            Some(end_height),
+            Some(heights),
+            vec![], // TODO: Convert wallet_state to BlockScanResult
+            start_time,
+        )?;
+
+        // Final progress update
+        progress.current_height = end_height;
+        progress.phase = ScanPhase::Completed;
+        if let Some(callback) = &progress_callback {
+            callback(progress);
+        }
+
+        Ok(scan_results)
     }
 
     /// Scan specific blocks with progress reporting
@@ -439,6 +964,45 @@ impl ScannerEngine {
         Ok(scan_results)
     }
 
+    /// Create scan results for interrupted scans
+    #[cfg(feature = "grpc")]
+    fn create_interrupted_results(
+        &self,
+        wallet_state: WalletState,
+        start_height: u64,
+        end_height: u64,
+        start_time: Instant,
+    ) -> LightweightWalletResult<ScanResults> {
+        // Calculate partial results from the wallet state
+        let total_outputs = wallet_state.transactions.len() as u64;
+        let total_value = wallet_state
+            .transactions
+            .iter()
+            .filter(|tx| tx.transaction_direction == TransactionDirection::Inbound)
+            .map(|tx| tx.value)
+            .sum();
+
+        // Create configuration summary
+        let config_summary = super::scan_results::ScanConfigSummary {
+            start_height,
+            end_height: Some(end_height),
+            specific_blocks: None,
+            batch_size: self.configuration.batch_size,
+            total_blocks_scanned: 0, // Will be updated based on progress
+        };
+
+        // Create progress for interrupted scan
+        let mut progress = ScanProgress::new(start_height, Some(end_height));
+        progress.outputs_found = total_outputs;
+        progress.total_value = total_value;
+        progress.phase = ScanPhase::Completed; // Mark as completed (interrupted)
+
+        // Create and return scan results
+        let scan_results = ScanResults::new(config_summary, wallet_state, progress, start_time);
+
+        Ok(scan_results)
+    }
+
     /// Update the scanner configuration
     pub fn update_configuration(&mut self, configuration: ScanConfiguration) {
         self.configuration = configuration;
@@ -451,6 +1015,23 @@ impl ScannerEngine {
     /// Get a reference to the current configuration
     pub fn configuration(&self) -> &ScanConfiguration {
         &self.configuration
+    }
+
+    /// Set storage manager for persistence operations
+    #[cfg(feature = "storage")]
+    pub fn set_storage_manager(
+        &mut self,
+        storage_manager: Box<dyn StorageManager>,
+        storage_config: ScannerStorageConfig,
+    ) {
+        self.storage_manager = Some(storage_manager);
+        self.storage_config = storage_config;
+    }
+
+    /// Get a reference to the storage configuration
+    #[cfg(feature = "storage")]
+    pub fn storage_config(&self) -> &ScannerStorageConfig {
+        &self.storage_config
     }
 }
 

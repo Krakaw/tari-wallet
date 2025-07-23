@@ -50,7 +50,7 @@
 - [ ] 3.0 Extract Business Logic from CLI Scanner
   - [x] 3.1 Analyze existing `src/bin/scanner.rs` to identify all business logic components
   - [x] 3.2 Move wallet creation and selection logic to `ScannerEngine::initialize_wallet()`
-  - [ ] 3.3 Move blockchain scanning coordination logic to `ScannerEngine::scan_range()` and `scan_blocks()`
+  - [x] 3.3 Move blockchain scanning coordination logic to `ScannerEngine::scan_range()` and `scan_blocks()`
   - [ ] 3.4 Extract progress reporting and output formatting to library components
   - [ ] 3.5 Move error handling and recovery logic to scanner engine
   - [ ] 3.6 Refactor CLI to thin wrapper that handles argument parsing and delegates to library
