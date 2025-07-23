@@ -1893,8 +1893,9 @@ async fn scan_wallet_across_blocks_with_cancellation(
                 batch_heights[0],
                 "Scanning",
             );
-            print!("\r{progress_bar}");
-            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            // Use eprint to stderr to avoid interfering with stdout
+            eprint!("\r{:<120}", progress_bar);
+            std::io::Write::flush(&mut std::io::stderr()).unwrap();
         }
 
         // Fetch blocks via GRPC
@@ -2172,8 +2173,9 @@ async fn scan_wallet_across_blocks_with_cancellation(
                     "Scanning"
                 },
             );
-            print!("\r{progress_bar}");
-            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            // Use eprint to stderr to avoid interfering with stdout
+            eprint!("\r{:<120}", progress_bar);
+            std::io::Write::flush(&mut std::io::stderr()).unwrap();
         }
     }
 
@@ -2209,7 +2211,8 @@ async fn scan_wallet_across_blocks_with_cancellation(
             block_heights.last().cloned().unwrap_or(0),
             "Complete",
         );
-        println!("\r{final_progress_bar}");
+        // Use eprint to stderr to avoid interfering with stdout, then add newline
+        eprint!("\r{:<120}\n", final_progress_bar);
 
         let (inbound_count, outbound_count, _) = wallet_state.get_direction_counts();
         println!("\n✅ Scan complete!");
