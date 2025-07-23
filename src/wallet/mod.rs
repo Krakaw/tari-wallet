@@ -11,10 +11,16 @@ use crate::data_structures::types::{CompressedPublicKey, PrivateKey};
 use crate::data_structures::SafeArray;
 use crate::errors::KeyManagementError;
 use crate::key_management::{bytes_to_mnemonic, mnemonic_to_master_key, CipherSeed};
-use rand_core::{OsRng, RngCore};
 use std::collections::HashMap;
+
+#[cfg(not(target_arch = "wasm32"))]
+use rand_core::{OsRng, RngCore};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
+
 use zeroize::Zeroize;
+#[cfg(target_arch = "wasm32")]
+use {getrandom::getrandom, js_sys::Date};
 
 // Constants from Tari CipherSeed specification for birthday calculation
 const BIRTHDAY_GENESIS_FROM_UNIX_EPOCH: u64 = 1640995200; // seconds to 2022-01-01 00:00:00 UTC
@@ -85,7 +91,16 @@ impl Wallet {
     pub fn generate_new(_passphrase: Option<&str>) -> Self {
         // Generate 32 bytes of cryptographically secure random entropy
         let mut master_key_bytes = [0u8; 32];
-        OsRng.fill_bytes(&mut master_key_bytes);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            OsRng.fill_bytes(&mut master_key_bytes);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            getrandom(&mut master_key_bytes).expect("Failed to generate random bytes in WASM");
+        }
 
         // Calculate current birthday
         let birthday = Self::calculate_current_birthday();
@@ -122,10 +137,14 @@ impl Wallet {
 
     /// Calculate the current birthday (days since Tari genesis date)
     fn calculate_current_birthday() -> u64 {
+        #[cfg(not(target_arch = "wasm32"))]
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default() // default to epoch on error
             .as_secs();
+
+        #[cfg(target_arch = "wasm32")]
+        let now = (Date::now() / 1000.0) as u64; // JavaScript Date.now() returns milliseconds
 
         if now < BIRTHDAY_GENESIS_FROM_UNIX_EPOCH {
             return 0; // Before genesis date

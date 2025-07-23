@@ -86,46 +86,56 @@ impl ErrorHandler for DefaultErrorHandler {
 }
 
 /// Interactive error handler that prompts user for recovery decisions (CLI-compatible)
+/// Note: In WASM, this behaves like DefaultErrorHandler since there's no stdin/stdout
 pub struct InteractiveErrorHandler;
 
 impl ErrorHandler for InteractiveErrorHandler {
     fn handle_scan_error(&self, context: &ScanErrorContext) -> ErrorRecoveryStrategy {
-        println!(
-            "❌ Error scanning batch starting at block {}: {}",
-            context.block_height, context.error
-        );
-        println!(
-            "   Batch heights: {:?}",
-            context.remaining_blocks.iter().take(10).collect::<Vec<_>>()
-        );
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            println!(
+                "❌ Error scanning batch starting at block {}: {}",
+                context.block_height, context.error
+            );
+            println!(
+                "   Batch heights: {:?}",
+                context.remaining_blocks.iter().take(10).collect::<Vec<_>>()
+            );
 
-        print!("   Continue scanning remaining blocks? (y/n/s=skip this batch/block): ");
-        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            print!("   Continue scanning remaining blocks? (y/n/s=skip this batch/block): ");
+            std::io::Write::flush(&mut std::io::stdout()).unwrap();
 
-        let mut input = String::new();
-        if std::io::stdin().read_line(&mut input).is_err() {
-            return ErrorRecoveryStrategy::Abort;
+            let mut input = String::new();
+            if std::io::stdin().read_line(&mut input).is_err() {
+                return ErrorRecoveryStrategy::Abort;
+            }
+            let choice = input.trim().to_lowercase();
+
+            match choice.as_str() {
+                "y" | "yes" => {
+                    println!("   ✅ Continuing scan from next batch/block...");
+                    ErrorRecoveryStrategy::Continue
+                }
+                "s" | "skip" => {
+                    println!("   ⏭️  Skipping problematic batch/block and continuing...");
+                    ErrorRecoveryStrategy::Skip
+                }
+                _ => {
+                    println!(
+                        "   🛑 Scan aborted by user at block {}",
+                        context.block_height
+                    );
+                    println!("\n💡 To resume from this point, run:");
+                    println!("   {}", self.generate_resume_command(context));
+                    ErrorRecoveryStrategy::Abort
+                }
+            }
         }
-        let choice = input.trim().to_lowercase();
 
-        match choice.as_str() {
-            "y" | "yes" => {
-                println!("   ✅ Continuing scan from next batch/block...");
-                ErrorRecoveryStrategy::Continue
-            }
-            "s" | "skip" => {
-                println!("   ⏭️  Skipping problematic batch/block and continuing...");
-                ErrorRecoveryStrategy::Skip
-            }
-            _ => {
-                println!(
-                    "   🛑 Scan aborted by user at block {}",
-                    context.block_height
-                );
-                println!("\n💡 To resume from this point, run:");
-                println!("   {}", self.generate_resume_command(context));
-                ErrorRecoveryStrategy::Abort
-            }
+        #[cfg(target_arch = "wasm32")]
+        {
+            // In WASM, fall back to default behavior (continue on errors)
+            DefaultErrorHandler.handle_scan_error(context)
         }
     }
 
