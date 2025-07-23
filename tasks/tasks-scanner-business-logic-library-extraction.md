@@ -20,6 +20,10 @@
 - Use `cargo test` to run all tests, or `cargo test test_name` to run specific tests.
 - Use `cargo test --features grpc-storage` for most comprehensive test coverage.
 - The refactoring must maintain 100% backward compatibility for CLI interfaces.
+- Before claiming a task is complete make sure to run the following:
+   - wasm-pack build --target web --out-dir examples/wasm/pkg --features http
+   - cargo run --bin scanner --features grpc-storage -- --from-block=16000 --to-block=16020
+   - cargo run --bin wallet --features grpc-storage 
 
 ## Tasks
 
@@ -36,7 +40,7 @@
   - [x] 2.1 Create `StorageManager` trait and struct in `storage_manager.rs` for unified storage interface
   - [x] 2.2 Implement `BackgroundWriterAdapter` for native architecture storage optimization
   - [x] 2.3 Implement `DirectStorageAdapter` for WASM architecture compatibility
-  - [ ] 2.4 Create automatic architecture detection and adapter selection logic
+  - [x] 2.4 Create automatic architecture detection and adapter selection logic
   - [ ] 2.5 Implement batch operations interface for efficient spent output tracking
   - [ ] 2.6 Add incremental transaction saving with memory management
   - [ ] 2.7 Handle database vs memory-only storage mode configuration

@@ -53,7 +53,7 @@ pub use storage_manager::StorageManager;
 #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 pub use storage_manager::BackgroundWriterAdapter;
 #[cfg(feature = "storage")]
-pub use storage_manager::{DirectStorageAdapter, StorageManagerBuilder};
+pub use storage_manager::{AdapterSelectionStrategy, DirectStorageAdapter, StorageManagerBuilder};
 pub use wallet_source::{WalletContext, WalletSource, WalletSourceType};
 
 // Re-export GRPC scanner types

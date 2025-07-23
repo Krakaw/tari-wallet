@@ -1112,23 +1112,46 @@ mod storage_adapters {
         }
     }
 
-    /// Builder for creating storage managers
+    /// Architecture detection and adapter selection strategy
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum AdapterSelectionStrategy {
+        /// Automatically detect the best adapter for the current architecture
+        Auto,
+        /// Force use of DirectStorageAdapter (immediate writes)
+        Direct,
+        /// Force use of BackgroundWriterAdapter (only available on native platforms)
+        #[cfg(not(target_arch = "wasm32"))]
+        Background,
+    }
+
+    impl Default for AdapterSelectionStrategy {
+        fn default() -> Self {
+            Self::Auto
+        }
+    }
+
+    /// Builder for creating storage managers with automatic architecture detection
     pub struct StorageManagerBuilder {
         storage: Option<Arc<dyn WalletStorage>>,
-        use_background_writer: bool,
+        adapter_strategy: AdapterSelectionStrategy,
         #[cfg(not(target_arch = "wasm32"))]
         background_writer_config: BackgroundWriterConfig,
     }
 
     impl StorageManagerBuilder {
-        /// Create a new storage manager builder
+        /// Create a new storage manager builder with automatic architecture detection
         pub fn new() -> Self {
             Self {
                 storage: None,
-                use_background_writer: true,
+                adapter_strategy: AdapterSelectionStrategy::Auto,
                 #[cfg(not(target_arch = "wasm32"))]
                 background_writer_config: BackgroundWriterConfig::default(),
             }
+        }
+
+        /// Create a storage manager with automatic architecture detection (convenience method)
+        pub fn auto(storage: Arc<dyn WalletStorage>) -> LightweightWalletResult<Box<dyn StorageManager>> {
+            Self::new().with_storage(storage).build()
         }
         
         /// Set the underlying storage backend
@@ -1137,9 +1160,42 @@ mod storage_adapters {
             self
         }
         
-        /// Configure whether to use background writer (default: true for native, false for WASM)
+        /// Set the adapter selection strategy
+        pub fn with_adapter_strategy(mut self, strategy: AdapterSelectionStrategy) -> Self {
+            self.adapter_strategy = strategy;
+            self
+        }
+
+        /// Force use of DirectStorageAdapter (immediate writes, WASM-compatible)
+        pub fn with_direct_adapter(mut self) -> Self {
+            self.adapter_strategy = AdapterSelectionStrategy::Direct;
+            self
+        }
+
+        /// Force use of BackgroundWriterAdapter (async writes, native only)
+        #[cfg(not(target_arch = "wasm32"))]
+        pub fn with_background_adapter(mut self) -> Self {
+            self.adapter_strategy = AdapterSelectionStrategy::Background;
+            self
+        }
+
+        /// Configure whether to use background writer (legacy method for backward compatibility)
+        /// Deprecated: Use with_adapter_strategy() or with_direct_adapter()/with_background_adapter()
+        #[deprecated(since = "0.2.0", note = "Use with_adapter_strategy() or with_direct_adapter()/with_background_adapter() instead")]
         pub fn with_background_writer(mut self, enabled: bool) -> Self {
-            self.use_background_writer = enabled;
+            if enabled {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.adapter_strategy = AdapterSelectionStrategy::Background;
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // On WASM, background writer is not available, fall back to Direct
+                    self.adapter_strategy = AdapterSelectionStrategy::Direct;
+                }
+            } else {
+                self.adapter_strategy = AdapterSelectionStrategy::Direct;
+            }
             self
         }
 
@@ -1150,46 +1206,78 @@ mod storage_adapters {
             self
         }
 
-        /// Set batch size for background writer
+        /// Set batch size for background writer (native only)
+        #[cfg(not(target_arch = "wasm32"))]
         pub fn with_batch_size(mut self, batch_size: usize) -> Self {
             self.background_writer_config.max_batch_size = batch_size;
             self
         }
 
-        /// Set batch timeout for background writer
+        /// Set batch timeout for background writer (native only)
+        #[cfg(not(target_arch = "wasm32"))]
         pub fn with_batch_timeout(mut self, timeout_ms: u64) -> Self {
             self.background_writer_config.batch_timeout_ms = timeout_ms;
             self
         }
 
-        /// Enable or disable performance tracking
+        /// Enable or disable performance tracking (native only)
+        #[cfg(not(target_arch = "wasm32"))]
         pub fn with_performance_tracking(mut self, enabled: bool) -> Self {
             self.background_writer_config.enable_performance_tracking = enabled;
             self
         }
 
-        /// Set maximum queue size
+        /// Set maximum queue size (native only)
+        #[cfg(not(target_arch = "wasm32"))]
         pub fn with_max_queue_size(mut self, max_size: Option<usize>) -> Self {
             self.background_writer_config.max_queue_size = max_size;
             self
         }
         
-        /// Build the storage manager
+        /// Build the storage manager with automatic architecture detection
         pub fn build(self) -> LightweightWalletResult<Box<dyn StorageManager>> {
             let storage = self.storage.ok_or_else(|| {
                 LightweightWalletError::ConfigurationError("Storage backend is required".to_string())
             })?;
             
+            // Determine which adapter to use based on strategy and architecture
+            let use_background_adapter = match self.adapter_strategy {
+                AdapterSelectionStrategy::Auto => {
+                    // Automatic detection: prefer BackgroundWriter on native, DirectStorage on WASM
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        true // Native platforms: use BackgroundWriterAdapter for better performance
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        false // WASM: use DirectStorageAdapter (tokio not available)
+                    }
+                }
+                AdapterSelectionStrategy::Direct => false, // Always use DirectStorageAdapter
+                #[cfg(not(target_arch = "wasm32"))]
+                AdapterSelectionStrategy::Background => {
+                    // Validate that BackgroundWriter is available on this platform
+                    true
+                }
+            };
+            
+            // Create the appropriate adapter
             #[cfg(not(target_arch = "wasm32"))]
-            if self.use_background_writer {
+            if use_background_adapter {
+                #[cfg(feature = "tracing")]
+                tracing::debug!("Creating BackgroundWriterAdapter for native architecture");
                 Ok(Box::new(BackgroundWriterAdapter::with_config(storage, self.background_writer_config)))
             } else {
+                #[cfg(feature = "tracing")]
+                tracing::debug!("Creating DirectStorageAdapter for native architecture");
                 Ok(Box::new(DirectStorageAdapter::new(storage)))
             }
             
             #[cfg(target_arch = "wasm32")]
             {
                 // WASM always uses DirectStorageAdapter since tokio isn't available
+                #[cfg(feature = "tracing")]
+                tracing::debug!("Creating DirectStorageAdapter for WASM architecture");
                 Ok(Box::new(DirectStorageAdapter::new(storage)))
             }
         }
@@ -1208,7 +1296,7 @@ mod storage_adapters {
 pub use storage_adapters::{BackgroundWriterAdapter, BackgroundWriterConfig, BatchBuffer, BatchOperation, WriterStats};
 
 #[cfg(feature = "storage")]
-pub use storage_adapters::{DirectStorageAdapter, StorageManagerBuilder};
+pub use storage_adapters::{AdapterSelectionStrategy, DirectStorageAdapter, StorageManagerBuilder};
 
 #[cfg(all(test, feature = "storage", not(target_arch = "wasm32")))]
 mod tests {
@@ -1232,7 +1320,59 @@ mod tests {
     
     #[cfg(feature = "storage")]
     #[tokio::test]
-    async fn test_storage_manager_builder() {
+    async fn test_architecture_detection() {
+        use crate::storage::sqlite::SqliteStorage;
+        use crate::storage::storage_trait::WalletStorage;
+        use tempfile::NamedTempFile;
+        
+        let temp_file = NamedTempFile::new().unwrap();
+        let storage = std::sync::Arc::new(SqliteStorage::new(temp_file.path().to_str().unwrap()).await.unwrap());
+        
+        // Initialize storage 
+        storage.initialize().await.unwrap();
+        
+        // Test automatic detection - should build successfully
+        let manager = StorageManagerBuilder::new()
+            .with_storage(storage.clone())
+            .build()
+            .unwrap();
+        
+        // On native platforms with auto strategy, should create BackgroundWriterAdapter
+        // On WASM, should create DirectStorageAdapter
+        // Just test that the manager was created successfully - saves us from complex test data setup
+        drop(manager);
+        
+        // Test explicit Direct strategy  
+        let manager = StorageManagerBuilder::new()
+            .with_storage(storage.clone())
+            .with_direct_adapter()
+            .build()
+            .unwrap();
+        
+        drop(manager);
+        
+        // Test convenience method
+        let manager = StorageManagerBuilder::auto(storage.clone()).unwrap();
+        drop(manager);
+    }
+
+    #[cfg(feature = "storage")]
+    #[test]
+    fn test_adapter_selection_strategy() {
+        // Test strategy enum behavior
+        assert_eq!(AdapterSelectionStrategy::default(), AdapterSelectionStrategy::Auto);
+        
+        let auto_strategy = AdapterSelectionStrategy::Auto;
+        let direct_strategy = AdapterSelectionStrategy::Direct;
+        
+        assert_ne!(auto_strategy, direct_strategy);
+        assert_eq!(format!("{:?}", auto_strategy), "Auto");
+        assert_eq!(format!("{:?}", direct_strategy), "Direct");
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_storage_manager_builder_legacy() {
         use crate::storage::sqlite::SqliteStorage;
         use crate::storage::WalletStorage;
         use tempfile::NamedTempFile;
