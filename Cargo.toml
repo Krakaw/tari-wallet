@@ -110,10 +110,9 @@ tokio = { version = "1.0", features = ["full"] }
 tonic-build = "0.10"  # GRPC code generation
 
 [features]
-default = ["http-native"]
+default = ["http"]
 grpc = ["rayon", "tonic", "prost", "async-trait", "tokio", "tracing", "tracing-subscriber"]
-http = ["async-trait", "tracing", "web-sys", "js-sys", "serde-wasm-bindgen", "wasm-bindgen-futures"]
-http-native = ["http", "reqwest", "tokio"]
+http = ["async-trait", "tracing", "web-sys", "js-sys", "serde-wasm-bindgen", "wasm-bindgen-futures", "reqwest", "tokio"]
 
 storage = ["rusqlite", "tokio-rusqlite", "async-trait", "tokio"]
 grpc-storage = ["grpc", "storage"]
