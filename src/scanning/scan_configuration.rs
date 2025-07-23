@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
+
 use crate::extraction::ExtractionConfig;
 use crate::errors::{LightweightWalletError, LightweightWalletResult};
 use crate::key_management::{KeyManager, KeyStore};

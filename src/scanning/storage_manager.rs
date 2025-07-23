@@ -3,15 +3,23 @@
 //! This module provides storage abstractions specifically designed for the scanner library,
 //! building on top of the existing wallet storage infrastructure.
 
+#[cfg(feature = "storage")]
 use async_trait::async_trait;
+
+#[cfg(feature = "storage")]
 use crate::data_structures::{
     wallet_output::LightweightWalletOutput,
     wallet_transaction::WalletState,
 };
+
+#[cfg(feature = "storage")]
 use crate::errors::LightweightWalletResult;
+
+#[cfg(feature = "storage")]
 use super::scan_results::ScanResults;
 
 /// Storage manager trait for unified storage operations in the scanner library
+#[cfg(feature = "storage")]
 #[async_trait(?Send)]
 pub trait StorageManager: Send + Sync {
     /// Save scan results to storage
@@ -40,17 +48,20 @@ pub trait StorageManager: Send + Sync {
 }
 
 /// Mock storage manager for testing and non-storage scenarios
+#[cfg(feature = "storage")]
 #[derive(Debug, Default)]
 pub struct MockStorageManager {
     latest_scanned_blocks: std::collections::HashMap<u32, u64>,
 }
 
+#[cfg(feature = "storage")]
 impl MockStorageManager {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
+#[cfg(feature = "storage")]
 #[async_trait(?Send)]
 impl StorageManager for MockStorageManager {
     async fn save_scan_results(&mut self, _results: &ScanResults) -> LightweightWalletResult<()> {
@@ -498,10 +509,12 @@ mod storage_adapters {
 #[cfg(feature = "storage")]
 pub use storage_adapters::{BackgroundWriterAdapter, DirectStorageAdapter, StorageManagerBuilder};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "storage", not(target_arch = "wasm32")))]
 mod tests {
+    #[cfg(feature = "storage")]
     use super::*;
     
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_mock_storage_manager() {
         let mut manager = MockStorageManager::new();

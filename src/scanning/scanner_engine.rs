@@ -9,13 +9,17 @@ use crate::extraction::ExtractionConfig;
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
+use super::BlockchainScanner;
+
 use super::{
     scan_results::{BlockScanResult, ScanConfigSummary, ScanProgress, ScanResults, ScanPhase},
     wallet_source::{WalletContext, WalletSource},
-    BlockchainScanner, ScanConfig, ScanConfiguration,
+    ScanConfig, ScanConfiguration,
 };
 
 /// Core scanning engine that orchestrates all scanning operations
+#[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
 pub struct ScannerEngine {
     /// Blockchain scanner implementation
     scanner: Box<dyn BlockchainScanner>,
@@ -25,6 +29,7 @@ pub struct ScannerEngine {
     configuration: ScanConfiguration,
 }
 
+#[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
 impl ScannerEngine {
     /// Create a new scanner engine with a blockchain scanner
     pub fn new(
@@ -427,12 +432,14 @@ impl ScannerEngine {
 }
 
 /// Builder for constructing ScannerEngine instances
+#[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
 pub struct ScannerEngineBuilder {
     scanner: Option<Box<dyn BlockchainScanner>>,
     configuration: Option<ScanConfiguration>,
     wallet_source: Option<WalletSource>,
 }
 
+#[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
 impl ScannerEngineBuilder {
     /// Create a new builder
     pub fn new() -> Self {
@@ -515,13 +522,14 @@ impl ScannerEngineBuilder {
     }
 }
 
+#[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
 impl Default for ScannerEngineBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::scanning::{MockBlockchainScanner, TipInfo};

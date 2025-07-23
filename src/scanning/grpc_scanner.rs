@@ -8,18 +8,15 @@
 //! The GRPC scanner supports wallet key integration for identifying outputs that belong
 //! to a specific wallet.
 
-#[cfg(feature = "grpc")]
+#![cfg(feature = "grpc")]
+
 use async_trait::async_trait;
-#[cfg(feature = "grpc")]
 use std::time::Duration;
-#[cfg(feature = "grpc")]
 use tari_utilities::ByteArray;
-#[cfg(feature = "grpc")]
 use tonic::{transport::Channel, Request};
-#[cfg(feature = "grpc")]
+#[cfg(feature = "tracing")]
 use tracing::{debug, info};
 
-#[cfg(feature = "grpc")]
 use crate::{
     data_structures::{
         encrypted_data::EncryptedData,
@@ -40,11 +37,9 @@ use crate::{
     wallet::Wallet,
 };
 
-#[cfg(feature = "grpc")]
 use crate::tari_rpc;
 
 /// GRPC client for connecting to Tari base node
-#[cfg(feature = "grpc")]
 pub struct GrpcBlockchainScanner {
     /// GRPC channel to the base node
     client: tari_rpc::base_node_client::BaseNodeClient<Channel>,

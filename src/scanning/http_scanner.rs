@@ -27,6 +27,8 @@
 //! }
 //! ```
 
+#![cfg(any(feature = "http", target_arch = "wasm32"))]
+
 // Native targets use reqwest
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 use reqwest::Client;

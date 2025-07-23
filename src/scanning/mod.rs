@@ -6,6 +6,7 @@
 
 use std::time::{Duration, Instant};
 
+#[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -39,13 +40,15 @@ pub mod wallet_source;
 #[cfg(feature = "grpc")]
 pub mod grpc_scanner;
 
-// Include HTTP scanner
+// Include HTTP scanner when the feature is enabled
+#[cfg(any(feature = "http", target_arch = "wasm32"))]
 pub mod http_scanner;
 
 // Re-export core library components
 pub use scan_configuration::ScanConfiguration;
 pub use scan_results::{ScanResults, ScanProgress as LibraryScanProgress};
 pub use scanner_engine::ScannerEngine;
+#[cfg(feature = "storage")]
 pub use storage_manager::StorageManager;
 #[cfg(feature = "storage")]
 pub use storage_manager::{BackgroundWriterAdapter, DirectStorageAdapter, StorageManagerBuilder};
@@ -56,6 +59,7 @@ pub use wallet_source::{WalletContext, WalletSource, WalletSourceType};
 pub use grpc_scanner::{GrpcBlockchainScanner, GrpcScannerBuilder};
 
 // Re-export HTTP scanner types
+#[cfg(any(feature = "http", target_arch = "wasm32"))]
 pub use http_scanner::{HttpBlockchainScanner, HttpScannerBuilder};
 
 /// Progress callback for scanning operations
@@ -295,6 +299,7 @@ pub struct BlockInfo {
 /// This trait provides a lightweight interface that can be implemented by
 /// different backend providers (gRPC, HTTP, etc.) without requiring heavy
 /// dependencies in the core library.
+#[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
 #[async_trait(?Send)]
 pub trait BlockchainScanner: Send + Sync {
     /// Scan for wallet outputs in the specified block range
@@ -335,6 +340,7 @@ pub trait BlockchainScanner: Send + Sync {
 ///
 /// This trait extends the basic blockchain scanner with wallet-specific
 /// functionality for scanning with key management.
+#[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
 #[async_trait(?Send)]
 pub trait WalletScanner: Send + Sync {
     /// Scan for wallet outputs using wallet keys
@@ -850,6 +856,7 @@ impl MockBlockchainScanner {
     }
 }
 
+#[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
 #[async_trait(?Send)]
 impl BlockchainScanner for MockBlockchainScanner {
     async fn scan_blocks(
@@ -951,7 +958,7 @@ impl BlockchainScannerBuilder {
             Some(ScannerType::Mock) => Ok(Box::new(MockBlockchainScanner::new())),
             #[cfg(feature = "grpc")]
             Some(ScannerType::Grpc { url }) => {
-                let scanner = GrpcBlockchainScanner::new(url).await?;
+                let scanner = crate::scanning::GrpcBlockchainScanner::new(url).await?;
                 Ok(Box::new(scanner))
             }
             None => Err(LightweightWalletError::ConfigurationError(
@@ -967,9 +974,8 @@ impl Default for BlockchainScannerBuilder {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    #[cfg(not(target_arch = "wasm32"))]
     use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]
