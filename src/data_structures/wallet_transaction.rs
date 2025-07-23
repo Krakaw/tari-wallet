@@ -204,21 +204,6 @@ impl WalletState {
         // Index by output hash if available - CRITICAL for spent detection
         if let Some(hash) = output_hash {
             self.outputs_by_hash.insert(hash.clone(), tx_index);
-
-            // Debug logging for output hash indexing
-            #[cfg(target_arch = "wasm32")]
-            {
-                let hash_hex = hex::encode(&hash);
-                web_sys::console::log_1(
-                    &format!(
-                        "📝 INDEXED OUTPUT: Hash {} -> Value {} μT (total tracked: {})",
-                        hash_hex,
-                        value,
-                        self.outputs_by_hash.len()
-                    )
-                    .into(),
-                );
-            }
         }
 
         self.transactions.push(transaction);
@@ -325,20 +310,6 @@ impl WalletState {
 
                     return true;
                 }
-            }
-        } else {
-            // Debug logging for failed hash lookup
-            #[cfg(target_arch = "wasm32")]
-            {
-                let hash_hex = hex::encode(output_hash);
-                web_sys::console::log_1(
-                    &format!(
-                        "🔍 OUTPUT HASH LOOKUP FAILED: {} (not found in {} tracked hashes)",
-                        hash_hex,
-                        self.outputs_by_hash.len()
-                    )
-                    .into(),
-                );
             }
         }
         false

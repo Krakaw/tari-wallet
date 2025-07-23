@@ -820,30 +820,36 @@ impl WasmScanner {
         ))
     }
 
-    /// Convert HTTP input hash to TransactionInput
+    /// Convert HTTP input hash to TransactionInput following original implementation
     fn convert_http_input_hash(
         &self,
-        commitment_hash: &[u8],
-        index: usize,
+        output_hash_bytes: &[u8],
+        _index: usize,
     ) -> Result<TransactionInput, String> {
-        // For HTTP inputs, we only have the commitment hash
-        let commitment = commitment_hash
-            .try_into()
-            .map_err(|_| "Invalid commitment hash length".to_string())?;
+        // Following the original convert_http_input_to_lightweight implementation:
+        // - Use ZERO commitment as placeholder (HTTP API doesn't provide commitments)
+        // - Use actual output hash from HTTP API (this is the key for spending detection)
+        if output_hash_bytes.len() != 32 {
+            return Err("Invalid output hash length, expected 32 bytes".to_string());
+        }
 
+        let mut output_hash = [0u8; 32];
+        output_hash.copy_from_slice(output_hash_bytes);
+
+        // Create minimal TransactionInput with the output hash (original pattern)
         Ok(TransactionInput::new(
-            1,                             // version
-            index.try_into().unwrap_or(0), // features
-            commitment,
-            [0u8; 64],                      // script_signature - not available in HTTP
-            CompressedPublicKey::default(), // sender_offset_public_key - not available
-            Vec::new(),                     // input_data - not available
-            LightweightExecutionStack::new(),
-            [0u8; 32],             // output_hash - not provided in simplified format
-            0,                     // covenant_hash_index
-            [0u8; 64],             // encrypted_data - not available
-            0,                     // minimum_value_promise
-            MicroMinotari::new(0), // metadata_signature_ephemeral_commitment
+            1,                                // version
+            0,                                // features (default)
+            [0u8; 32], // commitment (not available from HTTP API, use placeholder)
+            [0u8; 64], // script_signature (not available)
+            CompressedPublicKey::default(), // sender_offset_public_key (not available)
+            Vec::new(), // covenant (not available)
+            LightweightExecutionStack::new(), // input_data (not available)
+            output_hash, // output_hash (this is the actual data from HTTP API)
+            0,         // output_features (not available)
+            [0u8; 64], // output_metadata_signature (not available)
+            0,         // maturity (not available)
+            MicroMinotari::new(0), // value (not available)
         ))
     }
 
