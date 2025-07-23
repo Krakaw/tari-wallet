@@ -25,3 +25,9 @@ rustflags = [
     "-A", "clippy::must_use_candidate",
     "-A", "clippy::module_name_repetitions",
 ]
+
+[env]
+# Set default test timeouts to 10 seconds
+RUST_TEST_TIME_UNIT = "10"
+RUST_TEST_TIME_INTEGRATION = "10"
+RUST_TEST_TIME_DOCTEST = "10"
