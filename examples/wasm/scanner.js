@@ -1,466 +1,397 @@
 #!/usr/bin/env node
 
 /**
- * Tari WASM Scanner - Node.js Example
+ * Tari WASM Scanner - Node.js CLI Client
  * 
- * This example demonstrates how to use the Tari WASM scanner in a Node.js environment
- * to scan blockchain data for wallet transactions.
+ * This CLI client uses the modern scanner engine and async wrapper functions
+ * for robust blockchain scanning with JSON output.
  * 
  * Usage:
- *   node examples/wasm/scanner.js [data] [base_node_url]
+ *   node examples/wasm/scanner.js [options]
+ * 
+ * Options:
+ *   --data <string>           View key or seed phrase (required)
+ *   --base-url <url>          Base node URL (default: https://rpc.tari.com)
+ *   --mode <mode>             Scan mode: 'range' or 'specific' (default: range)
+ *   --start-height <number>   Start height for range mode (default: 0)
+ *   --end-height <number>     End height for range mode (optional)
+ *   --heights <numbers>       Comma-separated heights for specific mode
+ *   --batch-size <number>     Batch size for processing (default: 50)
+ *   --progress                Show progress updates
+ *   --streaming               Use streaming scan for memory efficiency
+ *   --health-check            Perform health check before scanning
+ *   --memory-stats            Show memory statistics
+ *   --max-retries <number>    Maximum retries for initialization (default: 3)
+ *   --help                    Show help message
  * 
  * Examples:
- *   node examples/wasm/scanner.js "your_hex_view_key"
- *   node examples/wasm/scanner.js "your 24 word seed phrase here"
- *   node examples/wasm/scanner.js "your_hex_key" "http://192.168.1.100:9000"
+ *   node scanner.js --data "your_hex_view_key" --start-height 1000 --end-height 2000
+ *   node scanner.js --data "your 24 word seed phrase" --mode specific --heights "100,200,300"
+ *   node scanner.js --data "key_or_phrase" --streaming --progress --batch-size 50
  * 
- * Note: The scanner automatically detects whether the input is a view key or seed phrase.
- * 
- * Requirements:
- *   - Build the WASM package first: wasm-pack build --target nodejs --out-dir pkg --example wasm_scanner
- *   - Install dependencies: npm install
- *   - (Optional) Tari base node running with API enabled for real blockchain data
+ * Output:
+ *   All results are output as JSON to stdout for easy parsing by other tools.
  */
 
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
-const https = require('https');
-const { URL } = require('url');
 
-/**
- * HTTP Client for communicating with Tari base node
- */
-class HttpClient {
-    constructor(baseUrl = 'http://127.0.0.1:9000') {
-        this.baseUrl = baseUrl;
-    }
-
-    /**
-     * Make HTTP GET request
-     */
-    async request(endpoint, params = {}) {
-        const url = new URL(endpoint, this.baseUrl);
-        
-        // Add query parameters
-        Object.keys(params).forEach(key => {
-            if (params[key] !== undefined && params[key] !== null) {
-                url.searchParams.append(key, params[key]);
-            }
-        });
-
-        return new Promise((resolve, reject) => {
-            const client = url.protocol === 'https:' ? https : http;
-            
-            const req = client.get(url.toString(), (res) => {
-                let data = '';
-                
-                res.on('data', (chunk) => {
-                    data += chunk;
-                });
-                
-                res.on('end', () => {
-                    try {
-                        if (res.statusCode >= 200 && res.statusCode < 300) {
-                            const jsonData = JSON.parse(data);
-                            resolve(jsonData);
-                        } else {
-                            reject(new Error(`HTTP ${res.statusCode}: ${data}`));
-                        }
-                    } catch (error) {
-                        reject(new Error(`Failed to parse JSON: ${error.message}`));
-                    }
-                });
-            });
-            
-            req.on('error', (error) => {
-                reject(new Error(`Request failed: ${error.message}`));
-            });
-            
-            req.setTimeout(10000, () => {
-                req.destroy();
-                reject(new Error('Request timeout'));
-            });
-        });
-    }
-
-    /**
-     * Get tip info
-     * @returns {Promise<Object>} Tip info
-     */
-    async getTipInfo() {
-        /**
-         * {"metadata":{"best_block_height":50508,"best_block_hash":[159,218,81,52,13,209,72,199,53,213,102,125,30,254,101,1,70,142,17,178,243,154,113,172,7,73,192,145,150,113,241,113],"pruning_horizon":0,"pruned_height":0,"accumulated_difficulty":"0x94560572e1ddb58cf053d87dbb080ba026bed840f90f","timestamp":1752579195},"is_synced":true}
-         */
-        const response = await this.request('/get_tip_info');
-        return response;
-    }
-
-    /**
-     * Get block header by height
-     * @param {number} blockHeight - The height of the block
-     * @returns {Promise<Object>} Block header information
-     */
-    async getHeaderByHeight(blockHeight) {
-        console.log(`📡 Fetching header for block ${blockHeight}...`);
-        try {
-            const response = await this.request('/get_header_by_height', { height: blockHeight });
-            console.log(`✅ Header fetched for block ${blockHeight}`);
-            return response;
-        } catch (error) {
-            console.error(`❌ Failed to fetch header for block ${blockHeight}:`, error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * Sync UTXOs by block range
-     * @param {string} startHeaderHash - Starting block hash (hex)
-     * @param {string} endHeaderHash - Ending block hash (hex)
-     * @param {number} limit - Number of blocks to fetch
-     * @param {number} page - Page number for pagination
-     * @returns {Promise<Object>} UTXO sync response
-     */
-    async syncUtxosByBlock(startHeaderHash, endHeaderHash, limit = 200, page = 0) {
-        console.log(`📡 Syncing UTXOs from ${startHeaderHash.substring(0, 16)}... to ${endHeaderHash.substring(0, 16)}...`);
-        try {
-            const response = await this.request('/sync_utxos_by_block', {
-                start_header_hash: startHeaderHash,
-                end_header_hash: endHeaderHash,
-                limit: limit,
-                page: page
-            });
-            console.log(`✅ Synced ${response.blocks?.length || 0} blocks, has_next_page: ${response.has_next_page}`);
-            return response;
-        } catch (error) {
-            console.error(`❌ Failed to sync UTXOs:`, error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * Convert block UTXO info to scanner format
-     * @param {Object} blockUtxoInfo - Block UTXO info from base node
-     * @returns {Object} Block data in scanner format
-     */
-    convertToScannerFormat(blockUtxoInfo) {
-        return {
-            height: blockUtxoInfo.height,
-            hash: Buffer.from(blockUtxoInfo.header_hash).toString('hex'),
-            timestamp: blockUtxoInfo.mined_timestamp,
-            outputs: blockUtxoInfo.outputs.map(output => ({
-                commitment: Buffer.from(output.commitment).toString('hex'),
-                sender_offset_public_key: Buffer.from(output.sender_offset_public_key).toString('hex'),
-                encrypted_data: Buffer.from(output.encrypted_data).toString('hex'),
-                minimum_value_promise: 0, // Not provided in minimal sync
-                features: null,
-                script: null,
-                metadata_signature: null,
-                covenant: null
-            })),
-            inputs: [] // Inputs not included in UTXO sync
-        };
-    }
-
-    /**
-     * Fetch multiple blocks by height range (async iterator for streaming)
-     * @param {number} startHeight - Starting block height
-     * @param {number} endHeight - Ending block height
-     * @returns {AsyncIterator<Object>} Async iterator that yields block data in scanner format
-     */
-    async* fetchBlockRange(startHeight, endHeight) {
-        console.log(`📡 Fetching block range ${startHeight} to ${endHeight}...`);
-        
-        try {
-            // Get headers for start and end blocks
-            const startHeader = await this.getHeaderByHeight(startHeight);
-            const endHeader = await this.getHeaderByHeight(endHeight);
-            
-            const startHash = Buffer.from(startHeader.hash).toString('hex');
-            const endHash = Buffer.from(endHeader.hash).toString('hex');
-            
-            let page = 0;
-            let hasNextPage = true;
-            let totalBlocks = 0;
-            
-            // Sync UTXOs for the range
-            while (hasNextPage) {
-                const syncResponse = await this.syncUtxosByBlock(startHash, endHash, 200, page);
-                hasNextPage = syncResponse.has_next_page;
-                
-                // Convert and yield each block from this page
-                if (syncResponse.blocks) {
-                    for (const blockInfo of syncResponse.blocks) {
-                        const block = this.convertToScannerFormat(blockInfo);
-                        totalBlocks++;
-                        yield block;
-                    }
-                }
-                
-                page++;
-            }
-            
-            console.log(`✅ Streamed ${totalBlocks} blocks from base node`);
-            
-        } catch (error) {
-            console.error(`❌ Failed to fetch block range:`, error.message);
-            throw error;
-        }
-    }
+// Polyfills for Node.js to make WASM work with wasm-node feature
+if (typeof global !== 'undefined' && !global.fetch) {
+    // Set up global fetch for Node.js WASM target
+    const fetch = require('node-fetch');
+    
+    // Set fetch as a global function that WASM can access
+    global.fetch = fetch;
+    
+    // Also add Response and Request constructors
+    global.Response = fetch.Response;
+    global.Request = fetch.Request;
+    global.Headers = fetch.Headers;
 }
 
-class WasmScanner {
-    constructor(baseNodeUrl = 'http://127.0.0.1:9000') {
+/**
+ * CLI Scanner using the modern scanner engine
+ */
+class CLIScanner {
+    constructor(options = {}) {
+        this.options = {
+            baseUrl: 'https://rpc.tari.com',
+            batchSize: 50,
+            maxRetries: 3,
+            showProgress: true,
+            useStreaming: false,
+            ...options
+        };
+        
         this.wasm = null;
         this.scanner = null;
-        this.httpClient = new HttpClient(baseNodeUrl);
+        this.results = {
+            success: false,
+            error: null,
+            scanner_info: {},
+            connection_status: {},
+            scan_results: {},
+            memory_stats: {},
+            health_check: {},
+            performance: {
+                initialization_time_ms: 0,
+                scan_time_ms: 0,
+                total_time_ms: 0
+            }
+        };
+        this.startTime = Date.now();
     }
 
     /**
-     * Initialize the WASM module
+     * Initialize WASM module and create scanner with modern scanner engine
      */
     async init() {
+        const initStart = Date.now();
+        
         try {
-            console.log("🚀 Initializing Tari WASM Scanner...");
-            
-            // Try to load the WASM module
-            // Note: Path may need adjustment based on where the WASM package is built
-            const wasmPath = path.join(__dirname, 'pkg/lightweight_wallet_libs.js');
+            const wasmPath = path.join(__dirname, 'pkg_node/lightweight_wallet_libs.js');
             
             if (!fs.existsSync(wasmPath)) {
-                throw new Error(`WASM module not found at ${wasmPath}. Please build it first with: wasm-pack build --target nodejs --out-dir pkg --example wasm_scanner`);
+                throw new Error(`WASM module not found. Build with: wasm-pack build --target nodejs --out-dir examples/wasm/pkg_node --features http,wasm-node`);
             }
 
+            if (this.options.showProgress) {
+                console.error(`Loading WASM from: ${wasmPath}`);
+            }
+            
             this.wasm = require(wasmPath);
             
-            console.log("✅ WASM module loaded successfully");
-            console.log("📊 Features enabled:", this.wasm.get_features());
-            console.log("🏷️  Version:", this.wasm.get_version());
+            if (this.options.showProgress) {
+                console.error(`WASM module loaded, initializing...`);
+            }
+            
+            // For Node.js builds, we need to initialize the WASM module synchronously
+            const wasmBinaryPath = path.join(__dirname, 'pkg_node/lightweight_wallet_libs_bg.wasm');
+            const wasmBinary = fs.readFileSync(wasmBinaryPath);
+            
+            if (typeof this.wasm.initSync === 'function') {
+                this.wasm.initSync(wasmBinary);
+            } else if (typeof this.wasm.default === 'function') {
+                await this.wasm.default(wasmBinary);
+            }
+            
+            if (this.options.showProgress) {
+                console.error(`WASM initialized, getting version...`);
+            }
+            
+            this.results.scanner_info = {
+                version: this.wasm.get_version(),
+                wasm_loaded: true,
+                features: 'http',
+                timestamp: new Date().toISOString()
+            };
+            
+            this.results.performance.initialization_time_ms = Date.now() - initStart;
+            
+            if (this.options.showProgress) {
+                console.error(`WASM initialized successfully, version: ${this.results.scanner_info.version}`);
+            }
             
         } catch (error) {
-            console.error("❌ Failed to initialize WASM module:", error.message);
-            console.log("\n💡 To fix this:");
-            console.log("   1. Install wasm-pack: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh");
-            console.log("   2. Add WASM target: rustup target add wasm32-unknown-unknown");
-            console.log("   3. Build the package: wasm-pack build --target nodejs --out-dir pkg --example wasm_scanner");
-            process.exit(1);
+            console.error(`WASM initialization error:`, error);
+            this.results.error = `Failed to initialize WASM: ${error.message}`;
+            throw error;
         }
     }
 
     /**
-     * Create a scanner instance (automatically detects input type)
+     * Create and initialize scanner using modern async initialization
      */
-    createScanner(data) {
+    async createAndInitializeScanner(data) {
         try {
-            console.log(`\n🔧 Creating scanner (auto-detecting type)...`);
-            
             if (!data) {
-                throw new Error("Scanner data is required");
+                throw new Error('Scanner data (view key or seed phrase) is required');
             }
 
-            console.log("   Using data:", data.substring(0, 20) + "...");
+            if (this.options.showProgress) {
+                process.stderr.write(`Initializing scanner with ${this.options.maxRetries} max retries...\n`);
+            }
 
-            this.scanner = this.wasm.create_wasm_scanner(data);
-            console.log("✅ Scanner created successfully");
+            // Use the modern async initialization with retries
+            this.scanner = await this.wasm.create_and_initialize_scanner_async(
+                data,
+                this.options.baseUrl,
+                this.options.maxRetries
+            );
             
-            return this.scanner;
+            this.results.scanner_info.scanner_created = true;
+            this.results.scanner_info.data_type = data.split(' ').length > 10 ? 'seed_phrase' : 'view_key';
+            this.results.scanner_info.base_url = this.options.baseUrl;
+            this.results.scanner_info.max_retries = this.options.maxRetries;
             
-        } catch (error) {
-            console.error("❌ Failed to create scanner:", error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * Test the scanner functionality
-     */
-    async testScanner() {
-        try {
-            console.log("\n🧪 Running scanner test...");
-            const testResult = this.wasm.test_scanner();
-            const result = JSON.parse(testResult);
-            
-            console.log("✅ Test completed successfully");
-            console.log("📊 Test result:", result);
-            
-            return result;
-            
-        } catch (error) {
-            console.error("❌ Scanner test failed:", error.message);
-            throw error;
-        }
-    }
-
-
-    async getTipHeight() {
-        const tipInfo = await this.httpClient.getTipInfo();
-        return tipInfo.metadata.best_block_height;
-    }
-
-    /**
-     * Scan a single block
-     */
-    scanBlock(blockData) {
-        try {
-        
-            const blockDataJson = JSON.stringify(blockData, null, 2);
-            const resultJson = this.wasm.scan_block_data(this.scanner, blockDataJson);
-            const result = JSON.parse(resultJson);
-            
-            if (result.success) {
-                console.log(`✅ Block ${blockData.height} scanned successfully`);
-                console.log(`   Transactions found: ${result.transactions.length}`);
-                console.log(`   Current balance: ${result.current_balance} μT`);
-            } else {
-                console.log(`⚠️  Block ${blockData.height} scan completed with error: ${result.error}`);
+            if (this.options.showProgress) {
+                process.stderr.write(`✅ Scanner initialized successfully\n`);
             }
             
-            return result;
-            
         } catch (error) {
-            console.error(`❌ Failed to scan block ${blockData.height}:`, error.message);
+            console.error('Scanner initialization error:', error);
+            this.results.error = `Failed to create and initialize scanner: ${error.message}`;
+            this.results.scanner_info.initialization_failed = true;
+            this.results.scanner_info.error = error.message;
             throw error;
         }
     }
 
     /**
-     * Scan multiple blocks
+     * Perform health check using modern health check function
      */
-    scanBlocks(blocks) {
-        console.log(`\n📊 Scanning ${blocks.length} blocks...`);
-        const results = [];
-        let totalOutputs = 0;
-        let totalValue = 0;
-
-        for (const block of blocks) {
-            const result = this.scanBlock(block);
-            results.push(result);
+    async performHealthCheck() {
+        try {
+            const healthResult = await this.wasm.check_scanner_health(this.scanner);
+            const health = JSON.parse(healthResult);
             
-            if (result.success) {
-                totalOutputs += result.transactions.length;
-                totalValue = result.total_value; // Latest total value
+            this.results.health_check = health;
+            this.results.connection_status = {
+                connected: health.connectivity_ok || false,
+                base_url: this.options.baseUrl,
+                scanner_engine_initialized: health.scanner_engine_initialized,
+                wallet_context_available: health.wallet_context_available,
+                has_view_key: health.has_view_key,
+                transaction_count: health.transaction_count
+            };
+
+            if (health.tip_info) {
+                this.results.connection_status.chain_tip_height = health.tip_info.metadata?.best_block_height;
             }
-        }
 
-        console.log("\n📈 SCAN SUMMARY");
-        console.log("================");
-        console.log(`Blocks processed: ${blocks.length}`);
-        console.log(`Total transactions: ${totalOutputs}`);
-        console.log(`Total value found: ${totalValue} μT (${(totalValue / 1000000).toFixed(6)} T)`);
-        
-        return results;
-    }
-
-    /**
-     * Reset scanner state
-     */
-    resetScanner() {
-        try {
-            console.log("\n🔄 Resetting scanner state...");
-            this.wasm.reset_scanner(this.scanner);
-            console.log("✅ Scanner state reset successfully");
-        } catch (error) {
-            console.error("❌ Failed to reset scanner:", error.message);
-            throw error;
-        }
-    }
-
-   
-    /**
-     * Test connection to base node
-     */
-    async testBaseNodeConnection() {
-        console.log("\n📡 TESTING BASE NODE CONNECTION");
-        console.log("===============================");
-        
-        try {
-            console.log(`🔗 Connecting to ${this.httpClient.baseUrl}...`);
+            if (health.connectivity_error) {
+                this.results.connection_status.error = health.connectivity_error;
+            }
             
-            // Try to fetch a recent block header
-            const header = await this.httpClient.getHeaderByHeight(1);
-            console.log(`✅ Successfully connected to base node`);
-            console.log(`   Genesis block hash: ${Buffer.from(header.hash).toString('hex').substring(0, 16)}...`);
-            console.log(`   Timestamp: ${new Date(header.timestamp * 1000).toISOString()}`);
-            
-            return true;
+            return health.connectivity_ok !== false;
         } catch (error) {
-            console.log(`❌ Failed to connect to base node: ${error.message}`);
-            console.log(`   Make sure the Tari base node is running on ${this.httpClient.baseUrl}`);
+            this.results.health_check = { error: error.message };
+            this.results.connection_status = {
+                connected: false,
+                error: error.message
+            };
             return false;
         }
     }
 
     /**
-     * Scan real blocks from the base node
-     * @param {number} startHeight - Starting block height
-     * @param {number} endHeight - Ending block height (optional, defaults to startHeight)
+     * Get memory statistics using modern memory stats function
      */
-    async scanRealBlocks(startHeight, endHeight = null) {
-        if (!endHeight) {
-            endHeight = startHeight;
-        }
-
-        console.log(`\n🔍 SCANNING REAL BLOCKCHAIN DATA`);
-        console.log("=================================");
-        console.log(`Block range: ${startHeight} to ${endHeight}`);
-
+    getMemoryStats() {
         try {
-            // Stream and scan blocks from base node
-            let blockCount = 0;
-            let totalOutputs = 0;
-            let totalValue = 0;
-
-            console.log(`\n📊 Streaming and scanning blocks...`);
+            const statsResult = this.wasm.get_scanner_memory_stats(this.scanner);
+            const stats = JSON.parse(statsResult);
             
-            for await (const block of this.httpClient.fetchBlockRange(startHeight, endHeight)) {
-                blockCount++;
-                const result = this.scanBlock(block);
-                
-                if (result.success) {
-                    totalOutputs += result.transactions.length;
-                    totalValue = result.total_value; // Latest total value
-                }
-            }
-            
-            if (blockCount === 0) {
-                console.log("⚠️  No blocks found in range");
-                return [];
-            }
-
-            console.log("\n📈 STREAMING SCAN SUMMARY");
-            console.log("=========================");
-            console.log(`Blocks processed: ${blockCount}`);
-            console.log(`Total transactions: ${totalOutputs}`);
-            console.log(`Total value found: ${totalValue} μT (${(totalValue / 1000000).toFixed(6)} T)`);
-
-
+            this.results.memory_stats = stats;
+            return stats;
         } catch (error) {
-            console.error(`❌ Failed to scan real blocks: ${error.message}`);
-            console.log(`   Make sure the Tari base node is running and accessible`);
+            this.results.memory_stats = { error: error.message };
+            return null;
+        }
+    }
+
+    /**
+     * Scan blocks using range mode with modern scanner engine
+     */
+    async scanRange(startHeight, endHeight = null) {
+        const scanStart = Date.now();
+        
+        try {
+            let scanResult;
+            
+            if (this.options.useStreaming) {
+                // Use streaming scan for memory efficiency
+                scanResult = await this.streamingScan(startHeight, endHeight);
+            } else {
+                // Use memory-optimized scan
+                scanResult = await this.memoryOptimizedScan(startHeight, endHeight);
+            }
+
+            this.results.scan_results = scanResult;
+            this.results.performance.scan_time_ms = Date.now() - scanStart;
+            return scanResult;
+            
+        } catch (error) {
+            this.results.scan_results = {
+                success: false,
+                error: error.message,
+                start_height: startHeight,
+                end_height: endHeight
+            };
+            this.results.performance.scan_time_ms = Date.now() - scanStart;
             throw error;
         }
     }
 
     /**
-     * Demonstrate real blockchain scanning
+     * Scan specific block heights using modern multiple ranges function
      */
-    async scan(fromHeight, toHeight) {
-        // Test connection first
-        const connected = await this.testBaseNodeConnection();
-        if (!connected) {
-            console.log("⚠️  Skipping real blockchain demo - base node not available");
-            console.log("   To enable this feature:");
-            console.log("   1. Start a Tari base node");
-            console.log("   2. Ensure it's accessible at http://127.0.0.1:9000");
-            console.log("   3. Run this demo again");
-            return;
+    async scanSpecificHeights(heights) {
+        const scanStart = Date.now();
+        
+        try {
+            // Convert heights to scan ranges format
+            const ranges = heights.map(height => ({ from_height: height, to_height: height }));
+            const rangesJson = JSON.stringify(ranges);
+            
+            let progressCallback = null;
+            if (this.options.showProgress) {
+                progressCallback = (progressData) => {
+                    const progress = JSON.parse(progressData);
+                    process.stderr.write(`Progress: ${progress.overall_progress.toFixed(1)}% - Block ${progress.current_height} - ${progress.transactions_found} transactions\r`);
+                };
+            }
+
+            const resultJson = await this.wasm.scan_multiple_ranges_async(
+                this.scanner,
+                rangesJson,
+                this.options.batchSize,
+                progressCallback
+            );
+            
+            const result = JSON.parse(resultJson);
+            this.results.scan_results = result;
+            this.results.performance.scan_time_ms = Date.now() - scanStart;
+            return result;
+            
+        } catch (error) {
+            this.results.scan_results = {
+                success: false,
+                error: error.message,
+                heights: heights
+            };
+            this.results.performance.scan_time_ms = Date.now() - scanStart;
+            throw error;
+        }
+    }
+
+    /**
+     * Memory-optimized scan using modern async wrapper
+     */
+    async memoryOptimizedScan(startHeight, endHeight) {
+        if (this.options.showProgress) {
+            process.stderr.write(`Memory-optimized scan: blocks ${startHeight} to ${endHeight || 'tip'}...\n`);
         }
 
-        try {
-            await this.scanRealBlocks(fromHeight, toHeight);
-        } catch (error) {
-            console.error(`❌ Real blockchain demo failed: ${error.message}`);
+        // Use the modern memory management async function
+        // Convert heights to BigInt for WASM u64 parameters
+        const resultJson = await this.wasm.scan_with_memory_management_async(
+            this.scanner,
+            BigInt(startHeight),
+            BigInt(endHeight || 0)
+        );
+        
+        return JSON.parse(resultJson);
+    }
+
+    /**
+     * Streaming scan using modern streaming function for memory efficiency
+     */
+    async streamingScan(startHeight, endHeight) {
+        if (this.options.showProgress) {
+            process.stderr.write(`Streaming scan: blocks ${startHeight} to ${endHeight || 'tip'}...\n`);
         }
+
+        let progressCallback = null;
+        if (this.options.showProgress) {
+            progressCallback = (progressData) => {
+                const progress = JSON.parse(progressData);
+                process.stderr.write(`Progress: ${progress.percentage.toFixed(1)}% - Block ${progress.current_height} - ${progress.transactions_found} transactions - Memory: ${progress.memory_usage}\r`);
+            };
+        }
+
+        // Use the modern streaming async function
+        // Convert heights to BigInt for WASM u64 parameters
+        const resultJson = await this.wasm.scan_blocks_streaming_async(
+            this.scanner,
+            BigInt(startHeight),
+            BigInt(endHeight || 0),
+            this.options.batchSize,
+            progressCallback
+        );
+        
+        return JSON.parse(resultJson);
+    }
+
+    /**
+     * Optimize scanner memory using modern optimization function
+     */
+    optimizeMemory() {
+        try {
+            const optimizeResult = this.wasm.optimize_scanner_memory(this.scanner);
+            const optimization = JSON.parse(optimizeResult);
+            
+            this.results.memory_optimization = optimization;
+            return optimization;
+        } catch (error) {
+            this.results.memory_optimization = { error: error.message };
+            return null;
+        }
+    }
+
+    /**
+     * Get final results
+     */
+    getResults() {
+        this.results.success = !this.results.error;
+        this.results.performance.total_time_ms = Date.now() - this.startTime;
+        
+        // Add summary statistics
+        if (this.results.scan_results && this.results.scan_results.success) {
+            this.results.summary = {
+                blocks_processed: this.results.scan_results.blocks_processed,
+                transactions_found: this.results.scan_results.transactions?.length || 0,
+                total_outputs: this.results.scan_results.total_outputs,
+                total_spent: this.results.scan_results.total_spent,
+                current_balance_microtari: this.results.scan_results.current_balance,
+                current_balance_tari: (this.results.scan_results.current_balance / 1000000).toFixed(6),
+                total_value_microtari: this.results.scan_results.total_value,
+                total_value_tari: (this.results.scan_results.total_value / 1000000).toFixed(6)
+            };
+        }
+        
+        return this.results;
     }
 }
 
@@ -469,39 +400,209 @@ class WasmScanner {
  */
 function parseArgs() {
     const args = process.argv.slice(2);
-    const data = args[0] || null;
-    const baseNodeUrl = args[1] || "http://127.0.0.1:9000";
+    const options = {
+        data: null,
+        baseUrl: 'https://rpc.tari.com',
+        mode: 'range',
+        startHeight: 0,
+        endHeight: null,
+        heights: [],
+        batchSize: 50,
+        maxRetries: 3,
+        showProgress: false,
+        useStreaming: false,
+        healthCheck: true, // Default to true for modern scanner
+        memoryStats: false,
+        help: false
+    };
 
-    return { data, baseNodeUrl };
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        
+        switch (arg) {
+            case '--data':
+                options.data = args[++i];
+                break;
+            case '--base-url':
+                options.baseUrl = args[++i];
+                break;
+            case '--mode':
+                options.mode = args[++i];
+                break;
+            case '--start-height':
+                options.startHeight = parseInt(args[++i]);
+                break;
+            case '--end-height':
+                options.endHeight = parseInt(args[++i]);
+                break;
+            case '--heights':
+                options.heights = args[++i].split(',').map(h => parseInt(h.trim()));
+                break;
+            case '--batch-size':
+                options.batchSize = parseInt(args[++i]);
+                break;
+            case '--max-retries':
+                options.maxRetries = parseInt(args[++i]);
+                break;
+            case '--progress':
+                options.showProgress = true;
+                break;
+            case '--streaming':
+                options.useStreaming = true;
+                break;
+            case '--health-check':
+                options.healthCheck = true;
+                break;
+            case '--memory-stats':
+                options.memoryStats = true;
+                break;
+            case '--help':
+                options.help = true;
+                break;
+            default:
+                if (!arg.startsWith('--') && !options.data) {
+                    options.data = arg; // Allow data as positional argument
+                }
+                break;
+        }
+    }
+
+    return options;
+}
+
+/**
+ * Show help message
+ */
+function showHelp() {
+    console.log(`
+Tari WASM Scanner - Node.js CLI Client (Modern Scanner Engine)
+
+Usage:
+  node scanner.js [options]
+
+Options:
+  --data <string>           View key or seed phrase (required)
+  --base-url <url>          Base node URL (default: https://rpc.tari.com)
+  --mode <mode>             Scan mode: 'range' or 'specific' (default: range)
+  --start-height <number>   Start height for range mode (default: 0)
+  --end-height <number>     End height for range mode (optional, defaults to tip)
+  --heights <numbers>       Comma-separated heights for specific mode
+  --batch-size <number>     Batch size for processing (default: 50)
+  --max-retries <number>    Maximum retries for initialization (default: 3)
+  --progress                Show progress updates to stderr
+  --streaming               Use streaming scan for memory efficiency
+  --health-check            Perform health check before scanning (default: true)
+  --memory-stats            Include memory statistics in output
+  --help                    Show this help message
+
+Examples:
+  # Range scan with progress
+  node scanner.js --data "your_hex_view_key" --start-height 1000 --end-height 2000 --progress
+
+  # Specific heights scan
+  node scanner.js --data "your 24 word seed phrase" --mode specific --heights "100,200,300"
+
+  # Streaming scan for large ranges
+  node scanner.js --data "key_or_phrase" --streaming --progress --batch-size 25
+
+  # Full scan with health check and memory stats
+  node scanner.js --data "key_or_phrase" --health-check --memory-stats --start-height 0
+
+Features:
+  - Uses modern scanner engine with robust error handling
+  - Automatic retry logic for network failures
+  - Memory-optimized scanning for large ranges
+  - Streaming support for minimal memory usage
+  - Health checks for scanner and connectivity status
+  - Comprehensive memory statistics and performance metrics
+
+Output:
+  All results are output as JSON to stdout.
+  Progress messages (if enabled) are sent to stderr.
+`);
 }
 
 /**
  * Main execution function
  */
 async function main() {
-    console.log("🌟 Tari WASM Scanner - Node.js Example");
-    console.log("=======================================");
+    const options = parseArgs();
 
-    const { data, baseNodeUrl } = parseArgs();
-    const wasmScanner = new WasmScanner(baseNodeUrl);
+    if (options.help) {
+        showHelp();
+        return;
+    }
+
+    if (!options.data) {
+        console.error('Error: --data parameter is required');
+        showHelp();
+        process.exit(1);
+    }
+
+    const scanner = new CLIScanner(options);
 
     try {
         // Initialize WASM module
-        await wasmScanner.init();
+        await scanner.init();
 
-        // Create scanner
-        wasmScanner.createScanner(data);
+        // Create and initialize scanner with modern async initialization
+        await scanner.createAndInitializeScanner(options.data);
 
-        // Demonstrate real blockchain scanning (if base node is available)
-        const fromHeight = 14500;
-        const toHeight = await wasmScanner.getTipHeight();
-        await wasmScanner.scan(fromHeight, toHeight);
+        // Perform health check (always done with modern scanner)
+        if (options.healthCheck) {
+            const connected = await scanner.performHealthCheck();
+            if (!connected) {
+                throw new Error('Health check failed - scanner or connectivity issues detected');
+            }
+        }
 
-        console.log("\n🎉 Example completed successfully!");
+        // Only proceed with scanning if we have a valid scanner
+        if (!scanner.scanner) {
+            throw new Error('Scanner not properly initialized');
+        }
+
+        // Perform scanning based on mode
+        if (options.mode === 'specific') {
+            if (options.heights.length === 0) {
+                throw new Error('Heights must be specified for specific mode');
+            }
+            await scanner.scanSpecificHeights(options.heights);
+        } else {
+            await scanner.scanRange(options.startHeight, options.endHeight);
+        }
+
+        // Get memory stats if requested
+        if (options.memoryStats) {
+            scanner.getMemoryStats();
+        }
+
+        // Optimize memory for large scans
+        if (options.useStreaming || (options.endHeight && (options.endHeight - options.startHeight) > 1000)) {
+            scanner.optimizeMemory();
+        }
+
+        // Clear progress line if shown
+        if (options.showProgress) {
+            process.stderr.write('\n');
+        }
+
+        // Output final results as JSON
+        const results = scanner.getResults();
+        console.log(JSON.stringify(results, null, 2));
 
     } catch (error) {
-        console.error("\n💥 Example failed:", error.message);
-        console.error(error.stack);
+        // Clear progress line if shown
+        if (options.showProgress) {
+            process.stderr.write('\n');
+        }
+        
+        // Ensure error is properly set in results
+        scanner.results.error = error.message;
+        scanner.results.success = false;
+        
+        // Output error results as JSON
+        const results = scanner.getResults();
+        console.log(JSON.stringify(results, null, 2));
         process.exit(1);
     }
 }
@@ -510,21 +611,31 @@ async function main() {
  * Handle unhandled errors
  */
 process.on('unhandledRejection', (error) => {
-    console.error('💥 Unhandled promise rejection:', error);
+    console.error(JSON.stringify({
+        success: false,
+        error: `Unhandled promise rejection: ${error.message}`,
+        timestamp: new Date().toISOString()
+    }, null, 2));
     process.exit(1);
 });
 
 process.on('uncaughtException', (error) => {
-    console.error('💥 Uncaught exception:', error);
+    console.error(JSON.stringify({
+        success: false,
+        error: `Uncaught exception: ${error.message}`,
+        timestamp: new Date().toISOString()
+    }, null, 2));
     process.exit(1);
 });
 
-// Run the example if this file is executed directly
+// Run if executed directly
 if (require.main === module) {
     main();
 }
 
 // Export for use as a module
 module.exports = {
-    WasmScannerExample: WasmScanner,
+    CLIScanner,
+    parseArgs,
+    showHelp
 };

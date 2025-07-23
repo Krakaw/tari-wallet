@@ -633,8 +633,9 @@ mod tests {
         let console_formatter = create_output_formatter(OutputFormat::Summary);
         let json_formatter = create_output_formatter(OutputFormat::Json);
 
-        // Should create successfully
-        assert!(std::mem::size_of_val(&*console_formatter) > 0);
-        assert!(std::mem::size_of_val(&*json_formatter) > 0);
+        // Should create successfully (both are ZSTs but boxed trait objects have metadata)
+        // Test that they can be used successfully instead of checking size
+        assert!(console_formatter.as_ref() as *const _ as *const () != std::ptr::null());
+        assert!(json_formatter.as_ref() as *const _ as *const () != std::ptr::null());
     }
 }

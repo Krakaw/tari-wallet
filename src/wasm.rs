@@ -319,6 +319,16 @@ impl WasmScanner {
     /// Initialize scanner engine with base URL (if not already initialized)
     #[cfg(feature = "http")]
     pub async fn initialize_scanner_engine(&mut self, base_url: &str) -> Result<(), String> {
+        self.initialize_scanner_engine_with_fetch(base_url, None)
+            .await
+    }
+
+    /// Initialize scanner engine with optional fetch function
+    pub async fn initialize_scanner_engine_with_fetch(
+        &mut self,
+        base_url: &str,
+        _fetch_function: Option<js_sys::Function>,
+    ) -> Result<(), String> {
         if self.scanner_engine.is_none() {
             let http_scanner = HttpBlockchainScanner::new(base_url.to_string())
                 .await
@@ -1649,13 +1659,28 @@ pub async fn create_and_initialize_scanner_async(
     base_url: &str,
     max_retries: Option<u32>,
 ) -> Result<WasmScanner, JsValue> {
+    create_and_initialize_scanner_with_fetch_async(data, base_url, max_retries, None).await
+}
+
+/// Create and initialize scanner with custom fetch function (WASM export)
+#[cfg(feature = "http")]
+#[wasm_bindgen]
+pub async fn create_and_initialize_scanner_with_fetch_async(
+    data: &str,
+    base_url: &str,
+    max_retries: Option<u32>,
+    fetch_function: Option<js_sys::Function>,
+) -> Result<WasmScanner, JsValue> {
     let mut scanner = WasmScanner::from_str(data).map_err(|e| JsValue::from_str(&e))?;
 
     let retries = max_retries.unwrap_or(3);
     let mut last_error = "Unknown error".to_string();
 
     for attempt in 0..retries {
-        match scanner.initialize_scanner_engine(base_url).await {
+        match scanner
+            .initialize_scanner_engine_with_fetch(base_url, fetch_function.clone())
+            .await
+        {
             Ok(()) => return Ok(scanner),
             Err(e) => {
                 last_error = e;

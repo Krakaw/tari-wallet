@@ -38,9 +38,13 @@ use std::time::Duration;
 // WASM targets use web-sys
 #[cfg(all(feature = "http", target_arch = "wasm32"))]
 use std::time::Duration;
-#[cfg(all(feature = "http", target_arch = "wasm32"))]
-use web_sys::{window, Request, RequestInit, RequestMode, Response};
 
+// WASM imports - needed for both web and node
+#[cfg(all(feature = "http", target_arch = "wasm32"))]
+use web_sys::{Request, RequestInit, RequestMode, Response};
+
+// Web-specific imports (window function) - import even if not wasm-web for other methods
+#[cfg(all(feature = "http", target_arch = "wasm32"))]
 #[cfg(all(feature = "http", target_arch = "wasm32"))]
 use serde_wasm_bindgen;
 #[cfg(all(feature = "http", target_arch = "wasm32"))]
@@ -131,12 +135,19 @@ pub struct HttpOutputFeatures {
 
 /// HTTP API tip info response
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HttpTipInfoResponse {
+pub struct HttpTipInfoMetadata {
     pub best_block_height: u64,
     pub best_block_hash: Vec<u8>,
-    pub accumulated_difficulty: Vec<u8>,
+    pub pruning_horizon: u64,
     pub pruned_height: u64,
+    pub accumulated_difficulty: String,
     pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpTipInfoResponse {
+    pub metadata: HttpTipInfoMetadata,
+    pub is_synced: bool,
 }
 
 /// HTTP API search UTXO request
@@ -204,10 +215,7 @@ impl HttpBlockchainScanner {
 
         #[cfg(all(feature = "http", target_arch = "wasm32"))]
         {
-            // For WASM, we don't need to create a persistent client
-            // web-sys creates requests on-demand
-
-            // Test the connection with a simple GET request
+            // WASM environment - test connection and create scanner
             let test_url = format!("{}/get_tip_info", base_url);
 
             let opts = RequestInit::new();
@@ -216,7 +224,64 @@ impl HttpBlockchainScanner {
 
             let request = Request::new_with_str_and_init(&test_url, &opts)?;
 
-            let window = window().ok_or_else(|| {
+            // Try to make a test request to verify connectivity
+            // We'll use runtime detection in fetch_request
+            let scanner = Self { base_url };
+            let _resp = scanner.fetch_request(&request).await?;
+
+            Ok(scanner)
+        }
+    }
+
+    /// Perform a fetch request using the appropriate method for the target environment
+    #[cfg(all(feature = "http", target_arch = "wasm32"))]
+    async fn fetch_request(&self, request: &Request) -> Result<Response, LightweightWalletError> {
+        #[cfg(feature = "wasm-node")]
+        {
+            // Node.js environment - use global fetch
+            let global = js_sys::global();
+
+            if let Ok(fetch_fn) = js_sys::Reflect::get(&global, &JsValue::from_str("fetch")) {
+                if let Ok(fetch_fn) = fetch_fn.dyn_into::<js_sys::Function>() {
+                    let resp_value = JsFuture::from(js_sys::Promise::from(
+                        fetch_fn.call1(&global, request).map_err(|_| {
+                            LightweightWalletError::ScanningError(
+                                crate::errors::ScanningError::blockchain_connection_failed(
+                                    "Failed to call fetch function",
+                                ),
+                            )
+                        })?,
+                    ))
+                    .await
+                    .map_err(|_| {
+                        LightweightWalletError::ScanningError(
+                            crate::errors::ScanningError::blockchain_connection_failed(
+                                "Fetch request failed",
+                            ),
+                        )
+                    })?;
+
+                    return resp_value.dyn_into::<Response>().map_err(|_| {
+                        LightweightWalletError::ScanningError(
+                            crate::errors::ScanningError::blockchain_connection_failed(
+                                "Invalid response type",
+                            ),
+                        )
+                    });
+                }
+            }
+
+            return Err(LightweightWalletError::ScanningError(
+                crate::errors::ScanningError::blockchain_connection_failed(
+                    "No fetch function available in Node.js environment",
+                ),
+            ));
+        }
+
+        #[cfg(feature = "wasm-web")]
+        {
+            // Browser environment - use web-sys window.fetch
+            let window = web_sys::window().ok_or_else(|| {
                 LightweightWalletError::ScanningError(
                     crate::errors::ScanningError::blockchain_connection_failed(
                         "No window object available",
@@ -224,26 +289,33 @@ impl HttpBlockchainScanner {
                 )
             })?;
 
-            let resp_value = JsFuture::from(window.fetch_with_request(&request))
+            let resp_value = JsFuture::from(window.fetch_with_request(request))
                 .await
                 .map_err(|_| {
                     LightweightWalletError::ScanningError(
-                        crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                            "Failed to connect to {}",
-                            base_url
-                        )),
+                        crate::errors::ScanningError::blockchain_connection_failed(
+                            "Fetch request failed",
+                        ),
                     )
                 })?;
 
-            let _resp: Response = resp_value.dyn_into().map_err(|_| {
+            return resp_value.dyn_into::<Response>().map_err(|_| {
                 LightweightWalletError::ScanningError(
                     crate::errors::ScanningError::blockchain_connection_failed(
                         "Invalid response type",
                     ),
                 )
-            })?;
+            });
+        }
 
-            Ok(Self { base_url })
+        #[cfg(not(any(feature = "wasm-node", feature = "wasm-web")))]
+        {
+            // Fallback error - should not reach here in normal builds
+            Err(LightweightWalletError::ScanningError(
+                crate::errors::ScanningError::blockchain_connection_failed(
+                    "No WASM fetch implementation available",
+                ),
+            ))
         }
     }
 
@@ -719,25 +791,7 @@ impl HttpBlockchainScanner {
             // Set Content-Type header
             request.headers().set("Content-Type", "application/json")?;
 
-            let window = window().ok_or_else(|| {
-                LightweightWalletError::ScanningError(
-                    crate::errors::ScanningError::blockchain_connection_failed(
-                        "No window object available",
-                    ),
-                )
-            })?;
-
-            let resp_value = JsFuture::from(window.fetch_with_request(&request))
-                .await
-                .map_err(|_| {
-                    LightweightWalletError::ScanningError(
-                        crate::errors::ScanningError::blockchain_connection_failed(
-                            "HTTP request failed",
-                        ),
-                    )
-                })?;
-
-            let response: Response = resp_value.dyn_into().map_err(|_| {
+            let response: Response = self.fetch_request(&request).await.map_err(|_| {
                 LightweightWalletError::ScanningError(
                     crate::errors::ScanningError::blockchain_connection_failed(
                         "Invalid response type",
@@ -958,11 +1012,12 @@ impl BlockchainScanner for HttpBlockchainScanner {
             })?;
 
             Ok(TipInfo {
-                best_block_height: tip_response.best_block_height,
-                best_block_hash: tip_response.best_block_hash,
-                accumulated_difficulty: tip_response.accumulated_difficulty,
-                pruned_height: tip_response.pruned_height,
-                timestamp: tip_response.timestamp,
+                best_block_height: tip_response.metadata.best_block_height,
+                best_block_hash: tip_response.metadata.best_block_hash,
+                accumulated_difficulty: hex::decode(&tip_response.metadata.accumulated_difficulty)
+                    .unwrap_or_default(),
+                pruned_height: tip_response.metadata.pruned_height,
+                timestamp: tip_response.metadata.timestamp,
             })
         }
 
@@ -975,31 +1030,7 @@ impl BlockchainScanner for HttpBlockchainScanner {
 
             let request = Request::new_with_str_and_init(&url, &opts)?;
 
-            let window = window().ok_or_else(|| {
-                LightweightWalletError::ScanningError(
-                    crate::errors::ScanningError::blockchain_connection_failed(
-                        "No window object available",
-                    ),
-                )
-            })?;
-
-            let resp_value = JsFuture::from(window.fetch_with_request(&request))
-                .await
-                .map_err(|_| {
-                    LightweightWalletError::ScanningError(
-                        crate::errors::ScanningError::blockchain_connection_failed(
-                            "HTTP request failed",
-                        ),
-                    )
-                })?;
-
-            let response: Response = resp_value.dyn_into().map_err(|_| {
-                LightweightWalletError::ScanningError(
-                    crate::errors::ScanningError::blockchain_connection_failed(
-                        "Invalid response type",
-                    ),
-                )
-            })?;
+            let response = self.fetch_request(&request).await?;
 
             if !response.ok() {
                 return Err(LightweightWalletError::ScanningError(
@@ -1038,11 +1069,12 @@ impl BlockchainScanner for HttpBlockchainScanner {
                 })?;
 
             Ok(TipInfo {
-                best_block_height: tip_response.best_block_height,
-                best_block_hash: tip_response.best_block_hash,
-                accumulated_difficulty: tip_response.accumulated_difficulty,
-                pruned_height: tip_response.pruned_height,
-                timestamp: tip_response.timestamp,
+                best_block_height: tip_response.metadata.best_block_height,
+                best_block_hash: tip_response.metadata.best_block_hash,
+                accumulated_difficulty: hex::decode(&tip_response.metadata.accumulated_difficulty)
+                    .unwrap_or_default(),
+                pruned_height: tip_response.metadata.pruned_height,
+                timestamp: tip_response.metadata.timestamp,
             })
         }
     }
@@ -1114,31 +1146,7 @@ impl BlockchainScanner for HttpBlockchainScanner {
             // Set Content-Type header
             request.headers().set("Content-Type", "application/json")?;
 
-            let window = window().ok_or_else(|| {
-                LightweightWalletError::ScanningError(
-                    crate::errors::ScanningError::blockchain_connection_failed(
-                        "No window object available",
-                    ),
-                )
-            })?;
-
-            let resp_value = JsFuture::from(window.fetch_with_request(&request))
-                .await
-                .map_err(|_| {
-                    LightweightWalletError::ScanningError(
-                        crate::errors::ScanningError::blockchain_connection_failed(
-                            "HTTP request failed",
-                        ),
-                    )
-                })?;
-
-            let response: Response = resp_value.dyn_into().map_err(|_| {
-                LightweightWalletError::ScanningError(
-                    crate::errors::ScanningError::blockchain_connection_failed(
-                        "Invalid response type",
-                    ),
-                )
-            })?;
+            let response = self.fetch_request(&request).await?;
 
             if !response.ok() {
                 return Err(LightweightWalletError::ScanningError(
@@ -1247,31 +1255,7 @@ impl BlockchainScanner for HttpBlockchainScanner {
             // Set Content-Type header
             request.headers().set("Content-Type", "application/json")?;
 
-            let window = window().ok_or_else(|| {
-                LightweightWalletError::ScanningError(
-                    crate::errors::ScanningError::blockchain_connection_failed(
-                        "No window object available",
-                    ),
-                )
-            })?;
-
-            let resp_value = JsFuture::from(window.fetch_with_request(&request))
-                .await
-                .map_err(|_| {
-                    LightweightWalletError::ScanningError(
-                        crate::errors::ScanningError::blockchain_connection_failed(
-                            "HTTP request failed",
-                        ),
-                    )
-                })?;
-
-            let response: Response = resp_value.dyn_into().map_err(|_| {
-                LightweightWalletError::ScanningError(
-                    crate::errors::ScanningError::blockchain_connection_failed(
-                        "Invalid response type",
-                    ),
-                )
-            })?;
+            let response = self.fetch_request(&request).await?;
 
             if !response.ok() {
                 return Err(LightweightWalletError::ScanningError(

@@ -501,7 +501,8 @@ mod tests {
     fn test_console_progress_reporter_creation() {
         let reporter = ConsoleProgressReporter::new();
         // Should not panic and should be created successfully
-        assert!(std::mem::size_of_val(&reporter) > 0);
+        // ConsoleProgressReporter is a zero-sized type, so we just check it can be created
+        assert_eq!(std::mem::size_of_val(&reporter), 0);
     }
 
     #[test]
@@ -509,8 +510,8 @@ mod tests {
         let quiet_reporter = create_progress_reporter(true);
         let console_reporter = create_progress_reporter(false);
 
-        // Both should be created successfully
-        assert!(std::mem::size_of_val(&*quiet_reporter) > 0);
-        assert!(std::mem::size_of_val(&*console_reporter) > 0);
+        // Both should be created successfully (test that they're not null pointers)
+        assert!(quiet_reporter.as_ref() as *const _ as *const () != std::ptr::null());
+        assert!(console_reporter.as_ref() as *const _ as *const () != std::ptr::null());
     }
 }
