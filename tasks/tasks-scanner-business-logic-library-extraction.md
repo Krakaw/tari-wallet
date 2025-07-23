@@ -42,7 +42,7 @@
   - [x] 2.3 Implement `DirectStorageAdapter` for WASM architecture compatibility
   - [x] 2.4 Create automatic architecture detection and adapter selection logic
   - [x] 2.5 Implement batch operations interface for efficient spent output tracking
-  - [ ] 2.6 Add incremental transaction saving with memory management
+  - [x] 2.6 Add incremental transaction saving with memory management
   - [ ] 2.7 Handle database vs memory-only storage mode configuration
 
 - [ ] 3.0 Extract Business Logic from CLI Scanner

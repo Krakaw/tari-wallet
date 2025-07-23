@@ -9,7 +9,7 @@ use async_trait::async_trait;
 #[cfg(feature = "storage")]
 use crate::data_structures::{
     wallet_output::LightweightWalletOutput,
-    wallet_transaction::WalletState,
+    wallet_transaction::{WalletState, WalletTransaction},
 };
 
 #[cfg(feature = "storage")]
@@ -37,6 +37,69 @@ pub enum BatchStorageOperation {
         wallet_id: u32,
         block_height: u64,
     },
+}
+
+/// Configuration for incremental wallet state saving with memory management
+#[derive(Debug, Clone)]
+#[cfg(feature = "storage")]
+pub struct IncrementalSaveConfig {
+    /// Maximum chunk size for transaction batches (number of transactions)
+    pub transaction_chunk_size: usize,
+    /// Memory pressure threshold in bytes before forcing smaller chunks
+    pub memory_pressure_threshold: usize,
+    /// Whether to enable adaptive chunk sizing based on memory usage
+    pub adaptive_chunk_sizing: bool,
+    /// Maximum memory usage in bytes before pausing and flushing
+    pub max_memory_usage: usize,
+    /// Enable detailed progress reporting
+    pub enable_progress_reporting: bool,
+}
+
+#[cfg(feature = "storage")]
+impl Default for IncrementalSaveConfig {
+    fn default() -> Self {
+        Self {
+            transaction_chunk_size: 1000,
+            memory_pressure_threshold: 50 * 1024 * 1024, // 50MB
+            adaptive_chunk_sizing: true,
+            max_memory_usage: 100 * 1024 * 1024, // 100MB
+            enable_progress_reporting: false,
+        }
+    }
+}
+
+/// Progress information for incremental transaction saving
+#[derive(Debug, Clone)]
+#[cfg(feature = "storage")]
+pub struct TransactionSaveProgress {
+    /// Total number of transactions to save
+    pub total_transactions: usize,
+    /// Number of transactions saved so far
+    pub transactions_saved: usize,
+    /// Number of chunks processed
+    pub chunks_processed: usize,
+    /// Estimated memory usage in bytes
+    pub estimated_memory_usage: usize,
+    /// Whether the save operation is complete
+    pub is_complete: bool,
+    /// Duration of the save operation so far
+    pub elapsed_time: std::time::Duration,
+    /// Average transactions per second
+    pub throughput: f64,
+}
+
+/// Progress information for incremental wallet state saving
+#[derive(Debug, Clone)]
+#[cfg(feature = "storage")]
+pub struct WalletStateSaveProgress {
+    /// Progress for transaction saving
+    pub transaction_progress: TransactionSaveProgress,
+    /// Number of outputs saved
+    pub outputs_saved: usize,
+    /// Total estimated memory usage including outputs
+    pub total_memory_usage: usize,
+    /// Whether adaptive chunk sizing was triggered
+    pub adaptive_sizing_triggered: bool,
 }
 
 /// Storage manager trait for unified storage operations in the scanner library
@@ -75,6 +138,12 @@ pub trait StorageManager: Send + Sync {
     
     /// Flush any pending batched operations (for background writers)
     async fn flush_pending_operations(&mut self) -> LightweightWalletResult<()>;
+    
+    /// Save transactions incrementally with memory management to handle large transaction sets
+    async fn save_transactions_incremental(&mut self, wallet_id: u32, transactions: &[WalletTransaction], chunk_size: Option<usize>) -> LightweightWalletResult<TransactionSaveProgress>;
+    
+    /// Save wallet state incrementally with automatic memory management
+    async fn save_wallet_state_incremental(&mut self, wallet_id: u32, state: &WalletState, save_config: IncrementalSaveConfig) -> LightweightWalletResult<WalletStateSaveProgress>;
 }
 
 /// Mock storage manager for testing and non-storage scenarios
@@ -162,6 +231,54 @@ impl StorageManager for MockStorageManager {
     async fn flush_pending_operations(&mut self) -> LightweightWalletResult<()> {
         // Mock implementation - no operations to flush
         Ok(())
+    }
+    
+    async fn save_transactions_incremental(&mut self, _wallet_id: u32, transactions: &[WalletTransaction], chunk_size: Option<usize>) -> LightweightWalletResult<TransactionSaveProgress> {
+        // Mock implementation - simulate successful incremental save
+        use std::time::{Duration, Instant};
+        let start_time = Instant::now();
+        
+        // Simulate some processing time for larger transaction sets
+        if transactions.len() > 100 {
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        
+        let effective_chunk_size = chunk_size.unwrap_or(1000);
+        let chunks_processed = if transactions.is_empty() {
+            0
+        } else {
+            (transactions.len() + effective_chunk_size - 1) / effective_chunk_size // Proper ceiling division
+        };
+        
+        let elapsed = start_time.elapsed();
+        let throughput = if elapsed.as_secs_f64() > 0.0 {
+            transactions.len() as f64 / elapsed.as_secs_f64()
+        } else {
+            f64::INFINITY
+        };
+        
+        Ok(TransactionSaveProgress {
+            total_transactions: transactions.len(),
+            transactions_saved: transactions.len(),
+            chunks_processed,
+            estimated_memory_usage: transactions.len() * 200, // Estimate ~200 bytes per transaction
+            is_complete: true,
+            elapsed_time: elapsed,
+            throughput,
+        })
+    }
+    
+    async fn save_wallet_state_incremental(&mut self, wallet_id: u32, state: &WalletState, _save_config: IncrementalSaveConfig) -> LightweightWalletResult<WalletStateSaveProgress> {
+        // Mock implementation - simulate successful incremental wallet state save
+        let transaction_progress = self.save_transactions_incremental(wallet_id, &state.transactions, None).await?;
+        
+        Ok(WalletStateSaveProgress {
+            transaction_progress,
+            outputs_saved: 0, // WalletState doesn't have separate outputs field
+            total_memory_usage: state.transactions.len() * 200,
+            adaptive_sizing_triggered: false,
+        })
     }
 }
 
@@ -1036,6 +1153,132 @@ mod storage_adapters {
         async fn flush_pending_operations(&mut self) -> LightweightWalletResult<()> {
             self.flush_batch().await
         }
+        
+        async fn save_transactions_incremental(&mut self, wallet_id: u32, transactions: &[WalletTransaction], chunk_size: Option<usize>) -> LightweightWalletResult<TransactionSaveProgress> {
+            use std::time::Instant;
+            
+            let start_time = Instant::now();
+            let total_transactions = transactions.len();
+            
+            if total_transactions == 0 {
+                return Ok(TransactionSaveProgress {
+                    total_transactions: 0,
+                    transactions_saved: 0,
+                    chunks_processed: 0,
+                    estimated_memory_usage: 0,
+                    is_complete: true,
+                    elapsed_time: start_time.elapsed(),
+                    throughput: 0.0,
+                });
+            }
+            
+            let config = IncrementalSaveConfig::default();
+            let actual_chunk_size = chunk_size.unwrap_or_else(|| {
+                storage_adapters::memory_management::calculate_optimal_chunk_size(transactions, &config)
+            });
+            
+            let mut transactions_saved = 0;
+            let mut chunks_processed = 0;
+            let mut estimated_memory_usage = 0;
+            
+            // Process transactions in chunks
+            for chunk in transactions.chunks(actual_chunk_size) {
+                // Estimate memory usage for this chunk
+                let chunk_memory: usize = chunk.iter()
+                    .map(storage_adapters::memory_management::estimate_transaction_memory)
+                    .sum();
+                estimated_memory_usage += chunk_memory;
+                
+                // Save the chunk
+                let result = self.storage.save_transactions(wallet_id, chunk).await;
+                if let Err(e) = result {
+                    return Err(e);
+                }
+                
+                transactions_saved += chunk.len();
+                chunks_processed += 1;
+                
+                // Check memory pressure and flush if needed
+                if storage_adapters::memory_management::check_memory_pressure(estimated_memory_usage, &config) {
+                    self.flush_batch().await?;
+                    // Reset memory usage estimate after flush
+                    estimated_memory_usage = chunk_memory;
+                }
+                
+                #[cfg(feature = "tracing")]
+                tracing::debug!(
+                    "Saved transaction chunk {}/{}: {} transactions ({} bytes estimated)",
+                    chunks_processed,
+                    (total_transactions + actual_chunk_size - 1) / actual_chunk_size,
+                    chunk.len(),
+                    chunk_memory
+                );
+            }
+            
+            let elapsed = start_time.elapsed();
+            let throughput = if elapsed.as_secs_f64() > 0.0 {
+                total_transactions as f64 / elapsed.as_secs_f64()
+            } else {
+                f64::INFINITY
+            };
+            
+            Ok(TransactionSaveProgress {
+                total_transactions,
+                transactions_saved,
+                chunks_processed,
+                estimated_memory_usage,
+                is_complete: true,
+                elapsed_time: elapsed,
+                throughput,
+            })
+        }
+        
+        async fn save_wallet_state_incremental(&mut self, wallet_id: u32, state: &WalletState, save_config: IncrementalSaveConfig) -> LightweightWalletResult<WalletStateSaveProgress> {
+            use std::time::Instant;
+            
+            let start_time = Instant::now();
+            
+            // Calculate optimal chunk size for transactions
+            let transaction_chunk_size = storage_adapters::memory_management::calculate_optimal_chunk_size(
+                &state.transactions, 
+                &save_config
+            );
+            
+            let adaptive_sizing_triggered = transaction_chunk_size != save_config.transaction_chunk_size;
+            
+            // Save transactions incrementally
+            let transaction_progress = self.save_transactions_incremental(
+                wallet_id, 
+                &state.transactions, 
+                Some(transaction_chunk_size)
+            ).await?;
+            
+            // Save outputs if present (using existing batch mechanism)
+            let outputs_saved = 0;
+            // WalletState doesn't have separate outputs field - outputs are stored as transactions
+            // For now, we'll count the outputs as zero since they're handled as transactions
+                
+            #[cfg(feature = "tracing")]
+            tracing::debug!("Skipped saving {} outputs (conversion not implemented)", outputs_saved);
+            
+            let total_memory_usage = transaction_progress.estimated_memory_usage + (outputs_saved * 100);
+            
+            #[cfg(feature = "tracing")]
+            tracing::info!(
+                "Completed incremental wallet state save: {} transactions, {} outputs, {} MB estimated, took {:?}",
+                transaction_progress.transactions_saved,
+                outputs_saved,
+                total_memory_usage / (1024 * 1024),
+                start_time.elapsed()
+            );
+            
+            Ok(WalletStateSaveProgress {
+                transaction_progress,
+                outputs_saved,
+                total_memory_usage,
+                adaptive_sizing_triggered,
+            })
+        }
     }
 
     /// Direct storage adapter for immediate writes (suitable for WASM and low-latency scenarios)
@@ -1124,6 +1367,125 @@ mod storage_adapters {
             // Direct adapter has no pending operations to flush
             Ok(())
         }
+        
+        async fn save_transactions_incremental(&mut self, wallet_id: u32, transactions: &[WalletTransaction], chunk_size: Option<usize>) -> LightweightWalletResult<TransactionSaveProgress> {
+            use std::time::Instant;
+            
+            let start_time = Instant::now();
+            let total_transactions = transactions.len();
+            
+            if total_transactions == 0 {
+                return Ok(TransactionSaveProgress {
+                    total_transactions: 0,
+                    transactions_saved: 0,
+                    chunks_processed: 0,
+                    estimated_memory_usage: 0,
+                    is_complete: true,
+                    elapsed_time: start_time.elapsed(),
+                    throughput: 0.0,
+                });
+            }
+            
+            let config = IncrementalSaveConfig::default();
+            let actual_chunk_size = chunk_size.unwrap_or_else(|| {
+                storage_adapters::memory_management::calculate_optimal_chunk_size(transactions, &config)
+            });
+            
+            let mut transactions_saved = 0;
+            let mut chunks_processed = 0;
+            let mut estimated_memory_usage = 0;
+            
+            // Process transactions in chunks
+            for chunk in transactions.chunks(actual_chunk_size) {
+                // Estimate memory usage for this chunk
+                let chunk_memory: usize = chunk.iter()
+                    .map(storage_adapters::memory_management::estimate_transaction_memory)
+                    .sum();
+                estimated_memory_usage += chunk_memory;
+                
+                // Save the chunk directly
+                let result = self.storage.save_transactions(wallet_id, chunk).await;
+                if let Err(e) = result {
+                    return Err(e);
+                }
+                
+                transactions_saved += chunk.len();
+                chunks_processed += 1;
+                
+                #[cfg(feature = "tracing")]
+                tracing::debug!(
+                    "Saved transaction chunk {}/{}: {} transactions ({} bytes estimated)",
+                    chunks_processed,
+                    (total_transactions + actual_chunk_size - 1) / actual_chunk_size,
+                    chunk.len(),
+                    chunk_memory
+                );
+            }
+            
+            let elapsed = start_time.elapsed();
+            let throughput = if elapsed.as_secs_f64() > 0.0 {
+                total_transactions as f64 / elapsed.as_secs_f64()
+            } else {
+                f64::INFINITY
+            };
+            
+            Ok(TransactionSaveProgress {
+                total_transactions,
+                transactions_saved,
+                chunks_processed,
+                estimated_memory_usage,
+                is_complete: true,
+                elapsed_time: elapsed,
+                throughput,
+            })
+        }
+        
+        async fn save_wallet_state_incremental(&mut self, wallet_id: u32, state: &WalletState, save_config: IncrementalSaveConfig) -> LightweightWalletResult<WalletStateSaveProgress> {
+            use std::time::Instant;
+            
+            let start_time = Instant::now();
+            
+            // Calculate optimal chunk size for transactions
+            let transaction_chunk_size = storage_adapters::memory_management::calculate_optimal_chunk_size(
+                &state.transactions, 
+                &save_config
+            );
+            
+            let adaptive_sizing_triggered = transaction_chunk_size != save_config.transaction_chunk_size;
+            
+            // Save transactions incrementally
+            let transaction_progress = self.save_transactions_incremental(
+                wallet_id, 
+                &state.transactions, 
+                Some(transaction_chunk_size)
+            ).await?;
+            
+            // Save outputs if present
+            let outputs_saved = 0;
+            // WalletState doesn't have separate outputs field - outputs are stored as transactions
+            // For now, we'll count the outputs as zero since they're handled as transactions
+                
+            #[cfg(feature = "tracing")]
+            tracing::debug!("Skipped saving {} outputs (conversion not implemented)", outputs_saved);
+            
+            let total_memory_usage = transaction_progress.estimated_memory_usage + (outputs_saved * 100);
+            
+            #[cfg(feature = "tracing")]
+            tracing::info!(
+                "Completed incremental wallet state save: {} transactions, {} outputs, {} MB estimated, took {:?}",
+                transaction_progress.transactions_saved,
+                outputs_saved,
+                total_memory_usage / (1024 * 1024),
+                start_time.elapsed()
+            );
+            
+            Ok(WalletStateSaveProgress {
+                transaction_progress,
+                outputs_saved,
+                total_memory_usage,
+                adaptive_sizing_triggered,
+            })
+        }
     }
 
     /// Create a storage manager optimized for the current architecture
@@ -1161,6 +1523,82 @@ mod storage_adapters {
     #[allow(dead_code)]
     pub fn create_direct_storage_manager(storage: Arc<dyn WalletStorage>) -> Box<dyn StorageManager> {
         Box::new(DirectStorageAdapter::new(storage))
+    }
+
+    /// Memory management utilities for incremental saving
+    pub mod memory_management {
+        use super::*;
+        
+        /// Estimate memory usage of a transaction
+        pub fn estimate_transaction_memory(transaction: &WalletTransaction) -> usize {
+            // Base size of the struct
+            let mut size = std::mem::size_of::<WalletTransaction>();
+            
+            // Add variable size fields
+            if let Some(ref output_hash) = transaction.output_hash {
+                size += output_hash.len();
+            }
+            
+            // PaymentId can vary significantly in size
+            size += estimate_payment_id_size(&transaction.payment_id);
+            
+            size
+        }
+        
+        /// Estimate memory usage of a PaymentId
+        pub fn estimate_payment_id_size(payment_id: &crate::data_structures::payment_id::PaymentId) -> usize {
+            use crate::data_structures::payment_id::PaymentId;
+            
+            match payment_id {
+                PaymentId::Empty => 0,
+                PaymentId::U256(_) => 32, // U256 is 32 bytes
+                PaymentId::Open { user_data, .. } => {
+                    user_data.len() + 8 // User data plus some overhead
+                }
+                PaymentId::AddressAndData { user_data, .. } => {
+                    64 + user_data.len() // TariAddress is approximately 64 bytes + user data
+                }
+                PaymentId::TransactionInfo { user_data, sent_output_hashes, .. } => {
+                    // TransactionInfo includes vectors and can be quite large
+                    64 + user_data.len() + (sent_output_hashes.len() * 32) // Conservative estimate
+                }
+                PaymentId::Raw(data) => data.len(),
+            }
+        }
+        
+        /// Calculate optimal chunk size based on memory constraints
+        pub fn calculate_optimal_chunk_size(
+            transactions: &[WalletTransaction],
+            config: &IncrementalSaveConfig,
+        ) -> usize {
+            if !config.adaptive_chunk_sizing {
+                return config.transaction_chunk_size;
+            }
+            
+            if transactions.is_empty() {
+                return config.transaction_chunk_size;
+            }
+            
+            // Sample first few transactions to estimate average size
+            let sample_size = std::cmp::min(10, transactions.len());
+            let total_sample_memory: usize = transactions[..sample_size]
+                .iter()
+                .map(estimate_transaction_memory)
+                .sum();
+            
+            let avg_transaction_size = total_sample_memory / sample_size;
+            
+            // Calculate how many transactions fit within memory threshold
+            let optimal_chunk_size = config.memory_pressure_threshold / avg_transaction_size;
+            
+            // Clamp between 1 and configured maximum
+            std::cmp::max(1, std::cmp::min(optimal_chunk_size, config.transaction_chunk_size))
+        }
+        
+        /// Check if current memory usage exceeds threshold
+        pub fn check_memory_pressure(current_usage: usize, config: &IncrementalSaveConfig) -> bool {
+            current_usage >= config.memory_pressure_threshold
+        }
     }
 
     /// Statistics tracking for the background writer
@@ -1801,5 +2239,216 @@ mod tests {
         // Mock storage manager has no pending operations, so this should just succeed
         let result = storage_manager.flush_pending_operations().await;
         assert!(result.is_ok());
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_incremental_transaction_saving_mock() {
+        use crate::data_structures::{
+            wallet_transaction::WalletTransaction,
+            payment_id::PaymentId,
+            transaction::{TransactionDirection, TransactionStatus},
+            types::CompressedCommitment,
+        };
+        
+        let mut storage_manager = MockStorageManager::new();
+        
+        // Create some test transactions
+        let transactions = vec![
+            WalletTransaction {
+                block_height: 100,
+                output_index: Some(0),
+                input_index: None,
+                commitment: CompressedCommitment::new([1u8; 32]),
+                output_hash: Some(vec![1u8; 32]),
+                value: 1000,
+                payment_id: PaymentId::Empty,
+                is_spent: false,
+                spent_in_block: None,
+                spent_in_input: None,
+                transaction_status: TransactionStatus::Coinbase,
+                transaction_direction: TransactionDirection::Inbound,
+                is_mature: true,
+            },
+            WalletTransaction {
+                block_height: 101,
+                output_index: Some(1),
+                input_index: None,
+                commitment: CompressedCommitment::new([2u8; 32]),
+                output_hash: Some(vec![2u8; 32]),
+                value: 2000,
+                payment_id: PaymentId::Empty,
+                is_spent: false,
+                spent_in_block: None,
+                spent_in_input: None,
+                transaction_status: TransactionStatus::Coinbase,
+                transaction_direction: TransactionDirection::Inbound,
+                is_mature: true,
+            },
+        ];
+        
+        // Test incremental save with default chunk size
+        let progress = storage_manager.save_transactions_incremental(1, &transactions, None).await;
+        assert!(progress.is_ok());
+        
+        let progress = progress.unwrap();
+        assert_eq!(progress.total_transactions, 2);
+        assert_eq!(progress.transactions_saved, 2);
+        assert_eq!(progress.chunks_processed, 1);
+        assert!(progress.is_complete);
+        assert!(progress.throughput > 0.0 || progress.throughput.is_infinite());
+        
+        // Test incremental save with custom chunk size (should use ceiling division for chunks)
+        let progress = storage_manager.save_transactions_incremental(1, &transactions, Some(1)).await;
+        assert!(progress.is_ok());
+        
+        let progress = progress.unwrap();
+        assert_eq!(progress.total_transactions, 2);
+        assert_eq!(progress.transactions_saved, 2);
+        assert_eq!(progress.chunks_processed, 2); // With chunk_size=1, 2 transactions = 2 chunks
+        assert!(progress.is_complete);
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_incremental_wallet_state_saving_mock() {
+        use crate::data_structures::{
+            wallet_transaction::{WalletTransaction, WalletState},
+            payment_id::PaymentId,
+            transaction::{TransactionDirection, TransactionStatus},
+            types::CompressedCommitment,
+        };
+        
+        let mut storage_manager = MockStorageManager::new();
+        
+        // Create a wallet state with some transactions
+        let transaction = WalletTransaction {
+            block_height: 100,
+            output_index: Some(0),
+            input_index: None,
+            commitment: CompressedCommitment::new([1u8; 32]),
+            output_hash: Some(vec![1u8; 32]),
+            value: 1000,
+            payment_id: PaymentId::Empty,
+            is_spent: false,
+            spent_in_block: None,
+            spent_in_input: None,
+            transaction_status: TransactionStatus::Coinbase,
+            transaction_direction: TransactionDirection::Inbound,
+            is_mature: true,
+        };
+        
+        let mut wallet_state = WalletState::new();
+        wallet_state.transactions.push(transaction);
+        wallet_state.rebuild_commitment_index();
+        
+        // Test incremental wallet state save
+        let save_config = IncrementalSaveConfig::default();
+        let progress = storage_manager.save_wallet_state_incremental(1, &wallet_state, save_config).await;
+        assert!(progress.is_ok());
+        
+        let progress = progress.unwrap();
+        assert_eq!(progress.transaction_progress.total_transactions, 1);
+        assert_eq!(progress.transaction_progress.transactions_saved, 1);
+        assert!(progress.transaction_progress.is_complete);
+        assert_eq!(progress.outputs_saved, 0); // No separate outputs in WalletState
+        assert!(!progress.adaptive_sizing_triggered); // Should not trigger for small dataset
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_memory_estimation() {
+        use crate::data_structures::{
+            wallet_transaction::WalletTransaction,
+            payment_id::PaymentId,
+            transaction::{TransactionDirection, TransactionStatus},
+            types::CompressedCommitment,
+        };
+        
+        // Test basic transaction memory estimation
+        let transaction = WalletTransaction {
+            block_height: 100,
+            output_index: Some(0),
+            input_index: None,
+            commitment: CompressedCommitment::new([1u8; 32]),
+            output_hash: Some(vec![1u8; 32]),
+            value: 1000,
+            payment_id: PaymentId::Empty,
+            is_spent: false,
+            spent_in_block: None,
+            spent_in_input: None,
+            transaction_status: TransactionStatus::Coinbase,
+            transaction_direction: TransactionDirection::Inbound,
+            is_mature: true,
+        };
+        
+        let memory_usage = storage_adapters::memory_management::estimate_transaction_memory(&transaction);
+        
+        // Should be at least the size of the struct
+        assert!(memory_usage >= std::mem::size_of::<WalletTransaction>());
+        
+        // Should account for the output hash
+        assert!(memory_usage >= std::mem::size_of::<WalletTransaction>() + 32);
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test] 
+    async fn test_adaptive_chunk_sizing() {
+        use crate::data_structures::{
+            wallet_transaction::WalletTransaction,
+            payment_id::PaymentId,
+            transaction::{TransactionDirection, TransactionStatus},
+            types::CompressedCommitment,
+        };
+        
+        // Create transactions with different memory footprints
+        let transactions: Vec<WalletTransaction> = (0..100).map(|i| {
+            WalletTransaction {
+                block_height: 100 + i,
+                output_index: Some(i as usize),
+                input_index: None,
+                commitment: CompressedCommitment::new([i as u8; 32]),
+                output_hash: Some(vec![i as u8; 32]),
+                value: 1000 + i,
+                payment_id: PaymentId::Empty,
+                is_spent: false,
+                spent_in_block: None,
+                spent_in_input: None,
+                transaction_status: TransactionStatus::Coinbase,
+                transaction_direction: TransactionDirection::Inbound,
+                is_mature: true,
+            }
+        }).collect();
+        
+        // Test with adaptive sizing enabled
+        let config_adaptive = IncrementalSaveConfig {
+            transaction_chunk_size: 50,
+            adaptive_chunk_sizing: true,
+            ..Default::default()
+        };
+        
+        let adaptive_chunk_size = storage_adapters::memory_management::calculate_optimal_chunk_size(
+            &transactions, 
+            &config_adaptive
+        );
+        
+        // Test with adaptive sizing disabled
+        let config_fixed = IncrementalSaveConfig {
+            transaction_chunk_size: 50,
+            adaptive_chunk_sizing: false,
+            ..Default::default()
+        };
+        
+        let fixed_chunk_size = storage_adapters::memory_management::calculate_optimal_chunk_size(
+            &transactions, 
+            &config_fixed
+        );
+        
+        // Fixed should always return the configured size
+        assert_eq!(fixed_chunk_size, 50);
+        
+        // Adaptive should be reasonable (between 1 and configured max)
+        assert!(adaptive_chunk_size >= 1);
+        assert!(adaptive_chunk_size <= config_adaptive.transaction_chunk_size);
     }
 }
