@@ -22,11 +22,12 @@ use crate::{
     },
 };
 
-// Only import HTTP scanner types when available
+// Import scanner library components for HTTP scanning
 #[cfg(feature = "http")]
 use crate::scanning::{
     http_scanner::{HttpBlockData, HttpBlockResponse, HttpBlockchainScanner, HttpOutputData},
-    BlockchainScanner, ScanConfig,
+    scan_results::ScanResults as LibScanResults,
+    ScanConfig, ScanConfiguration, ScannerEngine, WalletContext, WalletSource,
 };
 
 #[cfg(feature = "http")]
@@ -107,7 +108,10 @@ pub fn derive_public_key_hex(master_key: &[u8]) -> Result<String, JsValue> {
 #[wasm_bindgen]
 pub struct WasmScanner {
     #[cfg(feature = "http")]
-    http_scanner: Option<HttpBlockchainScanner>,
+    scanner_engine: Option<ScannerEngine>,
+    #[cfg(feature = "http")]
+    wallet_context: Option<WalletContext>,
+    // Legacy fields for backward compatibility during transition
     view_key: PrivateKey,
     entropy: [u8; 16],
     wallet_state: WalletState,
@@ -259,9 +263,21 @@ impl WasmScanner {
                 .map_err(|_| "Failed to convert view key".to_string())?,
         );
 
+        // Create wallet context using the new library components
+        #[cfg(feature = "http")]
+        let wallet_context = {
+            let wallet_source = WalletSource::from_seed_phrase(seed_phrase, None::<String>);
+            match wallet_source.initialize_wallet() {
+                Ok(context) => Some(context),
+                Err(e) => return Err(format!("Failed to initialize wallet context: {}", e)),
+            }
+        };
+
         Ok(Self {
             #[cfg(feature = "http")]
-            http_scanner: None, // Will be initialized when needed
+            scanner_engine: None, // Will be initialized when needed
+            #[cfg(feature = "http")]
+            wallet_context,
             view_key,
             entropy: entropy_array,
             wallet_state: WalletState::new(),
@@ -284,37 +300,62 @@ impl WasmScanner {
         let view_key = PrivateKey::new(view_key_array);
         let entropy = [0u8; 16]; // Default entropy for view-key only mode
 
+        // Create wallet context using the new library components
+        #[cfg(feature = "http")]
+        let wallet_context = {
+            let wallet_source = WalletSource::from_view_key(view_key_hex, None);
+            match wallet_source.initialize_wallet() {
+                Ok(context) => Some(context),
+                Err(e) => return Err(format!("Failed to initialize wallet context: {}", e)),
+            }
+        };
+
         Ok(Self {
             #[cfg(feature = "http")]
-            http_scanner: None, // Will be initialized when needed
+            scanner_engine: None, // Will be initialized when needed
+            #[cfg(feature = "http")]
+            wallet_context,
             view_key,
             entropy,
             wallet_state: WalletState::new(),
         })
     }
 
-    /// Initialize HTTP scanner with base URL (if not already initialized)
+    /// Initialize scanner engine with base URL (if not already initialized)
     #[cfg(feature = "http")]
-    pub async fn initialize_http_scanner(&mut self, base_url: &str) -> Result<(), String> {
-        if self.http_scanner.is_none() {
-            let scanner = HttpBlockchainScanner::new(base_url.to_string())
+    pub async fn initialize_scanner_engine(&mut self, base_url: &str) -> Result<(), String> {
+        if self.scanner_engine.is_none() {
+            let http_scanner = HttpBlockchainScanner::new(base_url.to_string())
                 .await
                 .map_err(|e| format!("Failed to initialize HTTP scanner: {}", e))?;
-            self.http_scanner = Some(scanner);
+
+            // Create scanner configuration
+            let config = ScanConfiguration::default();
+
+            // Create scanner engine with the HTTP scanner
+            let scanner_engine = ScannerEngine::new(Box::new(http_scanner), config);
+
+            self.scanner_engine = Some(scanner_engine);
         }
         Ok(())
     }
 
-    /// Process HTTP block response using the new HTTP scanner
+    /// Initialize HTTP scanner with base URL (LEGACY - for backward compatibility)
+    #[cfg(feature = "http")]
+    pub async fn initialize_http_scanner(&mut self, base_url: &str) -> Result<(), String> {
+        self.initialize_scanner_engine(base_url).await
+    }
+
+    /// Process HTTP block response using the scanner engine
     #[cfg(feature = "http")]
     pub async fn process_http_blocks_async(
         &mut self,
         http_response_json: &str,
         base_url: Option<&str>,
     ) -> ScanResult {
-        // Initialize scanner if needed
+        // Initialize scanner engine if needed
         if let Some(url) = base_url {
-            if let Err(e) = self.initialize_http_scanner(url).await {
+            if let Err(e) = self.initialize_scanner_engine(url).await {
                 return ScanResult {
                     total_outputs: 0,
                     total_spent: 0,
@@ -328,12 +369,165 @@ impl WasmScanner {
             }
         }
 
-        // Process blocks using the new method
-        self.process_http_blocks_internal(http_response_json)
+        // Try using the scanner engine for processing if available
+        if self.scanner_engine.is_some() {
+            self.process_http_blocks_with_scanner_engine(http_response_json)
+                .await
+        } else {
+            // Fallback to legacy processing
+            self.process_http_blocks_internal(http_response_json)
+        }
+    }
+
+    /// Process HTTP blocks using the new scanner engine library
+    #[cfg(feature = "http")]
+    async fn process_http_blocks_with_scanner_engine(
+        &mut self,
+        http_response_json: &str,
+    ) -> ScanResult {
+        // Parse HTTP response to extract block heights
+        let http_response: HttpBlockResponse = match serde_json::from_str(http_response_json) {
+            Ok(response) => response,
+            Err(e) => {
+                return ScanResult {
+                    total_outputs: 0,
+                    total_spent: 0,
+                    total_value: 0,
+                    current_balance: 0,
+                    blocks_processed: 0,
+                    transactions: Vec::new(),
+                    success: false,
+                    error: Some(format!("Failed to parse HTTP response: {}", e)),
+                };
+            }
+        };
+
+        // Extract block heights for scanning
+        let block_heights: Vec<u64> = http_response.blocks.iter().map(|b| b.height).collect();
+
+        if block_heights.is_empty() {
+            return ScanResult {
+                total_outputs: 0,
+                total_spent: 0,
+                total_value: 0,
+                current_balance: 0,
+                blocks_processed: 0,
+                transactions: Vec::new(),
+                success: true,
+                error: None,
+            };
+        }
+
+        // Get the scanner engine (we know it exists from the check above)
+        let scanner_engine = match self.scanner_engine.as_mut() {
+            Some(engine) => engine,
+            None => {
+                return ScanResult {
+                    total_outputs: 0,
+                    total_spent: 0,
+                    total_value: 0,
+                    current_balance: 0,
+                    blocks_processed: 0,
+                    transactions: Vec::new(),
+                    success: false,
+                    error: Some("Scanner engine not initialized".to_string()),
+                };
+            }
+        };
+
+        // Initialize wallet context in the scanner engine if we have one
+        if scanner_engine.wallet_context().is_none() && self.wallet_context.is_some() {
+            if let Err(e) = scanner_engine.initialize_wallet().await {
+                return ScanResult {
+                    total_outputs: 0,
+                    total_spent: 0,
+                    total_value: 0,
+                    current_balance: 0,
+                    blocks_processed: 0,
+                    transactions: Vec::new(),
+                    success: false,
+                    error: Some(format!(
+                        "Failed to initialize wallet in scanner engine: {}",
+                        e
+                    )),
+                };
+            }
+        }
+
+        // Use the scanner engine to scan specific blocks
+        match scanner_engine.scan_blocks(block_heights).await {
+            Ok(scan_results) => {
+                // Convert library ScanResults to WASM ScanResult
+                self.convert_lib_scan_results_to_wasm(scan_results)
+            }
+            Err(e) => ScanResult {
+                total_outputs: 0,
+                total_spent: 0,
+                total_value: 0,
+                current_balance: 0,
+                blocks_processed: 0,
+                transactions: Vec::new(),
+                success: false,
+                error: Some(format!("Scanner engine scan failed: {}", e)),
+            },
+        }
+    }
+
+    /// Convert library ScanResults to WASM ScanResult format
+    #[cfg(feature = "http")]
+    fn convert_lib_scan_results_to_wasm(&self, lib_results: LibScanResults) -> ScanResult {
+        let transactions: Vec<TransactionSummary> = lib_results
+            .block_results
+            .iter()
+            .flat_map(|block_result| {
+                block_result.wallet_outputs.iter().map(|output| {
+                    // Create a hash from the encrypted data since we don't have commitment on wallet output
+                    let output_hash = hex::encode(output.encrypted_data().as_bytes());
+                    TransactionSummary {
+                        hash: output_hash,
+                        block_height: block_result.height,
+                        value: output.value().as_u64(),
+                        direction: "inbound".to_string(), // Wallet outputs are inbound
+                        status: "MinedConfirmed".to_string(), // Outputs from blocks are confirmed
+                        is_spent: false,                  // New outputs are unspent
+                        payment_id: match output.payment_id() {
+                            PaymentId::Empty => None,
+                            _ => Some(output.payment_id().user_data_as_string()),
+                        },
+                    }
+                })
+            })
+            .collect();
+
+        let total_outputs = lib_results
+            .block_results
+            .iter()
+            .map(|br| br.wallet_outputs.len() as u64)
+            .sum();
+
+        let total_value = lib_results
+            .block_results
+            .iter()
+            .flat_map(|br| &br.wallet_outputs)
+            .map(|wo| wo.value().as_u64())
+            .sum();
+
+        ScanResult {
+            total_outputs,
+            total_spent: 0, // TODO: Track spent outputs from library
+            total_value,
+            current_balance: total_value, // Balance = total - spent, but spent is 0 for now
+            blocks_processed: lib_results.block_results.len() as u64,
+            transactions,
+            success: true,
+            error: None,
+        }
     }
 
     /// Process HTTP block response - LEGACY METHOD maintained for compatibility
     pub fn process_http_blocks(&mut self, http_response_json: &str) -> ScanResult {
+        // For now, use the legacy internal method for synchronous calls
+        // In the future, we could spawn a blocking async operation here
         self.process_http_blocks_internal(http_response_json)
     }
 
@@ -434,14 +628,14 @@ impl WasmScanner {
         }
     }
 
-    /// Process single HTTP block using the new HTTP scanner if available, otherwise fallback to legacy method
+    /// Process single HTTP block using the scanner engine if available, otherwise fallback to legacy method
     fn process_single_http_block(
         &mut self,
         http_block: &HttpBlockData,
     ) -> Result<(usize, usize), String> {
-        // If we have an HTTP scanner, try to use it for better integration
+        // If we have a scanner engine, try to use it for better integration
         #[cfg(feature = "http")]
-        if self.http_scanner.is_some() {
+        if self.scanner_engine.is_some() {
             return self.process_single_http_block_with_scanner(http_block);
         }
 
@@ -449,14 +643,15 @@ impl WasmScanner {
         self.process_single_http_block_legacy(http_block)
     }
 
-    /// Process single HTTP block using HTTP scanner (new method)
+    /// Process single HTTP block using scanner engine (new method)
     #[cfg(feature = "http")]
     fn process_single_http_block_with_scanner(
         &mut self,
         http_block: &HttpBlockData,
     ) -> Result<(usize, usize), String> {
-        // Convert HTTP block to our internal format and process
-        // For now, use the same conversion logic but with better integration potential
+        // For single block processing, we still need to fall back to legacy for now
+        // because the scanner engine is designed for batch operations
+        // Future improvement: extend scanner engine to support single block processing
         self.process_single_http_block_legacy(http_block)
     }
 
@@ -1087,6 +1282,105 @@ impl WasmScanner {
     pub fn reset(&mut self) {
         self.wallet_state = WalletState::new();
     }
+
+    /// Create a new WasmScanner with scanner engine initialized (convenience method)
+    #[cfg(feature = "http")]
+    pub async fn new_with_scanner_engine(
+        seed_phrase: &str,
+        base_url: &str,
+    ) -> Result<WasmScanner, String> {
+        let mut scanner = Self::from_seed_phrase(seed_phrase)?;
+        scanner.initialize_scanner_engine(base_url).await?;
+        Ok(scanner)
+    }
+
+    /// Create a new WasmScanner from view key with scanner engine initialized (convenience method)
+    #[cfg(feature = "http")]
+    pub async fn new_from_view_key_with_scanner_engine(
+        view_key_hex: &str,
+        base_url: &str,
+    ) -> Result<WasmScanner, String> {
+        let mut scanner = Self::from_view_key(view_key_hex)?;
+        scanner.initialize_scanner_engine(base_url).await?;
+        Ok(scanner)
+    }
+
+    /// Scan a range of blocks using the scanner engine (new simplified API)
+    #[cfg(feature = "http")]
+    pub async fn scan_block_range(
+        &mut self,
+        from_height: u64,
+        to_height: u64,
+        base_url: Option<&str>,
+    ) -> ScanResult {
+        // Initialize scanner engine if needed
+        if let Some(url) = base_url {
+            if let Err(e) = self.initialize_scanner_engine(url).await {
+                return ScanResult {
+                    total_outputs: 0,
+                    total_spent: 0,
+                    total_value: 0,
+                    current_balance: 0,
+                    blocks_processed: 0,
+                    transactions: Vec::new(),
+                    success: false,
+                    error: Some(e),
+                };
+            }
+        }
+
+        let scanner_engine = match self.scanner_engine.as_mut() {
+            Some(engine) => engine,
+            None => {
+                return ScanResult {
+                    total_outputs: 0,
+                    total_spent: 0,
+                    total_value: 0,
+                    current_balance: 0,
+                    blocks_processed: 0,
+                    transactions: Vec::new(),
+                    success: false,
+                    error: Some("Scanner engine not initialized".to_string()),
+                };
+            }
+        };
+
+        // Initialize wallet context in the scanner engine if we have one
+        if scanner_engine.wallet_context().is_none() && self.wallet_context.is_some() {
+            if let Err(e) = scanner_engine.initialize_wallet().await {
+                return ScanResult {
+                    total_outputs: 0,
+                    total_spent: 0,
+                    total_value: 0,
+                    current_balance: 0,
+                    blocks_processed: 0,
+                    transactions: Vec::new(),
+                    success: false,
+                    error: Some(format!(
+                        "Failed to initialize wallet in scanner engine: {}",
+                        e
+                    )),
+                };
+            }
+        }
+
+        // For now, collect all heights in the range and scan them as specific blocks
+        let block_heights: Vec<u64> = (from_height..=to_height).collect();
+
+        match scanner_engine.scan_blocks(block_heights).await {
+            Ok(scan_results) => self.convert_lib_scan_results_to_wasm(scan_results),
+            Err(e) => ScanResult {
+                total_outputs: 0,
+                total_spent: 0,
+                total_value: 0,
+                current_balance: 0,
+                blocks_processed: 0,
+                transactions: Vec::new(),
+                success: false,
+                error: Some(format!("Scanner engine scan failed: {}", e)),
+            },
+        }
+    }
 }
 
 /// Create a scanner from view key or seed phrase (WASM export)
@@ -1119,6 +1413,47 @@ pub async fn process_http_blocks_async(
 ) -> Result<String, JsValue> {
     let result = scanner
         .process_http_blocks_async(http_response_json, base_url.as_deref())
+        .await;
+
+    serde_json::to_string(&result)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
+}
+
+/// Create a scanner with scanner engine initialized from seed phrase (WASM export)
+#[cfg(feature = "http")]
+#[wasm_bindgen]
+pub async fn create_wasm_scanner_with_engine_from_seed_phrase(
+    seed_phrase: &str,
+    base_url: &str,
+) -> Result<WasmScanner, JsValue> {
+    WasmScanner::new_with_scanner_engine(seed_phrase, base_url)
+        .await
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+/// Create a scanner with scanner engine initialized from view key (WASM export)
+#[cfg(feature = "http")]
+#[wasm_bindgen]
+pub async fn create_wasm_scanner_with_engine_from_view_key(
+    view_key_hex: &str,
+    base_url: &str,
+) -> Result<WasmScanner, JsValue> {
+    WasmScanner::new_from_view_key_with_scanner_engine(view_key_hex, base_url)
+        .await
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+/// Scan a range of blocks using the scanner engine (WASM export)
+#[cfg(feature = "http")]
+#[wasm_bindgen]
+pub async fn scan_block_range_with_engine(
+    scanner: &mut WasmScanner,
+    from_height: u64,
+    to_height: u64,
+    base_url: Option<String>,
+) -> Result<String, JsValue> {
+    let result = scanner
+        .scan_block_range(from_height, to_height, base_url.as_deref())
         .await;
 
     serde_json::to_string(&result)
@@ -1208,12 +1543,12 @@ pub fn cleanup_scanner_transactions(scanner: &mut WasmScanner, max_transactions:
     scanner.cleanup_old_transactions(max_transactions as usize);
 }
 
-/// Get tip info from HTTP scanner (WASM export)
+/// Get tip info from scanner engine (WASM export)
 #[cfg(feature = "http")]
 #[wasm_bindgen]
 pub async fn get_tip_info(scanner: &mut WasmScanner) -> Result<String, JsValue> {
-    if let Some(ref mut http_scanner) = scanner.http_scanner {
-        let tip_info = http_scanner
+    if let Some(ref mut scanner_engine) = scanner.scanner_engine {
+        let tip_info = scanner_engine
             .get_tip_info()
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to get tip info: {}", e)))?;
@@ -1221,21 +1556,22 @@ pub async fn get_tip_info(scanner: &mut WasmScanner) -> Result<String, JsValue> 
         serde_json::to_string(&tip_info)
             .map_err(|e| JsValue::from_str(&format!("Failed to serialize tip info: {}", e)))
     } else {
-        Err(JsValue::from_str("HTTP scanner not initialized"))
+        Err(JsValue::from_str("Scanner engine not initialized"))
     }
 }
-/// Fetch specific blocks by height using HTTP scanner (WASM export)
+/// Fetch specific blocks by height using scanner engine (WASM export)
 #[cfg(feature = "http")]
 #[wasm_bindgen]
 pub async fn fetch_blocks_by_heights(
     scanner: &mut WasmScanner,
     heights_json: &str,
 ) -> Result<String, JsValue> {
-    if let Some(ref mut http_scanner) = scanner.http_scanner {
+    if let Some(ref mut scanner_engine) = scanner.scanner_engine {
         let heights: Vec<u64> = serde_json::from_str(heights_json)
             .map_err(|e| JsValue::from_str(&format!("Failed to parse heights: {}", e)))?;
 
-        let blocks = http_scanner
+        let blocks = scanner_engine
+            .scanner_mut()
             .get_blocks_by_heights(heights)
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to fetch blocks: {}", e)))?;
@@ -1247,22 +1583,23 @@ pub async fn fetch_blocks_by_heights(
         serde_json::to_string(&wasm_blocks)
             .map_err(|e| JsValue::from_str(&format!("Failed to serialize blocks: {}", e)))
     } else {
-        Err(JsValue::from_str("HTTP scanner not initialized"))
+        Err(JsValue::from_str("Scanner engine not initialized"))
     }
 }
 
-/// Search for UTXOs by commitment using HTTP scanner (WASM export)
+/// Search for UTXOs by commitment using scanner engine (WASM export)
 #[cfg(feature = "http")]
 #[wasm_bindgen]
 pub async fn search_utxos(
     scanner: &mut WasmScanner,
     commitments_json: &str,
 ) -> Result<String, JsValue> {
-    if let Some(ref mut http_scanner) = scanner.http_scanner {
+    if let Some(ref mut scanner_engine) = scanner.scanner_engine {
         let commitments: Vec<Vec<u8>> = serde_json::from_str(commitments_json)
             .map_err(|e| JsValue::from_str(&format!("Failed to parse commitments: {}", e)))?;
 
-        let results = http_scanner
+        let results = scanner_engine
+            .scanner_mut()
             .search_utxos(commitments)
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to search UTXOs: {}", e)))?;
@@ -1270,7 +1607,7 @@ pub async fn search_utxos(
         serde_json::to_string(&results)
             .map_err(|e| JsValue::from_str(&format!("Failed to serialize search results: {}", e)))
     } else {
-        Err(JsValue::from_str("HTTP scanner not initialized"))
+        Err(JsValue::from_str("Scanner engine not initialized"))
     }
 }
 

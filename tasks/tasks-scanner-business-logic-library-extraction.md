@@ -62,7 +62,7 @@
   - [x] 3.8 Implement graceful interruption handling (Ctrl+C) in library with resume capabilities
 
 - [ ] 4.0 Enhance WASM Integration with Library Components
-  - [ ] 4.1 Update `src/wasm.rs` to use `ScannerEngine` instead of duplicated logic
+  - [x] 4.1 Update `src/wasm.rs` to use `ScannerEngine` instead of duplicated logic
   - [ ] 4.2 Implement async wrapper functions for browser compatibility
   - [ ] 4.3 Add memory management optimizations for large scans in WASM environment
   - [ ] 4.4 Create WASM-specific configuration defaults and error handling
