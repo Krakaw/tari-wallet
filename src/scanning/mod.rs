@@ -308,6 +308,9 @@ pub struct BlockInfo {
     pub inputs: Vec<TransactionInput>,
     /// Transaction kernels in this block
     pub kernels: Vec<TransactionKernel>,
+    /// Original HTTP output hashes (for HTTP scanner compatibility)
+    /// This preserves the exact output hashes from HTTP API for accurate spending detection
+    pub http_output_hashes: Option<Vec<Vec<u8>>>,
 }
 
 /// Blockchain scanner trait for scanning UTXOs

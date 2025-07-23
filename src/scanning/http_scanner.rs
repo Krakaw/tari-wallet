@@ -447,6 +447,15 @@ impl HttpBlockchainScanner {
             .transpose()?
             .unwrap_or_default();
 
+        // Preserve original HTTP output hashes for accurate spending detection
+        let http_output_hashes = Some(
+            http_block
+                .outputs
+                .iter()
+                .map(|output| output.output_hash.clone())
+                .collect::<Vec<Vec<u8>>>(),
+        );
+
         Ok(BlockInfo {
             height: http_block.height,
             hash: http_block.header_hash.clone(),
@@ -454,6 +463,7 @@ impl HttpBlockchainScanner {
             outputs,
             inputs,
             kernels: Vec::new(), // HTTP API doesn't provide kernels in this format
+            http_output_hashes,
         })
     }
 

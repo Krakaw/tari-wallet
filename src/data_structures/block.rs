@@ -43,6 +43,8 @@ pub struct Block {
     pub outputs: Vec<LightweightTransactionOutput>,
     /// Transaction inputs in this block  
     pub inputs: Vec<TransactionInput>,
+    /// Original HTTP output hashes (for HTTP scanner compatibility)
+    pub http_output_hashes: Option<Vec<Vec<u8>>>,
 }
 
 /// Result of processing a single output
@@ -65,6 +67,7 @@ impl Block {
             timestamp: block_info.timestamp,
             outputs: block_info.outputs,
             inputs: block_info.inputs,
+            http_output_hashes: block_info.http_output_hashes,
         }
     }
 
@@ -82,6 +85,26 @@ impl Block {
             timestamp,
             outputs,
             inputs,
+            http_output_hashes: None,
+        }
+    }
+
+    /// Create a new Block with HTTP output hashes
+    pub fn new_with_http_hashes(
+        height: u64,
+        hash: Vec<u8>,
+        timestamp: u64,
+        outputs: Vec<LightweightTransactionOutput>,
+        inputs: Vec<TransactionInput>,
+        http_output_hashes: Option<Vec<Vec<u8>>>,
+    ) -> Self {
+        Self {
+            height,
+            hash,
+            timestamp,
+            outputs,
+            inputs,
+            http_output_hashes,
         }
     }
 
@@ -93,6 +116,24 @@ impl Block {
         view_key: &PrivateKey,
         _entropy: &[u8; 16],
         wallet_state: &mut WalletState,
+    ) -> LightweightWalletResult<usize> {
+        // Use HTTP output hashes if available, otherwise use None
+        let http_hashes = self
+            .http_output_hashes
+            .as_ref()
+            .map(|hashes| hashes.as_slice());
+        self.process_outputs_with_hashes(view_key, _entropy, wallet_state, http_hashes)
+    }
+
+    /// Process all outputs in this block with optional HTTP output hashes preservation
+    ///
+    /// This method allows preserving original output hashes from HTTP responses for accurate spending detection
+    pub fn process_outputs_with_hashes(
+        &self,
+        view_key: &PrivateKey,
+        _entropy: &[u8; 16],
+        wallet_state: &mut WalletState,
+        http_output_hashes: Option<&[Vec<u8>]>,
     ) -> LightweightWalletResult<usize> {
         if self.outputs.is_empty() {
             return Ok(0);
@@ -123,11 +164,22 @@ impl Block {
         // Add all found outputs to wallet state
         let found_count = results.len();
         for result in results {
+            // Use HTTP output hash if available, otherwise calculate from transaction output
+            let output_hash = if let Some(hashes) = http_output_hashes {
+                if result.output_index < hashes.len() {
+                    Some(hashes[result.output_index].clone())
+                } else {
+                    Some(self.outputs[result.output_index].hash().to_vec())
+                }
+            } else {
+                Some(self.outputs[result.output_index].hash().to_vec())
+            };
+
             wallet_state.add_received_output(
                 self.height,
                 result.output_index,
                 self.outputs[result.output_index].commitment.clone(),
-                Some(self.outputs[result.output_index].hash().to_vec()), // Include calculated output hash
+                output_hash, // Use preserved HTTP output hash or calculated hash
                 result.value,
                 result.payment_id,
                 result.transaction_status,

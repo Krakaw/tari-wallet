@@ -715,6 +715,13 @@ impl WasmScanner {
 
         let block_hash = http_block.header_hash.clone();
 
+        // Extract original HTTP output hashes for preservation
+        let http_output_hashes: Vec<Vec<u8>> = http_block
+            .outputs
+            .iter()
+            .map(|output| output.output_hash.clone())
+            .collect();
+
         // Create Block using the same constructor as the scanner engine
         let block = Block::new(
             http_block.height,
@@ -724,9 +731,14 @@ impl WasmScanner {
             inputs,
         );
 
-        // Process the block properly to update wallet state
+        // Process the block with preserved HTTP output hashes for accurate spending detection
         let found_outputs = block
-            .process_outputs(&self.view_key, &self.entropy, &mut self.wallet_state)
+            .process_outputs_with_hashes(
+                &self.view_key,
+                &self.entropy,
+                &mut self.wallet_state,
+                Some(&http_output_hashes),
+            )
             .map_err(|e| format!("Failed to process outputs: {}", e))?;
 
         let spent_outputs = block
