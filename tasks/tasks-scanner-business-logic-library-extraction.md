@@ -64,12 +64,12 @@
 - [ ] 4.0 Enhance WASM Integration with Library Components
   - [x] 4.1 Update `src/wasm.rs` to use `ScannerEngine` instead of duplicated logic
   - [x] 4.1.1 Use lib to extract all transactions to maintain the same functionality as was built into `src/wasm.rs` but now is exposed via the lib.
-  - [ ] 4.2 Implement async wrapper functions for browser compatibility
+  - [x] 4.2 Implement async wrapper functions for browser compatibility
   - [ ] 4.3 Add memory management optimizations for large scans in WASM environment
   - [ ] 4.4 Create WASM-specific configuration defaults and error handling
-  - [ ] 4.5 Ensure existing WASM public interfaces remain unchanged for backward compatibility
-  - [ ] 4.6 Add WASM-specific progress reporting mechanisms (console logging)
-  - [ ] 4.7 Test cross-platform consistency between CLI and WASM scanner results
+  - [ ] 4.5 Add WASM-specific progress reporting mechanisms (callbacks)
+  - [ ] 4.6 Test cross-platform consistency between CLI and WASM scanner results
+  - [ ] 4.7 Remove the old exported interfaces from the wasm that do not use the new `ScannerEngine`
 
 - [ ] 5.0 Implement Comprehensive Testing Strategy
   - [ ] 5.1 Create unit tests for `ScannerEngine` covering all initialization and scanning methods

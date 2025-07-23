@@ -118,10 +118,7 @@ impl Block {
         wallet_state: &mut WalletState,
     ) -> LightweightWalletResult<usize> {
         // Use HTTP output hashes if available, otherwise use None
-        let http_hashes = self
-            .http_output_hashes
-            .as_ref()
-            .map(|hashes| hashes.as_slice());
+        let http_hashes = self.http_output_hashes.as_deref();
         self.process_outputs_with_hashes(view_key, _entropy, wallet_state, http_hashes)
     }
 
@@ -553,6 +550,7 @@ mod tests {
             outputs: vec![],
             inputs: vec![],
             kernels: vec![],
+            http_output_hashes: None,
         };
 
         let block = Block::from_block_info(block_info);

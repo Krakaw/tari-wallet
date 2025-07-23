@@ -8,8 +8,6 @@
 //! The GRPC scanner supports wallet key integration for identifying outputs that belong
 //! to a specific wallet.
 
-#![cfg(feature = "grpc")]
-
 use async_trait::async_trait;
 use std::time::Duration;
 use tari_utilities::ByteArray;

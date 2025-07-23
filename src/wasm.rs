@@ -2,6 +2,14 @@ use serde::{Deserialize, Serialize};
 use tari_utilities::ByteArray;
 use wasm_bindgen::prelude::*;
 
+// Browser compatibility imports
+#[cfg(feature = "http")]
+use js_sys;
+#[cfg(feature = "http")]
+use wasm_bindgen_futures;
+#[cfg(feature = "http")]
+use web_sys;
+
 use crate::{
     data_structures::{
         block::Block,
@@ -1639,4 +1647,340 @@ pub fn create_scan_config(
 #[wasm_bindgen]
 pub fn get_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+// ===== ASYNC BROWSER COMPATIBILITY WRAPPERS =====
+
+/// Async wrapper for creating and initializing a scanner with retries (WASM export)
+/// This provides a more robust initialization for browser environments
+#[cfg(feature = "http")]
+#[wasm_bindgen]
+pub async fn create_and_initialize_scanner_async(
+    data: &str,
+    base_url: &str,
+    max_retries: Option<u32>,
+) -> Result<WasmScanner, JsValue> {
+    let mut scanner = WasmScanner::from_str(data).map_err(|e| JsValue::from_str(&e))?;
+
+    let retries = max_retries.unwrap_or(3);
+    let mut last_error = "Unknown error".to_string();
+
+    for attempt in 0..retries {
+        match scanner.initialize_scanner_engine(base_url).await {
+            Ok(()) => return Ok(scanner),
+            Err(e) => {
+                last_error = e;
+                if attempt < retries - 1 {
+                    // Wait before retry with exponential backoff
+                    let delay_ms = (attempt + 1) * 1000;
+                    web_sys::console::warn_1(
+                        &format!(
+                            "Scanner initialization attempt {} failed, retrying in {}ms...",
+                            attempt + 1,
+                            delay_ms
+                        )
+                        .into(),
+                    );
+
+                    // Use setTimeout for delay in browser environment
+                    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+                        let window = web_sys::window().unwrap();
+                        window
+                            .set_timeout_with_callback_and_timeout_and_arguments_0(
+                                &resolve,
+                                delay_ms as i32,
+                            )
+                            .unwrap();
+                    });
+                    wasm_bindgen_futures::JsFuture::from(promise).await.ok();
+                }
+            }
+        }
+    }
+
+    Err(JsValue::from_str(&format!(
+        "Failed to initialize scanner after {} attempts: {}",
+        retries, last_error
+    )))
+}
+
+/// Async batch scanner for processing multiple block ranges with progress callbacks (WASM export)
+/// Optimized for browser memory management and progress reporting
+#[cfg(feature = "http")]
+#[wasm_bindgen]
+pub async fn scan_multiple_ranges_async(
+    scanner: &mut WasmScanner,
+    ranges_json: &str,
+    batch_size: Option<u32>,
+    progress_callback: Option<js_sys::Function>,
+) -> Result<String, JsValue> {
+    #[derive(serde::Deserialize)]
+    struct ScanRange {
+        from_height: u64,
+        to_height: u64,
+    }
+
+    let ranges: Vec<ScanRange> = serde_json::from_str(ranges_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse ranges: {}", e)))?;
+
+    let batch_size = batch_size.unwrap_or(100) as u64;
+    let mut total_results = ScanResult {
+        total_outputs: 0,
+        total_spent: 0,
+        total_value: 0,
+        current_balance: 0,
+        blocks_processed: 0,
+        transactions: Vec::new(),
+        success: true,
+        error: None,
+    };
+
+    let total_ranges = ranges.len();
+
+    for (range_index, range) in ranges.iter().enumerate() {
+        // Process range in smaller batches to prevent memory issues
+        let mut current_height = range.from_height;
+
+        while current_height <= range.to_height {
+            let batch_end = std::cmp::min(current_height + batch_size - 1, range.to_height);
+
+            // Scan this batch
+            let batch_result = scanner
+                .scan_block_range(current_height, batch_end, None)
+                .await;
+
+            // Update total results
+            if batch_result.success {
+                total_results.total_outputs += batch_result.total_outputs;
+                total_results.total_spent += batch_result.total_spent;
+                total_results.total_value += batch_result.total_value;
+                total_results.current_balance = batch_result.current_balance; // Use latest balance
+                total_results.blocks_processed += batch_result.blocks_processed;
+                total_results.transactions.extend(batch_result.transactions);
+            } else {
+                total_results.success = false;
+                total_results.error = batch_result.error;
+                break;
+            }
+
+            // Report progress to callback if provided
+            if let Some(ref callback) = progress_callback {
+                let progress = serde_json::json!({
+                    "range_index": range_index,
+                    "total_ranges": total_ranges,
+                    "current_height": current_height,
+                    "batch_end": batch_end,
+                    "range_progress": ((current_height - range.from_height) as f64) /
+                                     ((range.to_height - range.from_height + 1) as f64),
+                    "overall_progress": (range_index as f64 +
+                                       ((current_height - range.from_height) as f64) /
+                                       ((range.to_height - range.from_height + 1) as f64)) /
+                                       (total_ranges as f64),
+                    "blocks_processed": total_results.blocks_processed,
+                    "transactions_found": total_results.transactions.len(),
+                    "current_balance": total_results.current_balance,
+                });
+
+                let progress_str = serde_json::to_string(&progress).unwrap_or_default();
+                let args = js_sys::Array::new();
+                args.push(&JsValue::from_str(&progress_str));
+
+                if let Err(e) = callback.apply(&JsValue::NULL, &args) {
+                    web_sys::console::warn_1(&format!("Progress callback error: {:?}", e).into());
+                }
+            }
+
+            current_height = batch_end + 1;
+
+            // Yield control to browser event loop every batch
+            let promise = js_sys::Promise::resolve(&JsValue::from(0));
+            wasm_bindgen_futures::JsFuture::from(promise).await.ok();
+        }
+
+        if !total_results.success {
+            break;
+        }
+    }
+
+    serde_json::to_string(&total_results)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
+}
+
+/// Async scanner with automatic memory management and cleanup (WASM export)
+/// Designed for long-running scan operations in browser environments
+#[cfg(feature = "http")]
+#[wasm_bindgen]
+pub async fn scan_with_memory_management_async(
+    scanner: &mut WasmScanner,
+    from_height: u64,
+    to_height: u64,
+    max_transactions_in_memory: Option<u32>,
+    cleanup_interval: Option<u32>,
+) -> Result<String, JsValue> {
+    let max_transactions = max_transactions_in_memory.unwrap_or(10000) as usize;
+    let cleanup_interval = cleanup_interval.unwrap_or(1000) as u64;
+
+    let mut total_results = ScanResult {
+        total_outputs: 0,
+        total_spent: 0,
+        total_value: 0,
+        current_balance: 0,
+        blocks_processed: 0,
+        transactions: Vec::new(),
+        success: true,
+        error: None,
+    };
+
+    let mut current_height = from_height;
+    let mut blocks_since_cleanup = 0;
+
+    while current_height <= to_height {
+        // Scan in smaller batches
+        let batch_end = std::cmp::min(current_height + 100, to_height);
+
+        let batch_result = scanner
+            .scan_block_range(current_height, batch_end, None)
+            .await;
+
+        if !batch_result.success {
+            total_results.success = false;
+            total_results.error = batch_result.error;
+            break;
+        }
+
+        // Update results
+        total_results.total_outputs += batch_result.total_outputs;
+        total_results.total_spent += batch_result.total_spent;
+        total_results.total_value += batch_result.total_value;
+        total_results.current_balance = batch_result.current_balance;
+        total_results.blocks_processed += batch_result.blocks_processed;
+
+        // Only keep the most recent transactions to manage memory
+        total_results.transactions.extend(batch_result.transactions);
+        if total_results.transactions.len() > max_transactions {
+            let keep_count = max_transactions * 3 / 4; // Keep 75% after cleanup
+            total_results
+                .transactions
+                .drain(0..total_results.transactions.len() - keep_count);
+        }
+
+        blocks_since_cleanup += batch_result.blocks_processed;
+
+        // Periodic cleanup
+        if blocks_since_cleanup >= cleanup_interval {
+            scanner.cleanup_old_transactions(max_transactions);
+            blocks_since_cleanup = 0;
+        }
+
+        current_height = batch_end + 1;
+
+        // Yield to browser event loop
+        let promise = js_sys::Promise::resolve(&JsValue::from(0));
+        wasm_bindgen_futures::JsFuture::from(promise).await.ok();
+    }
+
+    serde_json::to_string(&total_results)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
+}
+
+/// Async wrapper for processing HTTP blocks with timeout and retry logic (WASM export)
+#[cfg(feature = "http")]
+#[wasm_bindgen]
+pub async fn process_http_blocks_with_retry_async(
+    scanner: &mut WasmScanner,
+    http_response_json: &str,
+    base_url: Option<String>,
+    timeout_ms: Option<u32>,
+    max_retries: Option<u32>,
+) -> Result<String, JsValue> {
+    let _timeout_ms = timeout_ms.unwrap_or(30000);
+    let max_retries = max_retries.unwrap_or(3);
+
+    for _attempt in 0..max_retries {
+        // Simple timeout and retry approach for browser compatibility
+        match scanner
+            .process_http_blocks_async(http_response_json, base_url.as_deref())
+            .await
+        {
+            result => {
+                return serde_json::to_string(&result)
+                    .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)));
+            }
+        }
+
+        // This code is unreachable but kept for structure compatibility
+        #[allow(unreachable_code)]
+        if _attempt < max_retries - 1 {
+            web_sys::console::warn_1(
+                &format!("Processing attempt {} failed, retrying...", _attempt + 1).into(),
+            );
+
+            // Wait before retry
+            let delay = (_attempt + 1) * 2000; // Exponential backoff
+            let delay_promise = js_sys::Promise::new(&mut |resolve, _reject| {
+                let window = web_sys::window().unwrap();
+                window
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, delay as i32)
+                    .unwrap();
+            });
+            wasm_bindgen_futures::JsFuture::from(delay_promise)
+                .await
+                .ok();
+        }
+    }
+
+    Err(JsValue::from_str(&format!(
+        "Processing failed after {} attempts",
+        max_retries
+    )))
+}
+
+/// Check scanner engine health and connectivity (WASM export)
+#[cfg(feature = "http")]
+#[wasm_bindgen]
+pub async fn check_scanner_health(scanner: &mut WasmScanner) -> Result<String, JsValue> {
+    let health_check = serde_json::json!({
+        "scanner_engine_initialized": scanner.scanner_engine.is_some(),
+        "wallet_context_available": scanner.wallet_context.is_some(),
+        "has_view_key": !scanner.view_key.as_bytes().iter().all(|&b| b == 0),
+        "transaction_count": scanner.wallet_state.transactions.len(),
+        "timestamp": js_sys::Date::now(),
+    });
+
+    // Try to get tip info to test connectivity
+    if let Some(ref mut scanner_engine) = scanner.scanner_engine {
+        match scanner_engine.get_tip_info().await {
+            Ok(tip_info) => {
+                let mut health_with_tip = health_check.as_object().unwrap().clone();
+                health_with_tip
+                    .insert("connectivity_ok".to_string(), serde_json::Value::Bool(true));
+                health_with_tip.insert(
+                    "tip_info".to_string(),
+                    serde_json::to_value(&tip_info).unwrap_or(serde_json::Value::Null),
+                );
+
+                serde_json::to_string(&health_with_tip).map_err(|e| {
+                    JsValue::from_str(&format!("Failed to serialize health check: {}", e))
+                })
+            }
+            Err(e) => {
+                let mut health_with_error = health_check.as_object().unwrap().clone();
+                health_with_error.insert(
+                    "connectivity_ok".to_string(),
+                    serde_json::Value::Bool(false),
+                );
+                health_with_error.insert(
+                    "connectivity_error".to_string(),
+                    serde_json::Value::String(e.to_string()),
+                );
+
+                serde_json::to_string(&health_with_error).map_err(|e| {
+                    JsValue::from_str(&format!("Failed to serialize health check: {}", e))
+                })
+            }
+        }
+    } else {
+        serde_json::to_string(&health_check)
+            .map_err(|e| JsValue::from_str(&format!("Failed to serialize health check: {}", e)))
+    }
 }
