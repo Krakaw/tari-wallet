@@ -13,6 +13,7 @@
 - `src/scanning/scan_results.test.rs` - Unit tests for scan results.
 - `tests/integration/scanner_library.rs` - Integration tests for end-to-end scanner functionality.
 - `src/error.rs` - Enhanced error types for scanner library components.
+- `docs/scanner-business-logic-analysis.md` - Comprehensive analysis of all business logic components in the scanner binary that need to be extracted into library components.
 
 ### Notes
 
@@ -46,7 +47,7 @@
   - [x] 2.7 Handle database vs memory-only storage mode configuration
 
 - [ ] 3.0 Extract Business Logic from CLI Scanner
-  - [ ] 3.1 Analyze existing `src/bin/scanner.rs` to identify all business logic components
+  - [x] 3.1 Analyze existing `src/bin/scanner.rs` to identify all business logic components
   - [ ] 3.2 Move wallet creation and selection logic to `ScannerEngine::initialize_wallet()`
   - [ ] 3.3 Move blockchain scanning coordination logic to `ScannerEngine::scan_range()` and `scan_blocks()`
   - [ ] 3.4 Extract progress reporting and output formatting to library components
