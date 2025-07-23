@@ -109,12 +109,17 @@ impl StorageManager for MockStorageManager {
 mod storage_adapters {
     use super::*;
     use std::sync::Arc;
+    #[cfg(not(target_arch = "wasm32"))]
     use tokio::sync::mpsc;
     use std::time::{Duration, Instant};
     use crate::storage::WalletStorage;
     use crate::errors::LightweightWalletError;
 
     /// Background writer adapter for high-performance scanning with non-blocking writes
+    /// 
+    /// This adapter is only available on native platforms (not WASM) due to its dependency on tokio.
+    /// For WASM environments, use DirectStorageAdapter instead.
+    #[cfg(not(target_arch = "wasm32"))]
     pub struct BackgroundWriterAdapter {
         /// Channel for sending storage commands to background task
         command_sender: mpsc::UnboundedSender<StorageCommand>,
@@ -126,8 +131,167 @@ mod storage_adapters {
         _config: BackgroundWriterConfig,
     }
 
+    /// Shared storage handler functions for both adapters
+    mod storage_handlers {
+        use super::*;
+        
+        /// Handle saving scan results to storage
+        pub async fn handle_save_scan_results(
+            storage: &dyn WalletStorage,
+            results: &ScanResults,
+        ) -> LightweightWalletResult<()> {
+            // Save the wallet state which contains all the transactions
+            if !results.wallet_state.transactions.is_empty() {
+                // For now, assume wallet_id = 1 - this would need to be passed in properly
+                storage.save_transactions(1, &results.wallet_state.transactions).await?;
+            }
+            
+            // Update the latest scanned block based on scan configuration
+            let latest_block = results.scan_config_summary.start_height + results.scan_config_summary.total_blocks_scanned;
+            if latest_block > results.scan_config_summary.start_height {
+                storage.update_wallet_scanned_block(1, latest_block - 1).await?;
+            }
+            
+            #[cfg(feature = "tracing")]
+            tracing::debug!(
+                "Saved scan results: {} transactions, {} blocks scanned (blocks {}-{})",
+                results.wallet_state.transactions.len(),
+                results.scan_config_summary.total_blocks_scanned,
+                results.scan_config_summary.start_height,
+                latest_block - 1
+            );
+            
+            Ok(())
+        }
+
+        /// Handle saving a single wallet output to storage  
+        pub async fn handle_save_wallet_output(
+            storage: &dyn WalletStorage,
+            wallet_id: u32,
+            output: &LightweightWalletOutput,
+        ) -> LightweightWalletResult<()> {
+            let stored_output = convert_to_stored_output(wallet_id, output)?;
+            storage.save_output(&stored_output).await.map(|_| ())
+        }
+
+        /// Handle saving multiple wallet outputs to storage
+        pub async fn handle_save_wallet_outputs(
+            storage: &dyn WalletStorage,
+            wallet_id: u32,
+            outputs: &[LightweightWalletOutput],
+        ) -> LightweightWalletResult<()> {
+            let stored_outputs: Result<Vec<_>, _> = outputs.iter()
+                .map(|output| convert_to_stored_output(wallet_id, output))
+                .collect();
+            
+            let stored_outputs = stored_outputs?;
+            storage.save_outputs(&stored_outputs).await.map(|_| ())
+        }
+
+        /// Handle saving wallet state to storage
+        pub async fn handle_save_wallet_state(
+            storage: &dyn WalletStorage,
+            wallet_id: u32,
+            state: &WalletState,
+        ) -> LightweightWalletResult<()> {
+            storage.save_transactions(wallet_id, &state.transactions).await?;
+            
+            #[cfg(feature = "tracing")]
+            tracing::debug!(
+                "Saved wallet state for wallet {}: {} transactions",
+                wallet_id,
+                state.transactions.len()
+            );
+            
+            Ok(())
+        }
+
+        /// Handle marking an output as spent
+        pub async fn handle_mark_output_spent(
+            _storage: &dyn WalletStorage,
+            _commitment: &[u8],
+            _block_height: u64,
+        ) -> LightweightWalletResult<()> {
+            // For now, we don't have a direct way to mark outputs spent by commitment
+            // This would need to be implemented in the storage layer
+            // TODO: Implement proper commitment-based spent tracking
+            Ok(())
+        }
+
+        /// Convert LightweightWalletOutput to StoredOutput format
+        fn convert_to_stored_output(wallet_id: u32, output: &LightweightWalletOutput) -> LightweightWalletResult<crate::storage::storage_trait::StoredOutput> {
+            use crate::storage::storage_trait::StoredOutput;
+            use hex;
+            
+            // Create a dummy commitment - in practice this would come from actual output data
+            let commitment_bytes = match &output.spending_key_id {
+                crate::data_structures::wallet_output::LightweightKeyId::String(s) => {
+                    // Use a hash of the string as a placeholder commitment
+                    use blake2::digest::{Digest, FixedOutput};
+                    let mut hasher = blake2::Blake2b::<blake2::digest::consts::U32>::new();
+                    hasher.update(s.as_bytes());
+                    hasher.finalize_fixed().to_vec()
+                }
+                crate::data_structures::wallet_output::LightweightKeyId::PublicKey(pk) => {
+                    pk.as_bytes().to_vec()
+                }
+                crate::data_structures::wallet_output::LightweightKeyId::Zero => {
+                    vec![0u8; 32]
+                }
+            };
+            
+            // Create placeholder output hash
+            let output_hash = {
+                use blake2::digest::{Digest, FixedOutput};
+                let mut hasher = blake2::Blake2b::<blake2::digest::consts::U32>::new();
+                hasher.update(&commitment_bytes);
+                hasher.update(&output.value.as_u64().to_le_bytes());
+                hasher.finalize_fixed().to_vec()
+            };
+            
+            // Convert spending key ID to string for storage
+            let spending_key_str = match &output.spending_key_id {
+                crate::data_structures::wallet_output::LightweightKeyId::String(s) => s.clone(),
+                crate::data_structures::wallet_output::LightweightKeyId::PublicKey(pk) => hex::encode(pk.as_bytes()),
+                crate::data_structures::wallet_output::LightweightKeyId::Zero => "zero".to_string(),
+            };
+            
+            Ok(StoredOutput {
+                id: None, // Let database assign ID
+                wallet_id,
+                commitment: commitment_bytes,
+                hash: output_hash,
+                value: output.value.as_u64(),
+                spending_key: spending_key_str.clone(),
+                script_private_key: spending_key_str, // Use same key for now
+                script: vec![], // Placeholder - would need proper serialization of LightweightScript
+                input_data: vec![], // Placeholder - would need proper serialization of LightweightExecutionStack
+                covenant: vec![], // Placeholder - would need proper serialization of LightweightCovenant
+                output_type: 0, // Default to payment output
+                features_json: serde_json::to_string(&output.features).unwrap_or_default(),
+                maturity: output.minimum_value_promise.as_u64(),
+                script_lock_height: 0, // Default
+                sender_offset_public_key: vec![0u8; 32], // Placeholder
+                metadata_signature_ephemeral_commitment: vec![0u8; 32], // Placeholder
+                metadata_signature_ephemeral_pubkey: vec![0u8; 32], // Placeholder
+                metadata_signature_u_a: vec![0u8; 32], // Placeholder
+                metadata_signature_u_x: vec![0u8; 32], // Placeholder
+                metadata_signature_u_y: vec![0u8; 32], // Placeholder
+                encrypted_data: serde_json::to_vec(&output.encrypted_data).unwrap_or_default(),
+                minimum_value_promise: output.minimum_value_promise.as_u64(),
+                rangeproof: output.range_proof.as_ref().map(|_| vec![]), // Placeholder
+                status: 0, // Unspent
+                mined_height: None, // LightweightWalletOutput doesn't have mined_height field
+                spent_in_tx_id: None,
+                created_at: None,
+                updated_at: None,
+            })
+        }
+    }
+
     /// Configuration for BackgroundWriterAdapter optimization
     #[derive(Debug, Clone)]
+    #[cfg(not(target_arch = "wasm32"))]
     pub struct BackgroundWriterConfig {
         /// Maximum number of operations to batch together
         pub max_batch_size: usize,
@@ -158,6 +322,7 @@ mod storage_adapters {
 
     /// Commands sent to the background storage writer
     #[derive(Debug)]
+    #[cfg(not(target_arch = "wasm32"))]
     enum StorageCommand {
         SaveScanResults {
             results: ScanResults,
@@ -201,6 +366,7 @@ mod storage_adapters {
 
     /// Individual operation that can be batched
     #[derive(Debug)]
+    #[cfg(not(target_arch = "wasm32"))]
     pub enum BatchOperation {
         SaveWalletOutput {
             wallet_id: u32,
@@ -216,6 +382,7 @@ mod storage_adapters {
         },
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     impl BackgroundWriterAdapter {
     /// Create a new background writer adapter with default configuration
     pub fn new(storage: Arc<dyn WalletStorage>) -> Self {
@@ -371,28 +538,7 @@ mod storage_adapters {
             storage: &dyn WalletStorage,
             results: &ScanResults,
         ) -> LightweightWalletResult<()> {
-            // Save the wallet state which contains all the transactions
-            if !results.wallet_state.transactions.is_empty() {
-                // For now, assume wallet_id = 1 - this would need to be passed in properly
-                storage.save_transactions(1, &results.wallet_state.transactions).await?;
-            }
-            
-            // Update the latest scanned block based on scan configuration
-            let latest_block = results.scan_config_summary.start_height + results.scan_config_summary.total_blocks_scanned;
-            if latest_block > results.scan_config_summary.start_height {
-                storage.update_wallet_scanned_block(1, latest_block - 1).await?;
-            }
-            
-            #[cfg(feature = "tracing")]
-            tracing::debug!(
-                "Saved scan results: {} transactions, {} blocks scanned (blocks {}-{})",
-                results.wallet_state.transactions.len(),
-                results.scan_config_summary.total_blocks_scanned,
-                results.scan_config_summary.start_height,
-                latest_block - 1
-            );
-            
-            Ok(())
+            storage_handlers::handle_save_scan_results(storage, results).await
         }
         
         /// Handle saving a single wallet output in background task
@@ -792,23 +938,23 @@ mod storage_adapters {
     #[async_trait(?Send)]
     impl StorageManager for DirectStorageAdapter {
         async fn save_scan_results(&mut self, results: &ScanResults) -> LightweightWalletResult<()> {
-            BackgroundWriterAdapter::handle_save_scan_results(&*self.storage, results).await
+            storage_handlers::handle_save_scan_results(&*self.storage, results).await
         }
         
         async fn save_wallet_output(&mut self, wallet_id: u32, output: &LightweightWalletOutput) -> LightweightWalletResult<()> {
-            BackgroundWriterAdapter::handle_save_wallet_output(&*self.storage, wallet_id, output).await
+            storage_handlers::handle_save_wallet_output(&*self.storage, wallet_id, output).await
         }
         
         async fn save_wallet_outputs(&mut self, wallet_id: u32, outputs: &[LightweightWalletOutput]) -> LightweightWalletResult<()> {
-            BackgroundWriterAdapter::handle_save_wallet_outputs(&*self.storage, wallet_id, outputs).await
+            storage_handlers::handle_save_wallet_outputs(&*self.storage, wallet_id, outputs).await
         }
         
         async fn save_wallet_state(&mut self, wallet_id: u32, state: &WalletState) -> LightweightWalletResult<()> {
-            BackgroundWriterAdapter::handle_save_wallet_state(&*self.storage, wallet_id, state).await
+            storage_handlers::handle_save_wallet_state(&*self.storage, wallet_id, state).await
         }
         
         async fn mark_output_spent(&mut self, commitment: &[u8], block_height: u64) -> LightweightWalletResult<()> {
-            BackgroundWriterAdapter::handle_mark_output_spent(&*self.storage, commitment, block_height).await
+            storage_handlers::handle_mark_output_spent(&*self.storage, commitment, block_height).await
         }
         
         async fn get_wallet_state(&self, wallet_id: u32) -> LightweightWalletResult<WalletState> {
@@ -827,6 +973,7 @@ mod storage_adapters {
 
     /// Statistics tracking for the background writer
     #[derive(Debug)]
+    #[cfg(not(target_arch = "wasm32"))]
     pub struct WriterStats {
         operations_count: std::collections::HashMap<String, u64>,
         total_time: std::collections::HashMap<String, Duration>,
@@ -839,6 +986,7 @@ mod storage_adapters {
         start_time: Instant,
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     impl WriterStats {
         pub fn new(enable_detailed_tracking: bool) -> Self {
             Self {
@@ -907,6 +1055,7 @@ mod storage_adapters {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     impl Default for WriterStats {
         fn default() -> Self {
             Self::new(true)
@@ -915,11 +1064,13 @@ mod storage_adapters {
 
     /// Buffer for batching operations to improve performance
     #[derive(Debug)]
+    #[cfg(not(target_arch = "wasm32"))]
     pub struct BatchBuffer {
         operations: Vec<(BatchOperation, tokio::sync::oneshot::Sender<LightweightWalletResult<()>>)>,
         max_size: usize,
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     impl BatchBuffer {
         pub fn new(max_size: usize) -> Self {
             Self {
@@ -965,6 +1116,7 @@ mod storage_adapters {
     pub struct StorageManagerBuilder {
         storage: Option<Arc<dyn WalletStorage>>,
         use_background_writer: bool,
+        #[cfg(not(target_arch = "wasm32"))]
         background_writer_config: BackgroundWriterConfig,
     }
 
@@ -974,6 +1126,7 @@ mod storage_adapters {
             Self {
                 storage: None,
                 use_background_writer: true,
+                #[cfg(not(target_arch = "wasm32"))]
                 background_writer_config: BackgroundWriterConfig::default(),
             }
         }
@@ -991,6 +1144,7 @@ mod storage_adapters {
         }
 
         /// Set custom background writer configuration
+        #[cfg(not(target_arch = "wasm32"))]
         pub fn with_background_writer_config(mut self, config: BackgroundWriterConfig) -> Self {
             self.background_writer_config = config;
             self
@@ -1026,9 +1180,16 @@ mod storage_adapters {
                 LightweightWalletError::ConfigurationError("Storage backend is required".to_string())
             })?;
             
+            #[cfg(not(target_arch = "wasm32"))]
             if self.use_background_writer {
                 Ok(Box::new(BackgroundWriterAdapter::with_config(storage, self.background_writer_config)))
             } else {
+                Ok(Box::new(DirectStorageAdapter::new(storage)))
+            }
+            
+            #[cfg(target_arch = "wasm32")]
+            {
+                // WASM always uses DirectStorageAdapter since tokio isn't available
                 Ok(Box::new(DirectStorageAdapter::new(storage)))
             }
         }
@@ -1043,7 +1204,11 @@ mod storage_adapters {
 
 // Re-export storage adapters when storage feature is enabled
 #[cfg(feature = "storage")]
-pub use storage_adapters::{BackgroundWriterAdapter, BackgroundWriterConfig, DirectStorageAdapter, StorageManagerBuilder, BatchBuffer, BatchOperation, WriterStats};
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+pub use storage_adapters::{BackgroundWriterAdapter, BackgroundWriterConfig, BatchBuffer, BatchOperation, WriterStats};
+
+#[cfg(feature = "storage")]
+pub use storage_adapters::{DirectStorageAdapter, StorageManagerBuilder};
 
 #[cfg(all(test, feature = "storage", not(target_arch = "wasm32")))]
 mod tests {
