@@ -36,6 +36,10 @@ pub mod scanner_engine;
 pub mod storage_manager;
 pub mod wallet_source;
 
+// Progress reporting and output formatting
+pub mod output_formatter;
+pub mod progress_reporter;
+
 // Include GRPC scanner when the feature is enabled
 #[cfg(feature = "grpc")]
 pub mod grpc_scanner;
@@ -55,6 +59,16 @@ pub use storage_manager::StorageManager;
 #[cfg(feature = "storage")]
 pub use storage_manager::{AdapterSelectionStrategy, DirectStorageAdapter, StorageManagerBuilder};
 pub use wallet_source::{WalletContext, WalletSource, WalletSourceType};
+
+// Re-export progress reporting and output formatting components
+pub use output_formatter::{
+    create_output_formatter, ConsoleFormatter, JsonFormatter, OutputConfig, OutputFormat,
+    OutputFormatter, ScanConfigDisplay,
+};
+pub use progress_reporter::{
+    create_progress_reporter, progress_with_wallet_state, ConsoleProgressReporter, ProgressInfo,
+    ProgressReportConfig, ProgressReportType, ProgressReporter, QuietProgressReporter,
+};
 
 // Re-export GRPC scanner types
 #[cfg(feature = "grpc")]

@@ -19,6 +19,8 @@ use crate::data_structures::{block::Block, transaction::TransactionDirection};
 use super::BlockchainScanner;
 
 use super::{
+    output_formatter::{OutputConfig, OutputFormatter},
+    progress_reporter::{ProgressReportConfig, ProgressReporter},
     scan_results::{BlockScanResult, ScanConfigSummary, ScanPhase, ScanProgress, ScanResults},
     wallet_source::{WalletContext, WalletSource},
     ScanConfig, ScanConfiguration,
@@ -39,6 +41,14 @@ pub struct ScannerEngine {
     /// Storage configuration
     #[cfg(feature = "storage")]
     storage_config: ScannerStorageConfig,
+    /// Progress reporter for displaying scan progress (optional)
+    progress_reporter: Option<Box<dyn ProgressReporter>>,
+    /// Progress reporting configuration
+    progress_config: ProgressReportConfig,
+    /// Output formatter for displaying results (optional)
+    output_formatter: Option<Box<dyn OutputFormatter>>,
+    /// Output formatting configuration
+    output_config: OutputConfig,
 }
 
 #[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
@@ -53,6 +63,10 @@ impl ScannerEngine {
             storage_manager: None,
             #[cfg(feature = "storage")]
             storage_config: ScannerStorageConfig::default(),
+            progress_reporter: None,
+            progress_config: ProgressReportConfig::default(),
+            output_formatter: None,
+            output_config: OutputConfig::default(),
         }
     }
 
@@ -70,6 +84,10 @@ impl ScannerEngine {
             configuration,
             storage_manager: Some(storage_manager),
             storage_config,
+            progress_reporter: None,
+            progress_config: ProgressReportConfig::default(),
+            output_formatter: None,
+            output_config: OutputConfig::default(),
         }
     }
 
@@ -1032,6 +1050,36 @@ impl ScannerEngine {
     #[cfg(feature = "storage")]
     pub fn storage_config(&self) -> &ScannerStorageConfig {
         &self.storage_config
+    }
+
+    /// Set progress reporter for scanning operations
+    pub fn set_progress_reporter(
+        &mut self,
+        progress_reporter: Box<dyn ProgressReporter>,
+        progress_config: ProgressReportConfig,
+    ) {
+        self.progress_reporter = Some(progress_reporter);
+        self.progress_config = progress_config;
+    }
+
+    /// Set output formatter for displaying results
+    pub fn set_output_formatter(
+        &mut self,
+        output_formatter: Box<dyn OutputFormatter>,
+        output_config: OutputConfig,
+    ) {
+        self.output_formatter = Some(output_formatter);
+        self.output_config = output_config;
+    }
+
+    /// Get a reference to the progress configuration
+    pub fn progress_config(&self) -> &ProgressReportConfig {
+        &self.progress_config
+    }
+
+    /// Get a reference to the output configuration
+    pub fn output_config(&self) -> &OutputConfig {
+        &self.output_config
     }
 }
 
