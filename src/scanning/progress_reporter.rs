@@ -3,7 +3,7 @@
 //! This module provides progress reporting functionality that can be used
 //! by the scanner engine to report scanning progress in various formats.
 
-use super::scan_results::ScanProgress;
+use super::scan_results::{ScanPhase, ScanProgress};
 use crate::common::format_number;
 use crate::data_structures::wallet_transaction::WalletState;
 use std::io::{self, Write};
@@ -92,21 +92,21 @@ pub struct ProgressInfo {
 impl From<ScanProgress> for ProgressInfo {
     fn from(progress: ScanProgress) -> Self {
         let report_type = match progress.phase {
-            super::scan_results::ScanPhase::Initializing => ProgressReportType::Initializing,
-            super::scan_results::ScanPhase::Connecting => ProgressReportType::Connecting,
-            super::scan_results::ScanPhase::Scanning {
+            ScanPhase::Initializing => ProgressReportType::Initializing,
+            ScanPhase::Connecting => ProgressReportType::Connecting,
+            ScanPhase::Scanning {
                 batch_index,
                 total_batches,
             } => ProgressReportType::Scanning {
                 batch_index,
                 total_batches,
             },
-            super::scan_results::ScanPhase::Processing => ProgressReportType::Processing,
-            super::scan_results::ScanPhase::Completed => ProgressReportType::Completed,
-            super::scan_results::ScanPhase::Saving => ProgressReportType::Processing,
-            super::scan_results::ScanPhase::Finalizing => ProgressReportType::Completed,
-            super::scan_results::ScanPhase::Interrupted => ProgressReportType::Interrupted,
-            super::scan_results::ScanPhase::Error(_) => ProgressReportType::Interrupted,
+            ScanPhase::Processing => ProgressReportType::Processing,
+            ScanPhase::Completed => ProgressReportType::Completed,
+            ScanPhase::Saving => ProgressReportType::Processing,
+            ScanPhase::Finalizing => ProgressReportType::Completed,
+            ScanPhase::Interrupted => ProgressReportType::Interrupted,
+            ScanPhase::Error(_) => ProgressReportType::Interrupted,
         };
 
         Self {
@@ -450,7 +450,7 @@ mod tests {
             elapsed: std::time::Duration::from_secs(60),
             estimated_remaining: Some(std::time::Duration::from_secs(60)),
             scan_rate: 8.33,
-            phase: super::scan_results::ScanPhase::Scanning {
+            phase: ScanPhase::Scanning {
                 batch_index: 5,
                 total_batches: Some(10),
             },

@@ -1,6 +1,6 @@
 ## Relevant Files
 
-- `src/scanning/scanner_engine.rs` - Core scanning engine that encapsulates all scanning business logic.
+- `src/scanning/scanner_engine.rs` - Core scanning engine that encapsulates all scanning business logic with error handling and recovery.
 - `src/scanning/storage_manager.rs` - Storage abstraction layer for unified storage operations across architectures.
 - `src/scanning/scan_configuration.rs` - Comprehensive configuration structure for all scan parameters.
 - `src/scanning/scan_results.rs` - Structured progress reporting and scan results management.
@@ -21,6 +21,8 @@
 - Use `cargo test` to run all tests, or `cargo test test_name` to run specific tests.
 - Use `cargo test --features grpc-storage` for most comprehensive test coverage.
 - The refactoring must maintain 100% backward compatibility for CLI interfaces.
+
+## General
 - Before claiming a task is complete make sure to run the following:
    - wasm-pack build --target web --out-dir examples/wasm/pkg --features http
    - cargo run --bin scanner --features grpc-storage -- --from-block=16000 --to-block=16020
@@ -54,7 +56,7 @@
   - [x] 3.2 Move wallet creation and selection logic to `ScannerEngine::initialize_wallet()`
   - [x] 3.3 Move blockchain scanning coordination logic to `ScannerEngine::scan_range()` and `scan_blocks()`
   - [x] 3.4 Extract progress reporting and output formatting to library components
-  - [ ] 3.5 Move error handling and recovery logic to scanner engine
+  - [x] 3.5 Move error handling and recovery logic to scanner engine
   - [ ] 3.6 Refactor CLI to thin wrapper that handles argument parsing and delegates to library
   - [ ] 3.7 Preserve existing command-line interface and error messages for backward compatibility
   - [ ] 3.8 Implement graceful interruption handling (Ctrl+C) in library with resume capabilities

@@ -12,6 +12,148 @@ use std::time::Instant;
 #[cfg(feature = "storage")]
 use super::storage_manager::{ScannerStorageConfig, StorageManager};
 
+/// Error recovery strategy for handling scanning errors
+#[derive(Debug, Clone, PartialEq)]
+pub enum ErrorRecoveryStrategy {
+    /// Continue scanning despite errors
+    Continue,
+    /// Skip the current batch/block and continue
+    Skip,
+    /// Abort the entire scan
+    Abort,
+}
+
+/// Error context information for recovery decisions
+#[derive(Debug, Clone)]
+pub struct ScanErrorContext {
+    /// Block height where error occurred
+    pub block_height: u64,
+    /// Error that occurred
+    pub error: String,
+    /// Whether scanning specific blocks or a range
+    pub has_specific_blocks: bool,
+    /// Remaining blocks to scan
+    pub remaining_blocks: Vec<u64>,
+    /// End block of the scan range
+    pub to_block: u64,
+}
+
+/// Trait for handling scan errors and recovery
+pub trait ErrorHandler: Send + Sync {
+    /// Handle a scan error and return recovery strategy
+    fn handle_scan_error(&self, context: &ScanErrorContext) -> ErrorRecoveryStrategy;
+
+    /// Handle block processing error and return recovery strategy
+    fn handle_block_error(&self, block_height: u64, error: &str) -> ErrorRecoveryStrategy;
+
+    /// Generate resume command for interrupted scans
+    fn generate_resume_command(&self, context: &ScanErrorContext) -> String;
+}
+
+/// Default error handler that continues on errors without interaction
+pub struct DefaultErrorHandler;
+
+impl ErrorHandler for DefaultErrorHandler {
+    fn handle_scan_error(&self, context: &ScanErrorContext) -> ErrorRecoveryStrategy {
+        eprintln!(
+            "Error scanning batch starting at block {}: {}",
+            context.block_height, context.error
+        );
+        eprintln!("Continuing to next batch...");
+        ErrorRecoveryStrategy::Continue
+    }
+
+    fn handle_block_error(&self, block_height: u64, error: &str) -> ErrorRecoveryStrategy {
+        eprintln!("Error processing block {}: {}", block_height, error);
+        eprintln!("Continuing to next block...");
+        ErrorRecoveryStrategy::Continue
+    }
+
+    fn generate_resume_command(&self, context: &ScanErrorContext) -> String {
+        if context.has_specific_blocks && context.remaining_blocks.len() <= 20 {
+            let remaining_blocks_str: Vec<String> = context
+                .remaining_blocks
+                .iter()
+                .map(|b| b.to_string())
+                .collect();
+            format!("cargo run --bin scanner --features grpc-storage -- --seed-phrase \"your seed phrase\" --blocks {}", 
+                remaining_blocks_str.join(","))
+        } else {
+            format!("cargo run --bin scanner --features grpc-storage -- --seed-phrase \"your seed phrase\" --from-block {} --to-block {}", 
+                context.block_height, context.to_block)
+        }
+    }
+}
+
+/// Interactive error handler that prompts user for recovery decisions (CLI-compatible)
+pub struct InteractiveErrorHandler;
+
+impl ErrorHandler for InteractiveErrorHandler {
+    fn handle_scan_error(&self, context: &ScanErrorContext) -> ErrorRecoveryStrategy {
+        println!(
+            "❌ Error scanning batch starting at block {}: {}",
+            context.block_height, context.error
+        );
+        println!(
+            "   Batch heights: {:?}",
+            context.remaining_blocks.iter().take(10).collect::<Vec<_>>()
+        );
+
+        print!("   Continue scanning remaining blocks? (y/n/s=skip this batch/block): ");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_err() {
+            return ErrorRecoveryStrategy::Abort;
+        }
+        let choice = input.trim().to_lowercase();
+
+        match choice.as_str() {
+            "y" | "yes" => {
+                println!("   ✅ Continuing scan from next batch/block...");
+                ErrorRecoveryStrategy::Continue
+            }
+            "s" | "skip" => {
+                println!("   ⏭️  Skipping problematic batch/block and continuing...");
+                ErrorRecoveryStrategy::Skip
+            }
+            _ => {
+                println!(
+                    "   🛑 Scan aborted by user at block {}",
+                    context.block_height
+                );
+                println!("\n💡 To resume from this point, run:");
+                println!("   {}", self.generate_resume_command(context));
+                ErrorRecoveryStrategy::Abort
+            }
+        }
+    }
+
+    fn handle_block_error(&self, block_height: u64, error: &str) -> ErrorRecoveryStrategy {
+        eprintln!("Error processing block {}: {}", block_height, error);
+        ErrorRecoveryStrategy::Continue // Default to continue for block errors
+    }
+
+    fn generate_resume_command(&self, context: &ScanErrorContext) -> String {
+        if context.has_specific_blocks && context.remaining_blocks.len() <= 20 {
+            let remaining_blocks_str: Vec<String> = context
+                .remaining_blocks
+                .iter()
+                .map(|b| b.to_string())
+                .collect();
+            format!("cargo run --bin scanner --features grpc-storage -- --seed-phrase \"your seed phrase\" --blocks {}", 
+                remaining_blocks_str.join(","))
+        } else {
+            let first_block = context
+                .remaining_blocks
+                .first()
+                .unwrap_or(&context.block_height);
+            format!("cargo run --bin scanner --features grpc-storage -- --seed-phrase \"your seed phrase\" --from-block {} --to-block {}", 
+                first_block, context.to_block)
+        }
+    }
+}
+
 #[cfg(feature = "grpc")]
 use crate::data_structures::{block::Block, transaction::TransactionDirection};
 
@@ -49,6 +191,8 @@ pub struct ScannerEngine {
     output_formatter: Option<Box<dyn OutputFormatter>>,
     /// Output formatting configuration
     output_config: OutputConfig,
+    /// Error handler for scan error recovery (optional)
+    error_handler: Option<Box<dyn ErrorHandler>>,
 }
 
 #[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
@@ -67,6 +211,7 @@ impl ScannerEngine {
             progress_config: ProgressReportConfig::default(),
             output_formatter: None,
             output_config: OutputConfig::default(),
+            error_handler: None,
         }
     }
 
@@ -88,7 +233,26 @@ impl ScannerEngine {
             progress_config: ProgressReportConfig::default(),
             output_formatter: None,
             output_config: OutputConfig::default(),
+            error_handler: None,
         }
+    }
+
+    /// Set the error handler for scan error recovery
+    pub fn with_error_handler(mut self, error_handler: Box<dyn ErrorHandler>) -> Self {
+        self.error_handler = Some(error_handler);
+        self
+    }
+
+    /// Set interactive error handler (CLI-compatible)
+    pub fn with_interactive_error_handling(mut self) -> Self {
+        self.error_handler = Some(Box::new(InteractiveErrorHandler));
+        self
+    }
+
+    /// Set default error handler (continue on errors)
+    pub fn with_default_error_handling(mut self) -> Self {
+        self.error_handler = Some(Box::new(DefaultErrorHandler));
+        self
     }
 
     /// Initialize the wallet context from the configuration
@@ -213,13 +377,30 @@ impl ScannerEngine {
             {
                 Ok(blocks) => blocks,
                 Err(e) => {
-                    // Handle scan error - for now, continue to next batch
-                    // TODO: Implement interactive error handling like CLI
-                    eprintln!(
-                        "Error scanning batch starting at block {}: {}",
-                        batch_heights[0], e
-                    );
-                    continue;
+                    // Use error handler for scan error recovery
+                    let remaining_blocks = block_heights[batch_start_index..].to_vec();
+                    let context = ScanErrorContext {
+                        block_height: batch_heights[0],
+                        error: e.to_string(),
+                        has_specific_blocks: false, // TODO: Extract from configuration
+                        remaining_blocks,
+                        to_block: end_height,
+                    };
+
+                    let strategy = if let Some(error_handler) = &self.error_handler {
+                        error_handler.handle_scan_error(&context)
+                    } else {
+                        // Fallback to default behavior
+                        DefaultErrorHandler.handle_scan_error(&context)
+                    };
+
+                    match strategy {
+                        ErrorRecoveryStrategy::Continue => continue,
+                        ErrorRecoveryStrategy::Skip => continue,
+                        ErrorRecoveryStrategy::Abort => {
+                            return Err(e);
+                        }
+                    }
                 }
             };
 
@@ -314,10 +495,21 @@ impl ScannerEngine {
                         }
                     }
                     Err(e) => {
-                        eprintln!("Error processing block {}: {}", block_height, e);
-                        // For now, continue to next block
-                        // TODO: Implement interactive error handling
-                        continue;
+                        // Use error handler for block processing error recovery
+                        let strategy = if let Some(error_handler) = &self.error_handler {
+                            error_handler.handle_block_error(*block_height, &e.to_string())
+                        } else {
+                            // Fallback to default behavior
+                            DefaultErrorHandler.handle_block_error(*block_height, &e.to_string())
+                        };
+
+                        match strategy {
+                            ErrorRecoveryStrategy::Continue => continue,
+                            ErrorRecoveryStrategy::Skip => continue,
+                            ErrorRecoveryStrategy::Abort => {
+                                return Err(e);
+                            }
+                        }
                     }
                 }
             }
@@ -547,12 +739,31 @@ impl ScannerEngine {
             {
                 Ok(blocks) => blocks,
                 Err(e) => {
-                    // Handle scan error - for now, continue to next batch
-                    eprintln!(
-                        "Error scanning batch with blocks {:?}: {}",
-                        batch_heights, e
-                    );
-                    continue;
+                    // Use error handler for scan error recovery
+                    let batch_start_index = batch_index * batch_size;
+                    let remaining_blocks = heights[batch_start_index..].to_vec();
+                    let context = ScanErrorContext {
+                        block_height: batch_heights[0],
+                        error: e.to_string(),
+                        has_specific_blocks: true, // scan_blocks is for specific blocks
+                        remaining_blocks,
+                        to_block: end_height,
+                    };
+
+                    let strategy = if let Some(error_handler) = &self.error_handler {
+                        error_handler.handle_scan_error(&context)
+                    } else {
+                        // Fallback to default behavior
+                        DefaultErrorHandler.handle_scan_error(&context)
+                    };
+
+                    match strategy {
+                        ErrorRecoveryStrategy::Continue => continue,
+                        ErrorRecoveryStrategy::Skip => continue,
+                        ErrorRecoveryStrategy::Abort => {
+                            return Err(e);
+                        }
+                    }
                 }
             };
 
@@ -647,9 +858,21 @@ impl ScannerEngine {
                         }
                     }
                     Err(e) => {
-                        eprintln!("Error processing block {}: {}", block_height, e);
-                        // For now, continue to next block
-                        continue;
+                        // Use error handler for block processing error recovery
+                        let strategy = if let Some(error_handler) = &self.error_handler {
+                            error_handler.handle_block_error(*block_height, &e.to_string())
+                        } else {
+                            // Fallback to default behavior
+                            DefaultErrorHandler.handle_block_error(*block_height, &e.to_string())
+                        };
+
+                        match strategy {
+                            ErrorRecoveryStrategy::Continue => continue,
+                            ErrorRecoveryStrategy::Skip => continue,
+                            ErrorRecoveryStrategy::Abort => {
+                                return Err(e);
+                            }
+                        }
                     }
                 }
             }
@@ -1280,5 +1503,53 @@ mod tests {
         } else {
             panic!("Expected InvalidArgument error");
         }
+    }
+
+    #[test]
+    fn test_default_error_handler() {
+        let handler = DefaultErrorHandler;
+        let context = ScanErrorContext {
+            block_height: 1000,
+            error: "Test error".to_string(),
+            has_specific_blocks: false,
+            remaining_blocks: vec![1001, 1002, 1003],
+            to_block: 2000,
+        };
+
+        let strategy = handler.handle_scan_error(&context);
+        assert_eq!(strategy, ErrorRecoveryStrategy::Continue);
+
+        let block_strategy = handler.handle_block_error(1000, "Test block error");
+        assert_eq!(block_strategy, ErrorRecoveryStrategy::Continue);
+
+        let resume_cmd = handler.generate_resume_command(&context);
+        assert!(resume_cmd.contains("--from-block 1000"));
+        assert!(resume_cmd.contains("--to-block 2000"));
+    }
+
+    #[test]
+    fn test_error_recovery_strategy_eq() {
+        assert_eq!(
+            ErrorRecoveryStrategy::Continue,
+            ErrorRecoveryStrategy::Continue
+        );
+        assert_eq!(ErrorRecoveryStrategy::Skip, ErrorRecoveryStrategy::Skip);
+        assert_eq!(ErrorRecoveryStrategy::Abort, ErrorRecoveryStrategy::Abort);
+        assert_ne!(ErrorRecoveryStrategy::Continue, ErrorRecoveryStrategy::Skip);
+    }
+
+    #[test]
+    fn test_specific_blocks_resume_command() {
+        let handler = DefaultErrorHandler;
+        let context = ScanErrorContext {
+            block_height: 1000,
+            error: "Test error".to_string(),
+            has_specific_blocks: true,
+            remaining_blocks: vec![1000, 1001, 1002],
+            to_block: 2000,
+        };
+
+        let resume_cmd = handler.generate_resume_command(&context);
+        assert!(resume_cmd.contains("--blocks 1000,1001,1002"));
     }
 }
