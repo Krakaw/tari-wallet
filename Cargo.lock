@@ -471,7 +471,9 @@ checksum = "c469d952047f47f91b68d1cba3f10d63c11d73e4636f24f08daf0278abf01c4d"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
+ "js-sys",
  "num-traits",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -1537,6 +1539,7 @@ dependencies = [
  "bs58",
  "chacha20",
  "chacha20poly1305",
+ "chrono",
  "clap",
  "crc32fast",
  "curve25519-dalek",

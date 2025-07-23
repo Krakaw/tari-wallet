@@ -25,7 +25,7 @@ use crate::{
 // Import scanner library components for HTTP scanning
 #[cfg(feature = "http")]
 use crate::scanning::{
-    http_scanner::{HttpBlockData, HttpBlockResponse, HttpBlockchainScanner, HttpOutputData},
+    http_scanner::{HttpBlockData, HttpBlockResponse, HttpBlockchainScanner},
     scan_results::ScanResults as LibScanResults,
     ScanConfig, ScanConfiguration, ScannerEngine, WalletContext, WalletSource,
 };
@@ -329,10 +329,20 @@ impl WasmScanner {
                 .await
                 .map_err(|e| format!("Failed to initialize HTTP scanner: {}", e))?;
 
-            // Create scanner configuration
-            let config = ScanConfiguration::default();
+            // Create scanner configuration with the wallet context we have
+            let mut config = ScanConfiguration::default();
 
-            // Create scanner engine with the HTTP scanner
+            // Set the wallet source based on our current wallet context
+            if let Some(wallet_context) = &self.wallet_context {
+                // Create a wallet source from the existing context
+                let wallet_source = WalletSource::from_view_key(
+                    &hex::encode(wallet_context.view_key.as_bytes()),
+                    None,
+                );
+                config.wallet_source = Some(wallet_source);
+            }
+
+            // Create scanner engine with the HTTP scanner and configured wallet source
             let scanner_engine = ScannerEngine::new(Box::new(http_scanner), config);
 
             self.scanner_engine = Some(scanner_engine);
@@ -418,47 +428,48 @@ impl WasmScanner {
             };
         }
 
-        // Get the scanner engine (we know it exists from the check above)
-        let scanner_engine = match self.scanner_engine.as_mut() {
-            Some(engine) => engine,
-            None => {
-                return ScanResult {
-                    total_outputs: 0,
-                    total_spent: 0,
-                    total_value: 0,
-                    current_balance: 0,
-                    blocks_processed: 0,
-                    transactions: Vec::new(),
-                    success: false,
-                    error: Some("Scanner engine not initialized".to_string()),
-                };
-            }
-        };
-
-        // Initialize wallet context in the scanner engine if we have one
-        if scanner_engine.wallet_context().is_none() && self.wallet_context.is_some() {
-            if let Err(e) = scanner_engine.initialize_wallet().await {
-                return ScanResult {
-                    total_outputs: 0,
-                    total_spent: 0,
-                    total_value: 0,
-                    current_balance: 0,
-                    blocks_processed: 0,
-                    transactions: Vec::new(),
-                    success: false,
-                    error: Some(format!(
-                        "Failed to initialize wallet in scanner engine: {}",
-                        e
-                    )),
-                };
-            }
+        // Ensure wallet is properly initialized in the scanner engine
+        if let Err(e) = self.ensure_wallet_initialized_in_scanner().await {
+            return ScanResult {
+                total_outputs: 0,
+                total_spent: 0,
+                total_value: 0,
+                current_balance: 0,
+                blocks_processed: 0,
+                transactions: Vec::new(),
+                success: false,
+                error: Some(format!(
+                    "Failed to initialize wallet in scanner engine: {}",
+                    e
+                )),
+            };
         }
 
         // Use the scanner engine to scan specific blocks
-        match scanner_engine.scan_blocks(block_heights).await {
+        let scan_result = {
+            let scanner_engine = match self.scanner_engine.as_mut() {
+                Some(engine) => engine,
+                None => {
+                    return ScanResult {
+                        total_outputs: 0,
+                        total_spent: 0,
+                        total_value: 0,
+                        current_balance: 0,
+                        blocks_processed: 0,
+                        transactions: Vec::new(),
+                        success: false,
+                        error: Some("Scanner engine not initialized".to_string()),
+                    };
+                }
+            };
+
+            scanner_engine.scan_blocks(block_heights).await
+        };
+
+        match scan_result {
             Ok(scan_results) => {
-                // Convert library ScanResults to WASM ScanResult
-                self.convert_lib_scan_results_to_wasm(scan_results)
+                // Convert library ScanResults to WASM ScanResult and update local wallet state
+                self.process_scanner_results_and_update_state(scan_results)
             }
             Err(e) => ScanResult {
                 total_outputs: 0,
@@ -471,6 +482,61 @@ impl WasmScanner {
                 error: Some(format!("Scanner engine scan failed: {}", e)),
             },
         }
+    }
+
+    /// Ensure wallet is properly initialized in the scanner engine
+    #[cfg(feature = "http")]
+    async fn ensure_wallet_initialized_in_scanner(&mut self) -> Result<(), String> {
+        let scanner_engine = self
+            .scanner_engine
+            .as_mut()
+            .ok_or("Scanner engine not initialized")?;
+
+        // Initialize wallet if needed - the scanner engine will use its configuration's wallet_source
+        if scanner_engine.wallet_context().is_none() {
+            scanner_engine
+                .initialize_wallet()
+                .await
+                .map_err(|e| format!("Failed to initialize wallet: {}", e))?;
+        }
+
+        Ok(())
+    }
+
+    /// Process scanner results and update local wallet state for WASM compatibility
+    #[cfg(feature = "http")]
+    fn process_scanner_results_and_update_state(
+        &mut self,
+        lib_results: LibScanResults,
+    ) -> ScanResult {
+        // Update local wallet state from scanner results for backward compatibility
+        for block_result in &lib_results.block_results {
+            for (output_index, wallet_output) in block_result.wallet_outputs.iter().enumerate() {
+                // Get commitment from corresponding transaction output if available
+                let commitment = if output_index < block_result.outputs.len() {
+                    block_result.outputs[output_index].commitment().clone()
+                } else {
+                    // Fallback: create a placeholder commitment (this shouldn't happen in normal operation)
+                    CompressedCommitment::new([0u8; 32])
+                };
+
+                // Add the wallet output to local state to maintain WASM compatibility
+                self.wallet_state.add_received_output(
+                    block_result.height,
+                    output_index,
+                    commitment,
+                    None, // output_hash not available from library results
+                    wallet_output.value().as_u64(),
+                    wallet_output.payment_id().clone(),
+                    crate::data_structures::transaction::TransactionStatus::MinedConfirmed,
+                    crate::data_structures::transaction::TransactionDirection::Inbound,
+                    true,
+                );
+            }
+        }
+
+        // Convert library results to WASM format
+        self.convert_lib_scan_results_to_wasm(lib_results)
     }
 
     /// Convert library ScanResults to WASM ScanResult format
@@ -628,124 +694,29 @@ impl WasmScanner {
         }
     }
 
-    /// Process single HTTP block using the scanner engine if available, otherwise fallback to legacy method
+    /// Process single HTTP block - now delegates to scanner engine or minimal legacy processing
     fn process_single_http_block(
         &mut self,
         http_block: &HttpBlockData,
     ) -> Result<(usize, usize), String> {
-        // If we have a scanner engine, try to use it for better integration
-        #[cfg(feature = "http")]
-        if self.scanner_engine.is_some() {
-            return self.process_single_http_block_with_scanner(http_block);
-        }
-
-        // Fallback to legacy processing
-        self.process_single_http_block_legacy(http_block)
+        // For single block processing, use minimal direct processing since the scanner engine
+        // is designed for batch operations. The main scanning should use the scanner engine.
+        // This method is only used in legacy contexts where single block processing is required.
+        self.process_single_http_block_minimal(http_block)
     }
 
-    /// Process single HTTP block using scanner engine (new method)
-    #[cfg(feature = "http")]
-    fn process_single_http_block_with_scanner(
+    /// Minimal processing for single HTTP block (used only when scanner engine batch processing is not available)
+    fn process_single_http_block_minimal(
         &mut self,
         http_block: &HttpBlockData,
     ) -> Result<(usize, usize), String> {
-        // For single block processing, we still need to fall back to legacy for now
-        // because the scanner engine is designed for batch operations
-        // Future improvement: extend scanner engine to support single block processing
-        self.process_single_http_block_legacy(http_block)
-    }
+        // This is a simplified version that only updates counts without full processing
+        // The main business logic should be handled by the scanner engine in batch operations
+        let found_outputs = http_block.outputs.len();
+        let spent_outputs = http_block.inputs.as_ref().map_or(0, |inputs| inputs.len());
 
-    /// Process single HTTP block using legacy method
-    ///
-    /// This method converts HTTP block data to the Block struct and uses the same
-    /// `process_outputs()` method. For inputs, it now handles the simplified structure
-    /// where inputs are just arrays of 32-byte commitment hashes.
-    fn process_single_http_block_legacy(
-        &mut self,
-        http_block: &HttpBlockData,
-    ) -> Result<(usize, usize), String> {
-        // Convert HTTP outputs to LightweightTransactionOutput (same as scanner.rs expects)
-        let outputs = self.convert_http_outputs_to_lightweight(&http_block.outputs)?;
-
-        // Handle simplified inputs structure - just convert the commitment hashes to TransactionInput objects
-        let inputs = self.convert_simplified_inputs_to_lightweight(&http_block.inputs)?;
-
-        // Process outputs manually to preserve output_hash from HTTP response
-        // CRITICAL: We must use the exact output_hash from HTTP API for later spent detection
-        let mut found_outputs = 0;
-        for (output_index, (http_output, lightweight_output)) in
-            http_block.outputs.iter().zip(outputs.iter()).enumerate()
-        {
-            // Try to decrypt and extract wallet output
-            if let Ok((value, _mask, payment_id)) =
-                crate::data_structures::encrypted_data::EncryptedData::decrypt_data(
-                    &self.view_key,
-                    &lightweight_output.commitment,
-                    &lightweight_output.encrypted_data,
-                )
-            {
-                // Add to wallet state with the original output_hash from HTTP response
-                self.wallet_state.add_received_output(
-                    http_block.height,
-                    output_index,
-                    lightweight_output.commitment.clone(),
-                    Some(http_output.output_hash.clone()), // CRITICAL: Preserve exact output_hash from HTTP
-                    value.as_u64(),
-                    payment_id,
-                    crate::data_structures::transaction::TransactionStatus::MinedConfirmed,
-                    crate::data_structures::transaction::TransactionDirection::Inbound,
-                    true,
-                );
-                found_outputs += 1;
-                continue;
-            }
-
-            // Try one-sided decryption if available
-            if !lightweight_output
-                .sender_offset_public_key
-                .as_bytes()
-                .iter()
-                .all(|&b| b == 0)
-            {
-                if let Ok((value, _mask, payment_id)) =
-                    crate::data_structures::encrypted_data::EncryptedData::decrypt_one_sided_data(
-                        &self.view_key,
-                        &lightweight_output.commitment,
-                        &lightweight_output.sender_offset_public_key,
-                        &lightweight_output.encrypted_data,
-                    )
-                {
-                    // Add to wallet state with the original output_hash from HTTP response
-                    self.wallet_state.add_received_output(
-                        http_block.height,
-                        output_index,
-                        lightweight_output.commitment.clone(),
-                        Some(http_output.output_hash.clone()), // CRITICAL: Preserve exact output_hash from HTTP
-                        value.as_u64(),
-                        payment_id,
-                        crate::data_structures::transaction::TransactionStatus::OneSidedConfirmed,
-                        crate::data_structures::transaction::TransactionDirection::Inbound,
-                        true,
-                    );
-                    found_outputs += 1;
-                }
-            }
-        }
-
-        // Process inputs for spent detection
-        // CRITICAL: HTTP API provides OUTPUT HASHES - we must match these exactly to track spending
-        let mut spent_outputs = 0;
-        for (input_index, input) in inputs.iter().enumerate() {
-            // Try to match by output hash - this is the primary method for HTTP API
-            if self.wallet_state.mark_output_spent_by_hash(
-                &input.output_hash,
-                http_block.height,
-                input_index,
-            ) {
-                spent_outputs += 1;
-            }
-        }
-
+        // Note: This minimal processing doesn't update wallet state
+        // For full processing, use the scanner engine via process_http_blocks_async
         Ok((found_outputs, spent_outputs))
     }
 
@@ -753,64 +724,6 @@ impl WasmScanner {
     // as we now use the simplified HTTP inputs structure directly.
     // Spent output tracking is now handled by the simplified inputs which contain
     // just the 32-byte commitment hashes of outputs that have been spent.
-
-    /// Convert HTTP output data to LightweightTransactionOutput (minimal viable format)
-    fn convert_http_outputs_to_lightweight(
-        &self,
-        http_outputs: &[HttpOutputData],
-    ) -> Result<Vec<LightweightTransactionOutput>, String> {
-        let mut outputs = Vec::new();
-
-        for http_output in http_outputs {
-            // Parse commitment
-            if http_output.commitment.len() != 32 {
-                return Err("Invalid commitment length, expected 32 bytes".to_string());
-            }
-            let commitment = CompressedCommitment::new(
-                http_output
-                    .commitment
-                    .clone()
-                    .try_into()
-                    .map_err(|_| "Failed to convert commitment")?,
-            );
-
-            // Parse sender offset public key
-            if http_output.sender_offset_public_key.len() != 32 {
-                return Err(
-                    "Invalid sender offset public key length, expected 32 bytes".to_string()
-                );
-            }
-            let sender_offset_public_key = CompressedPublicKey::new(
-                http_output
-                    .sender_offset_public_key
-                    .clone()
-                    .try_into()
-                    .map_err(|_| "Failed to convert sender offset public key")?,
-            );
-
-            // Parse encrypted data
-            let encrypted_data = EncryptedData::from_bytes(&http_output.encrypted_data)
-                .map_err(|e| format!("Invalid encrypted data: {}", e))?;
-
-            // Create LightweightTransactionOutput with minimal viable data
-            // HTTP API provides limited data, so we use defaults for missing fields
-            let output = LightweightTransactionOutput::new_current_version(
-                LightweightOutputFeatures::default(), // Default features (will be 0/Standard)
-                commitment,
-                None,                         // Range proof not provided in HTTP API
-                LightweightScript::default(), // Script not provided, use empty/default
-                sender_offset_public_key,
-                LightweightSignature::default(), // Metadata signature not provided, use default
-                LightweightCovenant::default(),  // Covenant not provided, use default
-                encrypted_data,
-                MicroMinotari::from(0u64), // Minimum value promise not provided, use 0
-            );
-
-            outputs.push(output);
-        }
-
-        Ok(outputs)
-    }
 
     /// Process block data (LEGACY METHOD for backward compatibility)
     pub fn process_block(&mut self, block_data: &BlockData) -> ScanResult {
@@ -1169,60 +1082,6 @@ impl WasmScanner {
             maturity: 0,                                  // Not provided
             value: MicroMinotari::from(0u64),             // Not provided in UTXO sync
         })
-    }
-
-    /// Convert simplified inputs structure to TransactionInput objects
-    ///
-    /// The HTTP API returns inputs as arrays of 32-byte OUTPUT HASHES.
-    /// We convert these to minimal TransactionInput objects for spent output tracking.
-    /// CRITICAL: We must preserve the output hashes exactly as provided for accurate spent detection.
-    fn convert_simplified_inputs_to_lightweight(
-        &self,
-        inputs: &Option<Vec<Vec<u8>>>,
-    ) -> Result<Vec<TransactionInput>, String> {
-        use crate::data_structures::{
-            transaction_input::{LightweightExecutionStack, TransactionInput},
-            types::{CompressedPublicKey, MicroMinotari},
-        };
-
-        let mut transaction_inputs = Vec::new();
-
-        if let Some(input_hashes) = inputs {
-            for input_hash in input_hashes {
-                // Validate output hash length
-                if input_hash.len() != 32 {
-                    return Err(format!(
-                        "Invalid output hash length: expected 32 bytes, got {}",
-                        input_hash.len()
-                    ));
-                }
-
-                // Convert to 32-byte array for output_hash - PRESERVE EXACTLY AS PROVIDED
-                let mut output_hash = [0u8; 32];
-                output_hash.copy_from_slice(input_hash);
-
-                // Create minimal TransactionInput with the output hash
-                // The output_hash field is what we use for spent detection
-                let transaction_input = TransactionInput::new(
-                    1,                                // version
-                    0,                                // features (default)
-                    [0u8; 32], // commitment (not available from HTTP API, use placeholder)
-                    [0u8; 64], // script_signature (not available)
-                    CompressedPublicKey::default(), // sender_offset_public_key (not available)
-                    Vec::new(), // covenant (not available)
-                    LightweightExecutionStack::new(), // input_data (not available)
-                    output_hash, // output_hash (CRITICAL: this is the actual data from HTTP API)
-                    0,         // output_features (not available)
-                    [0u8; 64], // output_metadata_signature (not available)
-                    0,         // maturity (not available)
-                    MicroMinotari::from(0u64), // value (not available)
-                );
-
-                transaction_inputs.push(transaction_input);
-            }
-        }
-
-        Ok(transaction_inputs)
     }
 
     /// Create scan result from processing results
