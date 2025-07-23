@@ -46,12 +46,12 @@ pub mod http_scanner;
 
 // Re-export core library components
 pub use scan_configuration::ScanConfiguration;
-pub use scan_results::{ScanResults, ScanProgress as LibraryScanProgress};
+pub use scan_results::{ScanProgress as LibraryScanProgress, ScanResults};
 pub use scanner_engine::ScannerEngine;
-#[cfg(feature = "storage")]
-pub use storage_manager::StorageManager;
 #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 pub use storage_manager::BackgroundWriterAdapter;
+#[cfg(feature = "storage")]
+pub use storage_manager::StorageManager;
 #[cfg(feature = "storage")]
 pub use storage_manager::{AdapterSelectionStrategy, DirectStorageAdapter, StorageManagerBuilder};
 pub use wallet_source::{WalletContext, WalletSource, WalletSourceType};

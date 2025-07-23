@@ -72,7 +72,7 @@ impl WalletSource {
                 let wallet = Wallet::new_from_seed_phrase(&phrase, passphrase.as_deref())?;
                 let view_key = wallet.get_view_key()?;
                 let entropy = wallet.get_entropy()?;
-                
+
                 Ok(WalletContext {
                     wallet,
                     view_key,
@@ -80,19 +80,22 @@ impl WalletSource {
                     source_type: WalletSourceType::SeedPhrase,
                 })
             }
-            WalletSource::ViewKey { view_key_hex, birthday } => {
+            WalletSource::ViewKey {
+                view_key_hex,
+                birthday,
+            } => {
                 // Create a view-only wallet from the view key
                 let view_key = parse_view_key(&view_key_hex)?;
                 let birthday = birthday.unwrap_or_else(|| Wallet::current_birthday());
-                
+
                 // Create wallet with zero master key (view-only)
                 let wallet = Wallet::new([0u8; 32], birthday);
-                
+
                 // Use the view key as entropy for now
                 let view_key_bytes = view_key.as_bytes().to_vec();
                 let mut entropy = [0u8; 32];
                 entropy.copy_from_slice(&view_key_bytes);
-                
+
                 Ok(WalletContext {
                     wallet,
                     view_key,
@@ -108,7 +111,7 @@ impl WalletSource {
                 })?;
                 let view_key = wallet.get_view_key()?;
                 let entropy = wallet.get_entropy()?;
-                
+
                 Ok(WalletContext {
                     wallet,
                     view_key,
@@ -120,7 +123,7 @@ impl WalletSource {
                 let wallet = Wallet::generate_new(None);
                 let view_key = wallet.get_view_key()?;
                 let entropy = wallet.get_entropy()?;
-                
+
                 Ok(WalletContext {
                     wallet,
                     view_key,
@@ -130,15 +133,18 @@ impl WalletSource {
             }
         }
     }
-    
+
     /// Create a WalletSource from a seed phrase
-    pub fn from_seed_phrase(phrase: impl Into<String>, passphrase: Option<impl Into<String>>) -> Self {
+    pub fn from_seed_phrase(
+        phrase: impl Into<String>,
+        passphrase: Option<impl Into<String>>,
+    ) -> Self {
         Self::SeedPhrase {
             phrase: phrase.into(),
             passphrase: passphrase.map(|p| p.into()),
         }
     }
-    
+
     /// Create a WalletSource from a view key
     pub fn from_view_key(view_key_hex: impl Into<String>, birthday: Option<u64>) -> Self {
         Self::ViewKey {
@@ -146,12 +152,14 @@ impl WalletSource {
             birthday,
         }
     }
-    
+
     /// Create a WalletSource from an existing wallet
     pub fn from_existing_wallet(wallet: Wallet) -> Self {
-        Self::ExistingWallet { wallet: Some(wallet) }
+        Self::ExistingWallet {
+            wallet: Some(wallet),
+        }
     }
-    
+
     /// Create a WalletSource for generating a new wallet
     pub fn generate_new(passphrase: Option<impl Into<String>>) -> Self {
         Self::GenerateNew {
@@ -202,13 +210,12 @@ impl fmt::Display for WalletSourceType {
 
 /// Parse a hex-encoded view key into a PrivateKey
 fn parse_view_key(view_key_hex: &str) -> Result<PrivateKey, LightweightWalletError> {
-    let view_key_bytes = hex::decode(view_key_hex).map_err(|_| {
-        LightweightWalletError::InvalidArgument {
+    let view_key_bytes =
+        hex::decode(view_key_hex).map_err(|_| LightweightWalletError::InvalidArgument {
             argument: "view_key_hex".to_string(),
             value: view_key_hex.to_string(),
             message: "Invalid hex format for view key".to_string(),
-        }
-    })?;
+        })?;
 
     if view_key_bytes.len() != 32 {
         return Err(LightweightWalletError::InvalidArgument {
@@ -218,13 +225,14 @@ fn parse_view_key(view_key_hex: &str) -> Result<PrivateKey, LightweightWalletErr
         });
     }
 
-    let view_key_array: [u8; 32] = view_key_bytes.try_into().map_err(|_| {
-        LightweightWalletError::InvalidArgument {
-            argument: "view_key_bytes".to_string(),
-            value: "byte_conversion".to_string(),
-            message: "Failed to convert view key bytes to array".to_string(),
-        }
-    })?;
+    let view_key_array: [u8; 32] =
+        view_key_bytes
+            .try_into()
+            .map_err(|_| LightweightWalletError::InvalidArgument {
+                argument: "view_key_bytes".to_string(),
+                value: "byte_conversion".to_string(),
+                message: "Failed to convert view key bytes to array".to_string(),
+            })?;
 
     Ok(PrivateKey::new(view_key_array))
 }
@@ -259,7 +267,10 @@ mod tests {
         let view_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let source = WalletSource::from_view_key(view_key, Some(12345));
         match source {
-            WalletSource::ViewKey { view_key_hex, birthday } => {
+            WalletSource::ViewKey {
+                view_key_hex,
+                birthday,
+            } => {
                 assert_eq!(view_key_hex, view_key);
                 assert_eq!(birthday, Some(12345));
             }

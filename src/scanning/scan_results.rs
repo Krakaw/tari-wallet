@@ -1,14 +1,13 @@
 //! Scan results and progress reporting for the scanner library
 
-use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
+use crate::common::format_number;
 use crate::data_structures::{
-    transaction_output::LightweightTransactionOutput,
-    wallet_output::LightweightWalletOutput,
+    transaction_output::LightweightTransactionOutput, wallet_output::LightweightWalletOutput,
     wallet_transaction::WalletState,
 };
 use crate::errors::{LightweightWalletError, LightweightWalletResult};
-use crate::common::format_number;
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
 
 /// Structured progress reporting for scan operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,7 +46,10 @@ pub enum ScanPhase {
     /// Connecting to blockchain node
     Connecting,
     /// Scanning blocks for outputs
-    Scanning { batch_index: usize, total_batches: Option<usize> },
+    Scanning {
+        batch_index: usize,
+        total_batches: Option<usize>,
+    },
     /// Processing and extracting wallet outputs
     Processing,
     /// Saving results to storage
@@ -72,7 +74,7 @@ impl ScanProgress {
     /// Create a new scan progress tracker
     pub fn new(start_height: u64, target_height: Option<u64>) -> Self {
         let total_blocks = target_height.map(|end| end.saturating_sub(start_height) + 1);
-        
+
         Self {
             current_height: start_height,
             target_height,
@@ -293,7 +295,7 @@ impl ScanResults {
     ) -> Self {
         let end_time = Instant::now();
         let total_duration = end_time.duration_since(start_time);
-        
+
         Self {
             scan_config_summary: scan_config_summary.clone(),
             wallet_state,
@@ -361,10 +363,12 @@ impl ScanResults {
 
     /// Export summary to JSON (since full serialization is complex due to Instant fields)
     pub fn summary_to_json(&self) -> LightweightWalletResult<String> {
-        serde_json::to_string_pretty(&self.summary())
-            .map_err(|e| LightweightWalletError::ConfigurationError(
-                format!("Failed to serialize scan result summary: {}", e)
+        serde_json::to_string_pretty(&self.summary()).map_err(|e| {
+            LightweightWalletError::ConfigurationError(format!(
+                "Failed to serialize scan result summary: {}",
+                e
             ))
+        })
     }
 }
 
@@ -449,7 +453,10 @@ impl BlockScanResult {
 
     /// Get total value of wallet outputs in this block
     pub fn total_value(&self) -> u64 {
-        self.wallet_outputs.iter().map(|wo| wo.value().as_u64()).sum()
+        self.wallet_outputs
+            .iter()
+            .map(|wo| wo.value().as_u64())
+            .sum()
     }
 
     /// Check if this block has any wallet outputs
@@ -530,7 +537,7 @@ pub fn create_scan_result_summary(
 ) -> ScanResultSummary {
     let (total_received, total_spent, _, unspent_count, spent_count) = wallet_state.get_summary();
     let blocks_scanned = end_height.map(|end| end - start_height + 1).unwrap_or(0);
-    
+
     ScanResultSummary {
         blocks_scanned,
         outputs_found: unspent_count as u64,

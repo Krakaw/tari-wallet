@@ -13,7 +13,7 @@ use std::time::Instant;
 use super::BlockchainScanner;
 
 use super::{
-    scan_results::{BlockScanResult, ScanConfigSummary, ScanProgress, ScanResults, ScanPhase},
+    scan_results::{BlockScanResult, ScanConfigSummary, ScanPhase, ScanProgress, ScanResults},
     wallet_source::{WalletContext, WalletSource},
     ScanConfig, ScanConfiguration,
 };
@@ -32,10 +32,7 @@ pub struct ScannerEngine {
 #[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
 impl ScannerEngine {
     /// Create a new scanner engine with a blockchain scanner
-    pub fn new(
-        scanner: Box<dyn BlockchainScanner>,
-        configuration: ScanConfiguration,
-    ) -> Self {
+    pub fn new(scanner: Box<dyn BlockchainScanner>, configuration: ScanConfiguration) -> Self {
         Self {
             scanner,
             wallet_context: None,
@@ -96,25 +93,31 @@ impl ScannerEngine {
             if let Some(callback) = &progress_callback {
                 callback(progress.clone());
             }
-            
+
             self.initialize_wallet().await?;
         }
 
         // Set up extraction config if wallet context is available
         if let Some(wallet_context) = &self.wallet_context {
-            self.configuration.extraction_config = ExtractionConfig::with_private_key(wallet_context.view_key.clone());
+            self.configuration.extraction_config =
+                ExtractionConfig::with_private_key(wallet_context.view_key.clone());
         }
 
         // Create scan config for the blockchain scanner
         let scan_config = self.create_scan_config(start_height, Some(end_height))?;
 
         // Perform the actual scanning
-        progress.phase = ScanPhase::Scanning { batch_index: 0, total_batches: None };
+        progress.phase = ScanPhase::Scanning {
+            batch_index: 0,
+            total_batches: None,
+        };
         if let Some(callback) = &progress_callback {
             callback(progress.clone());
         }
 
-        let block_results = self.scan_with_progress(scan_config, progress_callback.clone()).await?;
+        let block_results = self
+            .scan_with_progress(scan_config, progress_callback.clone())
+            .await?;
 
         // Aggregate results
         progress.phase = ScanPhase::Processing;
@@ -180,7 +183,8 @@ impl ScannerEngine {
 
         // Set up extraction config if wallet context is available
         if let Some(wallet_context) = &self.wallet_context {
-            self.configuration.extraction_config = ExtractionConfig::with_private_key(wallet_context.view_key.clone());
+            self.configuration.extraction_config =
+                ExtractionConfig::with_private_key(wallet_context.view_key.clone());
         }
 
         // Get blocks from the blockchain scanner
@@ -201,20 +205,23 @@ impl ScannerEngine {
             blocks,
             &self.configuration.extraction_config,
         )?;
-        
+
         // Convert scanner BlockScanResult to scan_results BlockScanResult
-        let block_results = scanner_results.into_iter().map(|scanner_result| {
-            BlockScanResult {
-                height: scanner_result.height,
-                block_hash: scanner_result.block_hash,
-                outputs: scanner_result.outputs,
-                wallet_outputs: scanner_result.wallet_outputs,
-                mined_timestamp: scanner_result.mined_timestamp,
-                transaction_count: 0, // Not provided by scanner
-                processing_time: None, // Not tracked yet
-                errors: vec![], // Not tracked yet
-            }
-        }).collect();
+        let block_results = scanner_results
+            .into_iter()
+            .map(|scanner_result| {
+                BlockScanResult {
+                    height: scanner_result.height,
+                    block_hash: scanner_result.block_hash,
+                    outputs: scanner_result.outputs,
+                    wallet_outputs: scanner_result.wallet_outputs,
+                    mined_timestamp: scanner_result.mined_timestamp,
+                    transaction_count: 0,  // Not provided by scanner
+                    processing_time: None, // Not tracked yet
+                    errors: vec![],        // Not tracked yet
+                }
+            })
+            .collect();
 
         // Aggregate results
         let scan_results = self.aggregate_results(
@@ -236,33 +243,33 @@ impl ScannerEngine {
     }
 
     /// Scan for specific UTXOs by commitment
-    pub async fn search_utxos(&mut self, commitments: Vec<Vec<u8>>) -> LightweightWalletResult<ScanResults> {
+    pub async fn search_utxos(
+        &mut self,
+        commitments: Vec<Vec<u8>>,
+    ) -> LightweightWalletResult<ScanResults> {
         let start_time = Instant::now();
 
         let scanner_results = self.scanner.search_utxos(commitments).await?;
-        
+
         // Convert scanner BlockScanResult to scan_results BlockScanResult
-        let block_results = scanner_results.into_iter().map(|scanner_result| {
-            BlockScanResult {
-                height: scanner_result.height,
-                block_hash: scanner_result.block_hash,
-                outputs: scanner_result.outputs,
-                wallet_outputs: scanner_result.wallet_outputs,
-                mined_timestamp: scanner_result.mined_timestamp,
-                transaction_count: 0, // Not provided by scanner
-                processing_time: None, // Not tracked yet
-                errors: vec![], // Not tracked yet
-            }
-        }).collect();
+        let block_results = scanner_results
+            .into_iter()
+            .map(|scanner_result| {
+                BlockScanResult {
+                    height: scanner_result.height,
+                    block_hash: scanner_result.block_hash,
+                    outputs: scanner_result.outputs,
+                    wallet_outputs: scanner_result.wallet_outputs,
+                    mined_timestamp: scanner_result.mined_timestamp,
+                    transaction_count: 0,  // Not provided by scanner
+                    processing_time: None, // Not tracked yet
+                    errors: vec![],        // Not tracked yet
+                }
+            })
+            .collect();
 
         // For UTXO search, we don't have a specific height range
-        let scan_results = self.aggregate_results(
-            0,
-            None,
-            None,
-            block_results,
-            start_time,
-        )?;
+        let scan_results = self.aggregate_results(0, None, None, block_results, start_time)?;
 
         Ok(scan_results)
     }
@@ -270,7 +277,7 @@ impl ScannerEngine {
     /// Determine the scan range based on configuration
     async fn determine_scan_range(&mut self) -> LightweightWalletResult<(u64, u64)> {
         let start_height = self.configuration.start_height;
-        
+
         let end_height = match self.configuration.end_height {
             Some(end) => end,
             None => {
@@ -284,7 +291,10 @@ impl ScannerEngine {
             return Err(LightweightWalletError::InvalidArgument {
                 argument: "start_height".to_string(),
                 value: start_height.to_string(),
-                message: format!("Start height {} is greater than end height {}", start_height, end_height),
+                message: format!(
+                    "Start height {} is greater than end height {}",
+                    start_height, end_height
+                ),
             });
         }
 
@@ -292,7 +302,11 @@ impl ScannerEngine {
     }
 
     /// Create a scan config for the blockchain scanner
-    fn create_scan_config(&self, start_height: u64, end_height: Option<u64>) -> LightweightWalletResult<ScanConfig> {
+    fn create_scan_config(
+        &self,
+        start_height: u64,
+        end_height: Option<u64>,
+    ) -> LightweightWalletResult<ScanConfig> {
         Ok(ScanConfig {
             start_height,
             end_height,
@@ -323,7 +337,10 @@ impl ScannerEngine {
                     total_blocks: None, // Will be calculated
                     elapsed: old_progress.elapsed,
                     estimated_remaining: None, // Will be calculated by the new progress tracker
-                    phase: ScanPhase::Scanning { batch_index: 0, total_batches: None },
+                    phase: ScanPhase::Scanning {
+                        batch_index: 0,
+                        total_batches: None,
+                    },
                 };
                 cb(new_progress);
             }) as super::ProgressCallback
@@ -338,22 +355,28 @@ impl ScannerEngine {
             }
         };
 
-        let scanner_results = self.scanner.scan_blocks(config_with_callback.config).await?;
-        
+        let scanner_results = self
+            .scanner
+            .scan_blocks(config_with_callback.config)
+            .await?;
+
         // Convert scanner BlockScanResult to scan_results BlockScanResult
-        let converted_results = scanner_results.into_iter().map(|scanner_result| {
-            BlockScanResult {
-                height: scanner_result.height,
-                block_hash: scanner_result.block_hash,
-                outputs: scanner_result.outputs,
-                wallet_outputs: scanner_result.wallet_outputs,
-                mined_timestamp: scanner_result.mined_timestamp,
-                transaction_count: 0, // Not provided by scanner
-                processing_time: None, // Not tracked yet
-                errors: vec![], // Not tracked yet
-            }
-        }).collect();
-        
+        let converted_results = scanner_results
+            .into_iter()
+            .map(|scanner_result| {
+                BlockScanResult {
+                    height: scanner_result.height,
+                    block_hash: scanner_result.block_hash,
+                    outputs: scanner_result.outputs,
+                    wallet_outputs: scanner_result.wallet_outputs,
+                    mined_timestamp: scanner_result.mined_timestamp,
+                    transaction_count: 0,  // Not provided by scanner
+                    processing_time: None, // Not tracked yet
+                    errors: vec![],        // Not tracked yet
+                }
+            })
+            .collect();
+
         Ok(converted_results)
     }
 
@@ -367,11 +390,13 @@ impl ScannerEngine {
         start_time: Instant,
     ) -> LightweightWalletResult<ScanResults> {
         // Calculate summary statistics
-        let total_outputs = block_results.iter()
+        let total_outputs = block_results
+            .iter()
             .map(|r| r.wallet_outputs.len() as u64)
             .sum();
 
-        let total_value = block_results.iter()
+        let total_value = block_results
+            .iter()
             .flat_map(|r| &r.wallet_outputs)
             .map(|wo| wo.value().as_u64())
             .sum();
@@ -403,12 +428,7 @@ impl ScannerEngine {
         progress.phase = ScanPhase::Completed;
 
         // Create and return scan results
-        let mut scan_results = ScanResults::new(
-            config_summary,
-            wallet_state,
-            progress,
-            start_time,
-        );
+        let mut scan_results = ScanResults::new(config_summary, wallet_state, progress, start_time);
 
         // Add block results
         scan_results.add_block_results(block_results);
@@ -506,9 +526,7 @@ impl ScannerEngineBuilder {
     /// Build the scanner engine
     pub fn build(self) -> LightweightWalletResult<ScannerEngine> {
         let scanner = self.scanner.ok_or_else(|| {
-            LightweightWalletError::ConfigurationError(
-                "Blockchain scanner is required".to_string()
-            )
+            LightweightWalletError::ConfigurationError("Blockchain scanner is required".to_string())
         })?;
 
         let mut configuration = self.configuration.unwrap_or_default();
@@ -539,7 +557,7 @@ mod tests {
         let scanner = Box::new(MockBlockchainScanner::new());
         let config = ScanConfiguration::new(1000);
         let engine = ScannerEngine::new(scanner, config);
-        
+
         assert!(engine.wallet_context().is_none());
         assert_eq!(engine.configuration().start_height, 1000);
     }
@@ -572,7 +590,7 @@ mod tests {
 
         let config = ScanConfiguration::new(1000);
         let mut engine = ScannerEngine::new(Box::new(scanner), config);
-        
+
         let tip_info = engine.get_tip_info().await.unwrap();
         assert_eq!(tip_info.best_block_height, 5000);
         assert_eq!(tip_info.pruned_height, 2500);
@@ -591,7 +609,7 @@ mod tests {
 
         let config = ScanConfiguration::new_range(1000, 2000);
         let mut engine = ScannerEngine::new(Box::new(scanner), config);
-        
+
         let (start, end) = engine.determine_scan_range().await.unwrap();
         assert_eq!(start, 1000);
         assert_eq!(end, 2000);
@@ -610,7 +628,7 @@ mod tests {
 
         let config = ScanConfiguration::new(1000);
         let mut engine = ScannerEngine::new(Box::new(scanner), config);
-        
+
         let (start, end) = engine.determine_scan_range().await.unwrap();
         assert_eq!(start, 1000);
         assert_eq!(end, 5000); // Should use tip height
@@ -621,10 +639,10 @@ mod tests {
         let scanner = Box::new(MockBlockchainScanner::new());
         let config = ScanConfiguration::new(1000);
         let mut engine = ScannerEngine::new(scanner, config);
-        
+
         let result = engine.scan_blocks(vec![]).await;
         assert!(result.is_err());
-        
+
         if let Err(LightweightWalletError::InvalidArgument { argument, .. }) = result {
             assert_eq!(argument, "heights");
         } else {

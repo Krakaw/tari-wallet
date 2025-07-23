@@ -1,12 +1,14 @@
 //! Scan configuration management for the scanner library
 
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
-use crate::extraction::ExtractionConfig;
 use crate::errors::{LightweightWalletError, LightweightWalletResult};
+use crate::extraction::ExtractionConfig;
 use crate::key_management::{KeyManager, KeyStore};
-use crate::scanning::wallet_source::{WalletSource as LibWalletSource, WalletContext as LibWalletContext};
+use crate::scanning::wallet_source::{
+    WalletContext as LibWalletContext, WalletSource as LibWalletSource,
+};
 
 /// Comprehensive configuration structure for all scan parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,7 +262,10 @@ impl ScanConfiguration {
                 return Err(LightweightWalletError::InvalidArgument {
                     argument: "end_height".to_string(),
                     value: end_height.to_string(),
-                    message: format!("End height ({}) cannot be less than start height ({})", end_height, self.start_height),
+                    message: format!(
+                        "End height ({}) cannot be less than start height ({})",
+                        end_height, self.start_height
+                    ),
                 });
             }
         }
@@ -301,7 +306,9 @@ impl ScanConfiguration {
             return Err(LightweightWalletError::InvalidArgument {
                 argument: "max_addresses_per_account".to_string(),
                 value: self.max_addresses_per_account.to_string(),
-                message: "Max addresses per account should not exceed 10000 for performance reasons".to_string(),
+                message:
+                    "Max addresses per account should not exceed 10000 for performance reasons"
+                        .to_string(),
             });
         }
 
@@ -341,10 +348,7 @@ impl ScanConfiguration {
 #[derive(Debug, Clone)]
 pub enum ScanBlocks {
     /// Scan a range of blocks
-    Range {
-        start: u64,
-        end: Option<u64>,
-    },
+    Range { start: u64, end: Option<u64> },
     /// Scan specific blocks
     Specific(Vec<u64>),
 }
@@ -397,7 +401,8 @@ impl WalletSource {
                     return Err(LightweightWalletError::InvalidArgument {
                         argument: "view_key".to_string(),
                         value: format!("{} characters", key.len()),
-                        message: "View key must be exactly 64 hex characters (32 bytes)".to_string(),
+                        message: "View key must be exactly 64 hex characters (32 bytes)"
+                            .to_string(),
                     });
                 }
                 if !key.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -442,7 +447,10 @@ impl std::fmt::Debug for WalletContext {
         f.debug_struct("WalletContext")
             .field("source", &self.source)
             .field("extraction_config", &self.extraction_config)
-            .field("key_manager", &self.key_manager.as_ref().map(|_| "KeyManager"))
+            .field(
+                "key_manager",
+                &self.key_manager.as_ref().map(|_| "KeyManager"),
+            )
             .field("key_store", &self.key_store)
             .finish()
     }

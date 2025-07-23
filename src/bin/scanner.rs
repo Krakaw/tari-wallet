@@ -124,8 +124,8 @@ use lightweight_wallet_libs::{
         seed_phrase::{mnemonic_to_bytes, CipherSeed},
     },
     scanning::{
-        BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder,
-        ScanConfiguration, scan_configuration::OutputFormat,
+        scan_configuration::OutputFormat, BlockchainScanner, GrpcBlockchainScanner,
+        GrpcScannerBuilder, ScanConfiguration,
     },
     wallet::Wallet,
     KeyManagementError, LightweightWalletError,
@@ -252,7 +252,10 @@ impl CliScanConfig {
         self.scan_config.end_height.unwrap_or_else(|| {
             // If scanning specific blocks, use the max block
             if let Some(ref blocks) = self.scan_config.specific_blocks {
-                *blocks.iter().max().unwrap_or(&self.scan_config.start_height)
+                *blocks
+                    .iter()
+                    .max()
+                    .unwrap_or(&self.scan_config.start_height)
             } else {
                 self.scan_config.start_height + 1000 // Default range when no end specified
             }
@@ -510,7 +513,8 @@ impl ScannerStorage {
 
         // Load scan context from database if needed
         if scan_context.is_none() && self.wallet_id.is_some() {
-            self.load_scan_context_from_wallet(config.scan_config.quiet).await
+            self.load_scan_context_from_wallet(config.scan_config.quiet)
+                .await
         } else {
             Ok(None)
         }
@@ -1090,7 +1094,10 @@ impl ScannerStorage {
     }
 
     /// Display storage information
-    pub async fn display_storage_info(&self, config: &CliScanConfig) -> LightweightWalletResult<()> {
+    pub async fn display_storage_info(
+        &self,
+        config: &CliScanConfig,
+    ) -> LightweightWalletResult<()> {
         if config.scan_config.quiet {
             return Ok(());
         }
@@ -1296,10 +1303,8 @@ impl BlockHeightRange {
     }
 
     pub fn into_scan_config(self, args: &CliArgs) -> LightweightWalletResult<CliScanConfig> {
-        let output_format: OutputFormat = args
-            .format
-            .parse()
-            .map_err(|e: LightweightWalletError| e)?;
+        let output_format: OutputFormat =
+            args.format.parse().map_err(|e: LightweightWalletError| e)?;
 
         let scan_config = if let Some(ref blocks) = self.block_heights {
             ScanConfiguration::new_specific_blocks(blocks.clone())
