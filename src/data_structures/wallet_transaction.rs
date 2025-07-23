@@ -274,22 +274,10 @@ impl WalletState {
 
                     // Use the value from our stored transaction, not the input
                     let spent_value = transaction.value;
-
-                    // Update balance and counters for the spent inbound transaction
-                    #[cfg(target_arch = "wasm32")]
-                    let old_total_spent = self.total_spent;
                     self.total_spent += spent_value;
                     self.running_balance -= spent_value as i64;
                     self.unspent_count -= 1;
                     self.spent_count += 1;
-
-                    // Debug logging for spent value tracking
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        let hash_hex = hex::encode(output_hash);
-                        web_sys::console::log_1(&format!("💰 SPENT VALUE UPDATE: Hash {} - Value: {} μT, Total spent: {} -> {} μT", 
-                            hash_hex, spent_value, old_total_spent, self.total_spent).into());
-                    }
 
                     // Create an outbound transaction record for the spending
                     // (this is just for tracking/display, doesn't affect balance)

@@ -261,6 +261,7 @@ impl GrpcBlockchainScanner {
             outputs,
             inputs,
             kernels,
+            http_output_hashes: None, // GRPC doesn't use HTTP output hashes
         })
     }
 
