@@ -1,6 +1,6 @@
 ## Relevant Files
 
-- `src/wasm.rs` - Enhanced WASM library with seed phrase scanning functions (with/without passphrase), comprehensive validation and error handling
+- `src/wasm.rs` - Enhanced WASM library with comprehensive parameter conversion, validation utilities, and JavaScript-friendly configuration API
 - `examples/wasm/scanner.js` - Node.js CLI script that uses the WASM package
 - `examples/wasm/pkg/` - Generated WASM package directory (created by wasm-pack)
 - `examples/wasm/package.json` - Updated Node.js package with CLI dependencies (commander, chalk, ora, inquirer)
@@ -28,8 +28,8 @@
 - [ ] 2.0 Create Rust WASM wrapper functions for scanning functionality  
   - [x] 2.1 Import and re-export required types from main library (Wallet, HttpBlockchainScanner, ScanConfiguration)
   - [x] 2.2 Create `scan_with_seed_phrase` WASM export function with JavaScript-compatible parameters
-  - [ ] 2.3 Create `scan_with_view_key` WASM export function with JavaScript-compatible parameters  
-  - [ ] 2.4 Implement parameter conversion from JavaScript objects to Rust ScanConfiguration
+  - [x] 2.3 Create `scan_with_view_key` WASM export function with JavaScript-compatible parameters  
+  - [x] 2.4 Implement parameter conversion from JavaScript objects to Rust ScanConfiguration
   - [ ] 2.5 Add WASM-compatible progress callback using JavaScript callbacks
   - [ ] 2.6 Convert Rust scan results to JavaScript-serializable objects using serde_wasm_bindgen
   - [ ] 2.7 Handle WASM memory management and proper cleanup of large scan results
