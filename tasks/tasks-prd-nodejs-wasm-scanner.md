@@ -40,7 +40,7 @@
   - [x] 3.1 Create `examples/wasm/scanner.js` with command-line argument parsing (using commander.js or similar)
   - [x] 3.1.1 Fix WASM build errors - ProgressReport type, WalletSource serialization, field access, unused variables
   - [x] 3.2 Implement identical CLI arguments: --seed-phrase, --view-key, --base-url, --from-block, --to-block, --blocks
-  - [ ] 3.3 Import and initialize WASM module in Node.js script
+  - [x] 3.3 Import and initialize WASM module in Node.js script
   - [ ] 3.4 Implement argument validation and error messages matching scanner.rs
   - [ ] 3.5 Add help text and usage examples identical to Rust scanner
   - [ ] 3.6 Handle process.argv parsing and execute appropriate scan function

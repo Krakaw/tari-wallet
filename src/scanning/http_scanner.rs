@@ -684,7 +684,7 @@ impl HttpBlockchainScanner {
         Ok(None)
     }
 
-    /// Fetch blocks by heights using HTTP API - uses sync_utxos_by_block endpoint
+    /// Fetch blocks by heights using HTTP API - uses sync_utxos_by_block endpoint with pagination
     async fn fetch_blocks_by_heights(
         &self,
         heights: Vec<u64>,
@@ -755,22 +755,90 @@ impl HttpBlockchainScanner {
             .into(),
         );
 
-        // Use sync_utxos_by_block to get all blocks in the range
-        let limit = (end_height - start_height + 1) as u64;
-        let sync_response = self
-            .sync_utxos_by_block(&start_header_hash, None, limit)
-            .await?;
+        // Use sync_utxos_by_block to get all blocks in the range with pagination
+        let total_blocks_needed = (end_height - start_height + 1) as u64;
+        let mut all_blocks = Vec::new();
+        let mut current_header_hash = start_header_hash;
+        let mut remaining_blocks = total_blocks_needed;
+
+        // Use a reasonable page size (e.g., 100 blocks per request)
+        const PAGE_SIZE: u64 = 100;
+
+        loop {
+            let limit = std::cmp::min(PAGE_SIZE, remaining_blocks);
+
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::log_1(
+                &format!(
+                    "DEBUG: Requesting page with header: {}, limit: {}, remaining: {}",
+                    current_header_hash, limit, remaining_blocks
+                )
+                .into(),
+            );
+
+            let sync_response = self
+                .sync_utxos_by_block(&current_header_hash, None, limit)
+                .await?;
+
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::log_1(
+                &format!(
+                    "DEBUG: sync_utxos_by_block returned {} blocks, has_next_page: {}",
+                    sync_response.blocks.len(),
+                    sync_response.has_next_page
+                )
+                .into(),
+            );
+
+            // Add blocks from this page
+            all_blocks.extend(sync_response.blocks);
+            remaining_blocks = remaining_blocks.saturating_sub(sync_response.blocks.len() as u64);
+
+            // Check if we should continue pagination
+            if !sync_response.has_next_page || remaining_blocks == 0 {
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::log_1(
+                    &format!(
+                        "DEBUG: Pagination complete. Total blocks collected: {}, remaining: {}",
+                        all_blocks.len(),
+                        remaining_blocks
+                    )
+                    .into(),
+                );
+                break;
+            }
+
+            // Get the next header hash for pagination
+            if let Some(next_header_bytes) = sync_response.next_header_to_scan {
+                current_header_hash = hex::encode(&next_header_bytes);
+
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::log_1(
+                    &format!("DEBUG: Next header hash: {}", current_header_hash).into(),
+                );
+            } else {
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::error_1(
+                    &"DEBUG: has_next_page is true but next_header_to_scan is None".into(),
+                );
+                break;
+            }
+        }
 
         #[cfg(target_arch = "wasm32")]
         web_sys::console::log_1(
             &format!(
-                "DEBUG: sync_utxos_by_block returned {} blocks",
-                sync_response.blocks.len()
+                "DEBUG: fetch_blocks_by_heights completed with {} total blocks",
+                all_blocks.len()
             )
             .into(),
         );
 
-        Ok(sync_response)
+        Ok(HttpBlockResponse {
+            blocks: all_blocks,
+            has_next_page: false,      // We've fetched all requested blocks
+            next_header_to_scan: None, // Not needed since we're done
+        })
     }
 
     /// Get header by height using Tari base node API
