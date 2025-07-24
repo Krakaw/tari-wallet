@@ -794,3 +794,610 @@ mod duration_option_serde {
         Ok(secs_opt.map(Duration::from_secs))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data_structures::wallet_transaction::WalletState;
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn test_scan_phase_default() {
+        let phase = ScanPhase::default();
+        assert!(matches!(phase, ScanPhase::Initializing));
+    }
+
+    #[test]
+    fn test_scan_phase_debug() {
+        let phase = ScanPhase::Scanning {
+            batch_index: 5,
+            total_batches: Some(10),
+        };
+        let debug_str = format!("{:?}", phase);
+        assert!(debug_str.contains("Scanning"));
+        assert!(debug_str.contains("5"));
+        assert!(debug_str.contains("10"));
+    }
+
+    #[test]
+    fn test_scan_progress_new() {
+        let progress = ScanProgress::new(1000, Some(2000));
+        assert_eq!(progress.current_height, 1000);
+        assert_eq!(progress.target_height, Some(2000));
+        assert_eq!(progress.blocks_scanned, 0);
+        assert_eq!(progress.total_blocks, Some(1001)); // 2000 - 1000 + 1
+        assert_eq!(progress.outputs_found, 0);
+        assert_eq!(progress.outputs_spent, 0);
+        assert_eq!(progress.total_value, 0);
+        assert_eq!(progress.scan_rate, 0.0);
+        assert!(matches!(progress.phase, ScanPhase::Initializing));
+    }
+
+    #[test]
+    fn test_scan_progress_new_open_ended() {
+        let progress = ScanProgress::new(1000, None);
+        assert_eq!(progress.current_height, 1000);
+        assert_eq!(progress.target_height, None);
+        assert_eq!(progress.total_blocks, None);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_scan_progress_update() {
+        let mut progress = ScanProgress::new(1000, Some(2000));
+        let elapsed = Duration::from_secs(10);
+
+        progress.update(1500, 500, 25, 5, 1000000, elapsed);
+
+        assert_eq!(progress.current_height, 1500);
+        assert_eq!(progress.blocks_scanned, 500);
+        assert_eq!(progress.outputs_found, 25);
+        assert_eq!(progress.outputs_spent, 5);
+        assert_eq!(progress.total_value, 1000000);
+        assert_eq!(progress.elapsed, elapsed);
+
+        // Scan rate should be calculated: 500 blocks / 10 seconds = 50 blocks/sec
+        assert_eq!(progress.scan_rate, 50.0);
+
+        // Estimated remaining should be calculated: 501 remaining blocks / 50 blocks/sec = ~10 seconds
+        assert!(progress.estimated_remaining.is_some());
+        let remaining = progress.estimated_remaining.unwrap();
+        assert!((remaining.as_secs_f64() - 10.02).abs() < 0.1); // 501/50 = 10.02
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[test]
+    fn test_scan_progress_update_wasm() {
+        let mut progress = ScanProgress::new(1000, Some(2000));
+        let elapsed_seconds = 10.0;
+
+        progress.update_wasm(1500, 500, 25, 5, 1000000, elapsed_seconds);
+
+        assert_eq!(progress.current_height, 1500);
+        assert_eq!(progress.blocks_scanned, 500);
+        assert_eq!(progress.outputs_found, 25);
+        assert_eq!(progress.outputs_spent, 5);
+        assert_eq!(progress.total_value, 1000000);
+        assert_eq!(progress.elapsed_seconds, elapsed_seconds);
+
+        // Scan rate should be calculated: 500 blocks / 10 seconds = 50 blocks/sec
+        assert_eq!(progress.scan_rate, 50.0);
+
+        // Estimated remaining should be calculated
+        assert!(progress.estimated_remaining_seconds.is_some());
+        let remaining = progress.estimated_remaining_seconds.unwrap();
+        assert!((remaining - 10.02).abs() < 0.1); // 501/50 = 10.02
+    }
+
+    #[test]
+    fn test_scan_progress_set_phase() {
+        let mut progress = ScanProgress::new(1000, Some(2000));
+        progress.set_phase(ScanPhase::Scanning {
+            batch_index: 1,
+            total_batches: Some(5),
+        });
+
+        assert!(matches!(
+            progress.phase,
+            ScanPhase::Scanning {
+                batch_index: 1,
+                total_batches: Some(5)
+            }
+        ));
+    }
+
+    #[test]
+    fn test_scan_progress_completion_percentage() {
+        let mut progress = ScanProgress::new(1000, Some(2000));
+
+        // Initially 0%
+        assert_eq!(progress.completion_percentage(), 0.0);
+
+        // Update to 50% completion (500 out of 1001 blocks)
+        progress.blocks_scanned = 500;
+        let percentage = progress.completion_percentage();
+        assert!((percentage - 49.95).abs() < 0.1); // 500/1001 ≈ 49.95%
+
+        // Update to 100% completion
+        progress.blocks_scanned = 1001;
+        assert!((progress.completion_percentage() - 100.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_scan_progress_completion_percentage_open_ended() {
+        let progress = ScanProgress::new(1000, None);
+        assert_eq!(progress.completion_percentage(), 0.0);
+    }
+
+    #[test]
+    fn test_scan_progress_status_checks() {
+        let mut progress = ScanProgress::new(1000, Some(2000));
+
+        // Initially not complete, not interrupted, no error
+        assert!(!progress.is_complete());
+        assert!(!progress.is_interrupted());
+        assert!(!progress.has_error());
+
+        // Set to completed
+        progress.set_phase(ScanPhase::Completed);
+        assert!(progress.is_complete());
+        assert!(!progress.is_interrupted());
+        assert!(!progress.has_error());
+
+        // Set to interrupted
+        progress.set_phase(ScanPhase::Interrupted);
+        assert!(!progress.is_complete());
+        assert!(progress.is_interrupted());
+        assert!(!progress.has_error());
+
+        // Set to error
+        progress.set_phase(ScanPhase::Error("Test error".to_string()));
+        assert!(!progress.is_complete());
+        assert!(!progress.is_interrupted());
+        assert!(progress.has_error());
+    }
+
+    #[test]
+    fn test_scan_progress_format_progress_bar() {
+        let mut progress = ScanProgress::new(1000, Some(2000));
+        progress.blocks_scanned = 500; // 50% completion
+        progress.current_height = 1500;
+        progress.outputs_found = 25;
+        progress.total_value = 1000000;
+        progress.set_phase(ScanPhase::Scanning {
+            batch_index: 1,
+            total_batches: Some(5),
+        });
+
+        let bar = progress.format_progress_bar(20);
+
+        // Should contain progress bar elements
+        assert!(bar.contains('['));
+        assert!(bar.contains(']'));
+        assert!(bar.contains("█")); // Filled portion
+        assert!(bar.contains("░")); // Empty portion
+                                    // Check for percentage - it's 500/1001 = 49.95%, so check for "49." or "50."
+        assert!(bar.contains("49.") || bar.contains("50."));
+        assert!(bar.contains("Scanning"));
+        assert!(bar.contains("1,500")); // Current height formatted
+        assert!(bar.contains("25")); // Outputs found
+    }
+
+    #[test]
+    fn test_scan_progress_summary() {
+        let mut progress = ScanProgress::new(1000, Some(2000));
+        progress.current_height = 1500;
+        progress.outputs_found = 25;
+        progress.outputs_spent = 5;
+        progress.scan_rate = 50.0;
+
+        let summary = progress.summary();
+
+        assert!(summary.contains("1,500"));
+        assert!(summary.contains("25"));
+        assert!(summary.contains("5"));
+        assert!(summary.contains("50.00"));
+    }
+
+    #[test]
+    fn test_scan_config_summary() {
+        let summary = ScanConfigSummary {
+            start_height: 1000,
+            end_height: Some(2000),
+            specific_blocks: None,
+            batch_size: 100,
+            total_blocks_scanned: 1001,
+        };
+
+        assert_eq!(summary.start_height, 1000);
+        assert_eq!(summary.end_height, Some(2000));
+        assert_eq!(summary.batch_size, 100);
+        assert_eq!(summary.total_blocks_scanned, 1001);
+    }
+
+    #[test]
+    fn test_storage_statistics_default() {
+        let stats = StorageStatistics::default();
+        assert_eq!(stats.outputs_saved, 0);
+        assert_eq!(stats.transactions_saved, 0);
+        assert_eq!(stats.spent_updates, 0);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        assert_eq!(stats.total_storage_time, Duration::from_secs(0));
+        #[cfg(target_arch = "wasm32")]
+        assert_eq!(stats.total_storage_time_seconds, 0.0);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_scan_results_new_native() {
+        let scan_config = ScanConfigSummary {
+            start_height: 1000,
+            end_height: Some(2000),
+            specific_blocks: None,
+            batch_size: 100,
+            total_blocks_scanned: 1001,
+        };
+        let wallet_state = WalletState::new();
+        let mut progress = ScanProgress::new(1000, Some(2000));
+        progress.set_phase(ScanPhase::Completed);
+        progress.outputs_found = 25;
+        progress.total_value = 1000000;
+        progress.scan_rate = 50.0;
+
+        let start_time = Instant::now();
+        let results = ScanResults::new(scan_config, wallet_state, progress, start_time);
+
+        assert!(results.completed_successfully);
+        assert!(results.error_message.is_none());
+        assert_eq!(results.statistics.total_outputs_found, 25);
+        assert_eq!(results.statistics.total_value_found, 1000000);
+        assert_eq!(results.statistics.average_scan_rate, 50.0);
+        assert_eq!(results.statistics.transactions_processed, 1001);
+    }
+
+    #[test]
+    fn test_scan_results_add_block_results() {
+        let scan_config = ScanConfigSummary {
+            start_height: 1000,
+            end_height: Some(2000),
+            specific_blocks: None,
+            batch_size: 100,
+            total_blocks_scanned: 1001,
+        };
+        let wallet_state = WalletState::new();
+        let progress = ScanProgress::new(1000, Some(2000));
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut results = ScanResults::new(scan_config, wallet_state, progress, Instant::now());
+        #[cfg(target_arch = "wasm32")]
+        let mut results = ScanResults::new(scan_config, wallet_state, progress, 0.0);
+
+        let block_result = BlockScanResult::new(1000, vec![1, 2, 3, 4], 1234567890);
+        results.add_block_results(vec![block_result]);
+
+        assert_eq!(results.block_results.len(), 1);
+        assert_eq!(results.block_results[0].height, 1000);
+    }
+
+    #[test]
+    fn test_scan_results_set_error() {
+        let scan_config = ScanConfigSummary {
+            start_height: 1000,
+            end_height: Some(2000),
+            specific_blocks: None,
+            batch_size: 100,
+            total_blocks_scanned: 1001,
+        };
+        let wallet_state = WalletState::new();
+        let progress = ScanProgress::new(1000, Some(2000));
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut results = ScanResults::new(scan_config, wallet_state, progress, Instant::now());
+        #[cfg(target_arch = "wasm32")]
+        let mut results = ScanResults::new(scan_config, wallet_state, progress, 0.0);
+
+        results.set_error("Test error".to_string());
+
+        assert!(!results.completed_successfully);
+        assert_eq!(results.error_message, Some("Test error".to_string()));
+        assert!(results.final_progress.has_error());
+    }
+
+    #[test]
+    fn test_scan_results_set_interrupted() {
+        let scan_config = ScanConfigSummary {
+            start_height: 1000,
+            end_height: Some(2000),
+            specific_blocks: None,
+            batch_size: 100,
+            total_blocks_scanned: 1001,
+        };
+        let wallet_state = WalletState::new();
+        let progress = ScanProgress::new(1000, Some(2000));
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut results = ScanResults::new(scan_config, wallet_state, progress, Instant::now());
+        #[cfg(target_arch = "wasm32")]
+        let mut results = ScanResults::new(scan_config, wallet_state, progress, 0.0);
+
+        results.set_interrupted();
+
+        assert!(!results.completed_successfully);
+        assert!(results.final_progress.is_interrupted());
+    }
+
+    #[test]
+    fn test_scan_results_summary_to_json() {
+        let scan_config = ScanConfigSummary {
+            start_height: 1000,
+            end_height: Some(2000),
+            specific_blocks: None,
+            batch_size: 100,
+            total_blocks_scanned: 1001,
+        };
+        let wallet_state = WalletState::new();
+        let progress = ScanProgress::new(1000, Some(2000));
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let results = ScanResults::new(scan_config, wallet_state, progress, Instant::now());
+        #[cfg(target_arch = "wasm32")]
+        let results = ScanResults::new(scan_config, wallet_state, progress, 0.0);
+
+        let json_result = results.summary_to_json();
+        assert!(json_result.is_ok());
+
+        let json = json_result.unwrap();
+        assert!(json.contains("blocks_scanned"));
+        assert!(json.contains("completed_successfully"));
+    }
+
+    #[test]
+    fn test_block_scan_result_new() {
+        let result = BlockScanResult::new(1000, vec![1, 2, 3, 4], 1234567890);
+
+        assert_eq!(result.height, 1000);
+        assert_eq!(result.block_hash, vec![1, 2, 3, 4]);
+        assert_eq!(result.mined_timestamp, 1234567890);
+        assert_eq!(result.transaction_count, 0);
+        assert!(result.outputs.is_empty());
+        assert!(result.wallet_outputs.is_empty());
+        assert!(result.errors.is_empty());
+
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(result.processing_time.is_none());
+        #[cfg(target_arch = "wasm32")]
+        assert!(result.processing_time_seconds.is_none());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_block_scan_result_set_processing_time() {
+        let mut result = BlockScanResult::new(1000, vec![1, 2, 3, 4], 1234567890);
+        let processing_time = Duration::from_millis(500);
+
+        result.set_processing_time(processing_time);
+        assert_eq!(result.processing_time, Some(processing_time));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[test]
+    fn test_block_scan_result_set_processing_time_seconds() {
+        let mut result = BlockScanResult::new(1000, vec![1, 2, 3, 4], 1234567890);
+
+        result.set_processing_time_seconds(0.5);
+        assert_eq!(result.processing_time_seconds, Some(0.5));
+    }
+
+    #[test]
+    fn test_block_scan_result_add_error() {
+        let mut result = BlockScanResult::new(1000, vec![1, 2, 3, 4], 1234567890);
+
+        result.add_error("Test error 1".to_string());
+        result.add_error("Test error 2".to_string());
+
+        assert_eq!(result.errors.len(), 2);
+        assert_eq!(result.errors[0], "Test error 1");
+        assert_eq!(result.errors[1], "Test error 2");
+    }
+
+    #[test]
+    fn test_block_scan_result_has_wallet_outputs() {
+        let mut result = BlockScanResult::new(1000, vec![1, 2, 3, 4], 1234567890);
+        assert!(!result.has_wallet_outputs());
+
+        // Note: LightweightWalletOutput creation requires complex setup,
+        // so we'll test the basic structure
+        result.wallet_outputs = vec![];
+        assert!(!result.has_wallet_outputs());
+    }
+
+    #[test]
+    fn test_batch_scan_result_new() {
+        let block_heights = vec![1000, 1001, 1002];
+        let batch = BatchScanResult::new(0, block_heights.clone());
+
+        assert_eq!(batch.batch_index, 0);
+        assert_eq!(batch.block_heights, block_heights);
+        assert!(batch.block_results.is_empty());
+        assert_eq!(batch.outputs_found, 0);
+        assert_eq!(batch.total_value, 0);
+        assert!(batch.errors.is_empty());
+
+        #[cfg(not(target_arch = "wasm32"))]
+        assert_eq!(batch.processing_time, Duration::from_secs(0));
+        #[cfg(target_arch = "wasm32")]
+        assert_eq!(batch.processing_time_seconds, 0.0);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_batch_scan_result_set_processing_time() {
+        let mut batch = BatchScanResult::new(0, vec![1000, 1001, 1002]);
+        let processing_time = Duration::from_secs(5);
+
+        batch.set_processing_time(processing_time);
+        assert_eq!(batch.processing_time, processing_time);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[test]
+    fn test_batch_scan_result_set_processing_time_seconds() {
+        let mut batch = BatchScanResult::new(0, vec![1000, 1001, 1002]);
+
+        batch.set_processing_time_seconds(5.0);
+        assert_eq!(batch.processing_time_seconds, 5.0);
+    }
+
+    #[test]
+    fn test_batch_scan_result_add_error() {
+        let mut batch = BatchScanResult::new(0, vec![1000, 1001, 1002]);
+
+        batch.add_error("Batch error".to_string());
+
+        assert_eq!(batch.errors.len(), 1);
+        assert_eq!(batch.errors[0], "Batch error");
+    }
+
+    #[test]
+    fn test_batch_scan_result_add_block_results() {
+        let mut batch = BatchScanResult::new(0, vec![1000, 1001, 1002]);
+
+        let mut block_result1 = BlockScanResult::new(1000, vec![1, 2, 3, 4], 1234567890);
+        let mut block_result2 = BlockScanResult::new(1001, vec![5, 6, 7, 8], 1234567891);
+
+        // Simulate some outputs (we can't easily create LightweightWalletOutput, so we'll verify the count)
+        block_result1.wallet_outputs = vec![]; // Would contain actual outputs
+        block_result2.wallet_outputs = vec![]; // Would contain actual outputs
+
+        let results = vec![block_result1, block_result2];
+        batch.add_block_results(results);
+
+        assert_eq!(batch.block_results.len(), 2);
+        assert_eq!(batch.block_results[0].height, 1000);
+        assert_eq!(batch.block_results[1].height, 1001);
+    }
+
+    #[test]
+    fn test_format_tari_amount() {
+        assert_eq!(format_tari_amount(0), "0.000000");
+        assert_eq!(format_tari_amount(1_000_000), "1.000000"); // 1 Tari
+        assert_eq!(format_tari_amount(1_500_000), "1.500000"); // 1.5 Tari
+        assert_eq!(format_tari_amount(123_456_789), "123.456789");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_create_scan_result_summary() {
+        let wallet_state = WalletState::new();
+        let start_height = 1000;
+        let end_height = Some(2000);
+        let duration = Duration::from_secs(60);
+
+        let summary = create_scan_result_summary(&wallet_state, start_height, end_height, duration);
+
+        assert_eq!(summary.blocks_scanned, 1001); // 2000 - 1000 + 1
+        assert_eq!(summary.scan_duration, duration);
+        assert!((summary.average_scan_rate - 16.683333333333334).abs() < 0.1); // 1001 blocks / 60 seconds
+        assert!(summary.completed_successfully);
+        assert!(summary.error_message.is_none());
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[test]
+    fn test_create_scan_result_summary_wasm() {
+        let wallet_state = WalletState::new();
+        let start_height = 1000;
+        let end_height = Some(2000);
+        let duration_seconds = 60.0;
+
+        let summary = create_scan_result_summary_wasm(
+            &wallet_state,
+            start_height,
+            end_height,
+            duration_seconds,
+        );
+
+        assert_eq!(summary.blocks_scanned, 1001); // 2000 - 1000 + 1
+        assert_eq!(summary.scan_duration_seconds, duration_seconds);
+        assert!((summary.average_scan_rate - 16.683333333333334).abs() < 0.1); // 1001 blocks / 60 seconds
+        assert!(summary.completed_successfully);
+        assert!(summary.error_message.is_none());
+    }
+
+    #[test]
+    fn test_scan_progress_edge_cases() {
+        // Test with zero elapsed time
+        let mut progress = ScanProgress::new(1000, Some(2000));
+
+        #[cfg(not(target_arch = "wasm32"))]
+        progress.update(1100, 100, 10, 2, 500000, Duration::from_secs(0));
+        #[cfg(target_arch = "wasm32")]
+        progress.update_wasm(1100, 100, 10, 2, 500000, 0.0);
+
+        assert_eq!(progress.scan_rate, 0.0); // Should not divide by zero
+
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(progress.estimated_remaining.is_none());
+        #[cfg(target_arch = "wasm32")]
+        assert!(progress.estimated_remaining_seconds.is_none());
+    }
+
+    #[test]
+    fn test_scan_progress_no_remaining_blocks() {
+        let mut progress = ScanProgress::new(1000, Some(2000));
+
+        // Set blocks_scanned equal to total_blocks
+        #[cfg(not(target_arch = "wasm32"))]
+        progress.update(2000, 1001, 25, 5, 1000000, Duration::from_secs(10));
+        #[cfg(target_arch = "wasm32")]
+        progress.update_wasm(2000, 1001, 25, 5, 1000000, 10.0);
+
+        // Should not calculate remaining time when no blocks remain
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(progress.estimated_remaining.is_none());
+        #[cfg(target_arch = "wasm32")]
+        assert!(progress.estimated_remaining_seconds.is_none());
+    }
+
+    #[test]
+    fn test_scan_progress_serialization() {
+        let progress = ScanProgress::new(1000, Some(2000));
+
+        // Test that progress can be serialized/deserialized
+        let json = serde_json::to_string(&progress).expect("Failed to serialize progress");
+        let deserialized: ScanProgress =
+            serde_json::from_str(&json).expect("Failed to deserialize progress");
+
+        assert_eq!(deserialized.current_height, 1000);
+        assert_eq!(deserialized.target_height, Some(2000));
+        assert_eq!(deserialized.total_blocks, Some(1001));
+    }
+
+    #[test]
+    fn test_scan_result_summary_serialization() {
+        let summary = ScanResultSummary {
+            blocks_scanned: 1001,
+            outputs_found: 25,
+            outputs_spent: 5,
+            total_value_found: 1000000,
+            net_value_change: 950000,
+            #[cfg(not(target_arch = "wasm32"))]
+            scan_duration: Duration::from_secs(60),
+            #[cfg(target_arch = "wasm32")]
+            scan_duration_seconds: 60.0,
+            average_scan_rate: 16.68,
+            completed_successfully: true,
+            error_message: None,
+        };
+
+        let json = serde_json::to_string(&summary).expect("Failed to serialize summary");
+        let deserialized: ScanResultSummary =
+            serde_json::from_str(&json).expect("Failed to deserialize summary");
+
+        assert_eq!(deserialized.blocks_scanned, 1001);
+        assert_eq!(deserialized.outputs_found, 25);
+        assert!(deserialized.completed_successfully);
+    }
+}
