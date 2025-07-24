@@ -4,24 +4,22 @@
 //! functionality, including seed phrase and view key based scanning.
 
 use crate::{
-    errors::LightweightWalletError,
-    key_management::seed_phrase::{
-        generate_seed_phrase, mnemonic_to_master_key, validate_seed_phrase,
-    },
+    data_structures::address::TariAddressFeatures,
+    key_management::seed_phrase::{generate_seed_phrase, validate_seed_phrase},
     scanning::{
-        output_formatter::{OutputConfig, OutputFormat as FormatterOutputFormat},
-        progress_reporter::{ProgressReportConfig, ProgressReportType},
-        scan_configuration::{OutputFormat as NativeOutputFormat, ScanBlocks, ScanConfiguration},
-        scan_results::{ScanConfigSummary, ScanPhase, ScanResults},
-        scanner_engine::{ErrorRecoveryStrategy, ScannerEngine},
+        progress_reporter::ProgressInfo,
+        scan_configuration::{OutputFormat as NativeOutputFormat, ScanConfiguration},
+        scan_results::ScanPhase,
+        scanner_engine::ScannerEngine,
         wallet_source::{WalletSource, WalletSourceType},
-        HttpBlockchainScanner, ProgressReport,
+        BlockchainScanner, HttpBlockchainScanner,
     },
     wallet::Wallet,
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use wasm_bindgen::prelude::*;
+use web_sys::console;
 
 // Re-export key native types for JavaScript consumption
 pub use crate::{
@@ -32,14 +30,8 @@ pub use crate::{
     wallet::Wallet as NativeWallet,
 };
 
-// Enable logging for WASM environments
-extern "C" {
-    #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
-}
-
 macro_rules! console_log {
-    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
+    ($($t:tt)*) => (console::log_1(&format_args!($($t)*).to_string().into()))
 }
 
 /// JavaScript-compatible output format enum
@@ -67,8 +59,8 @@ impl From<WasmOutputFormat> for NativeOutputFormat {
 pub enum WasmWalletSourceType {
     SeedPhrase,
     ViewKey,
-    Existing,
-    Generated,
+    ExistingWallet,
+    GeneratedNew,
 }
 
 impl From<WasmWalletSourceType> for WalletSourceType {
@@ -76,8 +68,8 @@ impl From<WasmWalletSourceType> for WalletSourceType {
         match source_type {
             WasmWalletSourceType::SeedPhrase => WalletSourceType::SeedPhrase,
             WasmWalletSourceType::ViewKey => WalletSourceType::ViewKey,
-            WasmWalletSourceType::Existing => WalletSourceType::Existing,
-            WasmWalletSourceType::Generated => WalletSourceType::Generated,
+            WasmWalletSourceType::ExistingWallet => WalletSourceType::ExistingWallet,
+            WasmWalletSourceType::GeneratedNew => WalletSourceType::GeneratedNew,
         }
     }
 }
@@ -98,11 +90,14 @@ impl From<ScanPhase> for WasmScanPhase {
     fn from(phase: ScanPhase) -> Self {
         match phase {
             ScanPhase::Initializing => WasmScanPhase::Initializing,
-            ScanPhase::Scanning => WasmScanPhase::Scanning,
+            ScanPhase::Connecting => WasmScanPhase::Initializing,
+            ScanPhase::Scanning { .. } => WasmScanPhase::Scanning,
             ScanPhase::Processing => WasmScanPhase::Processing,
+            ScanPhase::Saving => WasmScanPhase::Processing,
             ScanPhase::Finalizing => WasmScanPhase::Finalizing,
-            ScanPhase::Complete => WasmScanPhase::Complete,
-            ScanPhase::Error => WasmScanPhase::Error,
+            ScanPhase::Completed => WasmScanPhase::Complete,
+            ScanPhase::Interrupted => WasmScanPhase::Error,
+            ScanPhase::Error(_) => WasmScanPhase::Error,
         }
     }
 }
@@ -157,72 +152,52 @@ impl WasmScanConfig {
         }
     }
 
-    /// Set starting block height
-    #[wasm_bindgen(setter)]
-    pub fn set_from_block(&mut self, height: u64) {
-        self.from_block = Some(height);
-    }
-
-    /// Set ending block height
-    #[wasm_bindgen(setter)]
-    pub fn set_to_block(&mut self, height: u64) {
-        self.to_block = Some(height);
-    }
-
-    /// Set specific blocks to scan
+    /// Set specific blocks to scan (can't use getter_with_clone for Vec types)
     #[wasm_bindgen]
     pub fn set_blocks(&mut self, blocks: Vec<u64>) {
         self.blocks = Some(blocks);
     }
 
-    /// Set batch size
-    #[wasm_bindgen(setter)]
-    pub fn set_batch_size(&mut self, size: u64) {
-        self.batch_size = Some(size);
+    /// Create a new WasmScanConfig with all parameters (convenience function)
+    #[wasm_bindgen]
+    pub fn new_with_all_params(
+        base_url: String,
+        from_block: Option<u64>,
+        to_block: Option<u64>,
+        batch_size: Option<u64>,
+        progress_frequency: Option<u64>,
+        request_timeout_seconds: Option<u64>,
+        scan_stealth_addresses: Option<bool>,
+        max_addresses_per_account: Option<u32>,
+        scan_imported_keys: Option<bool>,
+        quiet: Option<bool>,
+        output_format: Option<WasmOutputFormat>,
+    ) -> WasmScanConfig {
+        WasmScanConfig {
+            base_url,
+            from_block,
+            to_block,
+            blocks: None,
+            batch_size,
+            progress_frequency,
+            request_timeout_seconds,
+            scan_stealth_addresses,
+            max_addresses_per_account,
+            scan_imported_keys,
+            quiet,
+            output_format,
+        }
     }
 
-    /// Set progress frequency
-    #[wasm_bindgen(setter)]
-    pub fn set_progress_frequency(&mut self, frequency: u64) {
-        self.progress_frequency = Some(frequency);
+    /// Create a WasmScanConfig with sane defaults for most use cases
+    #[wasm_bindgen]
+    pub fn new_default(base_url: String) -> WasmScanConfig {
+        WasmScanConfig::new(base_url)
     }
+}
 
-    /// Set request timeout in seconds
-    #[wasm_bindgen(setter)]
-    pub fn set_request_timeout_seconds(&mut self, timeout: u64) {
-        self.request_timeout_seconds = Some(timeout);
-    }
-
-    /// Set whether to scan stealth addresses
-    #[wasm_bindgen(setter)]
-    pub fn set_scan_stealth_addresses(&mut self, scan: bool) {
-        self.scan_stealth_addresses = Some(scan);
-    }
-
-    /// Set maximum addresses per account
-    #[wasm_bindgen(setter)]
-    pub fn set_max_addresses_per_account(&mut self, max: u32) {
-        self.max_addresses_per_account = Some(max);
-    }
-
-    /// Set whether to scan imported keys
-    #[wasm_bindgen(setter)]
-    pub fn set_scan_imported_keys(&mut self, scan: bool) {
-        self.scan_imported_keys = Some(scan);
-    }
-
-    /// Set quiet mode
-    #[wasm_bindgen(setter)]
-    pub fn set_quiet(&mut self, quiet: bool) {
-        self.quiet = Some(quiet);
-    }
-
-    /// Set output format
-    #[wasm_bindgen(setter)]
-    pub fn set_output_format(&mut self, format: WasmOutputFormat) {
-        self.output_format = Some(format);
-    }
-
+// Non-WASM methods for WasmScanConfig (can't be exported to JavaScript directly)
+impl WasmScanConfig {
     /// Convert to native ScanConfiguration with validation
     pub fn to_scan_configuration(
         &self,
@@ -291,43 +266,6 @@ impl WasmScanConfig {
         );
 
         Ok(config)
-    }
-
-    /// Create a new WasmScanConfig with all parameters (convenience function)
-    #[wasm_bindgen]
-    pub fn new_with_all_params(
-        base_url: String,
-        from_block: Option<u64>,
-        to_block: Option<u64>,
-        batch_size: Option<u64>,
-        progress_frequency: Option<u64>,
-        request_timeout_seconds: Option<u64>,
-        scan_stealth_addresses: Option<bool>,
-        max_addresses_per_account: Option<u32>,
-        scan_imported_keys: Option<bool>,
-        quiet: Option<bool>,
-        output_format: Option<WasmOutputFormat>,
-    ) -> WasmScanConfig {
-        WasmScanConfig {
-            base_url,
-            from_block,
-            to_block,
-            blocks: None,
-            batch_size,
-            progress_frequency,
-            request_timeout_seconds,
-            scan_stealth_addresses,
-            max_addresses_per_account,
-            scan_imported_keys,
-            quiet,
-            output_format,
-        }
-    }
-
-    /// Create a WasmScanConfig with sane defaults for most use cases
-    #[wasm_bindgen]
-    pub fn new_default(base_url: String) -> WasmScanConfig {
-        WasmScanConfig::new(base_url)
     }
 }
 
@@ -468,7 +406,7 @@ pub struct WasmProgressContext {
 /// Generate a new seed phrase (24 words)
 #[wasm_bindgen]
 pub fn wasm_generate_seed_phrase() -> String {
-    generate_seed_phrase()
+    generate_seed_phrase().unwrap_or_else(|_| String::from("unable to generate seed phrase"))
 }
 
 /// Validate scan configuration without performing scan
@@ -558,8 +496,8 @@ pub fn wasm_test_progress_callback(callback: &js_sys::Function) -> Result<(), Js
 /// Enhanced progress callback that supports cancellation
 #[wasm_bindgen]
 pub fn wasm_create_cancellable_progress_callback(
-    progress_callback: js_sys::Function,
-    cancel_callback: js_sys::Function,
+    _progress_callback: js_sys::Function,
+    _cancel_callback: js_sys::Function,
 ) -> js_sys::Function {
     let callback = js_sys::Function::new_with_args(
         "progress",
@@ -592,7 +530,7 @@ pub fn wasm_create_cancellable_progress_callback(
 /// Rate-limited progress callback
 #[wasm_bindgen]
 pub fn wasm_create_rate_limited_progress_callback(
-    callback: js_sys::Function,
+    _callback: js_sys::Function,
     min_interval_ms: u32,
 ) -> js_sys::Function {
     let throttled_callback = js_sys::Function::new_with_args(
@@ -985,7 +923,7 @@ pub fn wasm_force_garbage_collection() {
     #[cfg(target_arch = "wasm32")]
     {
         // Request garbage collection in WASM environment
-        if let Some(window) = web_sys::window() {
+        if let Some(_window) = web_sys::window() {
             // This is a hint to the browser - not guaranteed to trigger GC immediately
             let _ = js_sys::eval("if (typeof window !== 'undefined' && window.gc) window.gc();");
         }
@@ -1029,7 +967,7 @@ pub async fn wasm_scan_with_streaming_results(
     passphrase: Option<String>,
     config: &WasmScanConfig,
     batch_size: Option<usize>,
-    result_callback: js_sys::Function,
+    _result_callback: js_sys::Function,
     progress_callback: Option<js_sys::Function>,
 ) -> Result<WasmScanResults, JsValue> {
     console_log!("Starting streaming scan with batch processing");
@@ -1037,7 +975,7 @@ pub async fn wasm_scan_with_streaming_results(
     let batch_size = batch_size.unwrap_or(100);
 
     // Create a progress wrapper that also handles result streaming
-    let streaming_progress_callback = progress_callback.map(|callback| {
+    let streaming_progress_callback = progress_callback.map(|_callback| {
         js_sys::Function::new_with_args(
             "progress",
             &format!(
@@ -1236,14 +1174,13 @@ pub async fn wasm_scan_with_seed_phrase(
     let passphrase_ref = passphrase.as_deref();
 
     // Create wallet from seed phrase with optional passphrase
-    let wallet = Wallet::new_from_seed_phrase(seed_phrase, passphrase_ref)
+    let _wallet = Wallet::new_from_seed_phrase(seed_phrase, passphrase_ref)
         .map_err(|e| JsValue::from_str(&format!("Failed to create wallet: {}", e)))?;
 
     console_log!("Wallet created successfully from seed phrase");
 
     // Create wallet source with optional passphrase
-    let wallet_source = WalletSource::from_seed_phrase(seed_phrase, passphrase_ref)
-        .map_err(|e| JsValue::from_str(&format!("Failed to create wallet source: {}", e)))?;
+    let wallet_source = WalletSource::from_seed_phrase(seed_phrase, passphrase_ref);
 
     console_log!("Wallet source created, starting scan...");
 
@@ -1339,13 +1276,9 @@ pub async fn wasm_scan_with_view_key(
 
     console_log!("View key validated successfully, creating wallet source...");
 
-    // Create wallet source from view key with enhanced error context
-    let wallet_source = WalletSource::from_view_key(&view_key_bytes).map_err(|e| {
-        JsValue::from_str(&format!(
-            "Failed to create wallet source from view key: {}",
-            e
-        ))
-    })?;
+    // Convert bytes to hex string and create wallet source
+    let view_key_hex = hex::encode(&view_key_bytes);
+    let wallet_source = WalletSource::from_view_key(view_key_hex, None);
 
     console_log!("Wallet source created from view key, starting scan...");
 
@@ -1389,13 +1322,9 @@ pub async fn wasm_scan_with_view_key_bytes(
 
     console_log!("View key bytes validated, creating wallet source...");
 
-    // Create wallet source from view key bytes
-    let wallet_source = WalletSource::from_view_key(view_key_bytes).map_err(|e| {
-        JsValue::from_str(&format!(
-            "Failed to create wallet source from view key bytes: {}",
-            e
-        ))
-    })?;
+    // Convert bytes to hex string and create wallet source
+    let view_key_hex = hex::encode(view_key_bytes);
+    let wallet_source = WalletSource::from_view_key(view_key_hex, None);
 
     console_log!("Wallet source created from view key bytes, starting scan...");
 
@@ -1416,11 +1345,7 @@ async fn scan_with_wallet_source(
     progress_callback: Option<js_sys::Function>,
     source_type: WasmWalletSourceType,
 ) -> Result<WasmScanResults, JsValue> {
-    // Create HTTP scanner (WASM-compatible)
-    let scanner = HttpBlockchainScanner::new(&config.base_url)
-        .map_err(|e| JsValue::from_str(&format!("Failed to create scanner: {}", e)))?;
-
-    // Convert WASM config to library ScanConfiguration using the conversion method
+    // Convert WASM config to library ScanConfiguration first
     let scan_config = config
         .to_scan_configuration(Some(wallet_source.clone()))
         .map_err(|e| {
@@ -1430,12 +1355,18 @@ async fn scan_with_wallet_source(
             ))
         })?;
 
-    // Create scanner engine
-    let mut scanner_engine = ScannerEngine::new();
+    // Create HTTP scanner (WASM-compatible)
+    let scanner = HttpBlockchainScanner::new(config.base_url.clone())
+        .await
+        .map_err(|e| JsValue::from_str(&format!("Failed to create scanner: {}", e)))?;
 
-    // Initialize with wallet source
+    // Create scanner engine with boxed scanner and scan configuration
+    let mut scanner_engine = ScannerEngine::new(Box::new(scanner), scan_config.clone());
+
+    // Initialize wallet
     scanner_engine
-        .initialize_wallet_from_source(wallet_source)
+        .initialize_wallet()
+        .await
         .map_err(|e| JsValue::from_str(&format!("Failed to initialize wallet: {}", e)))?;
 
     // Generate unique session ID for this scan
@@ -1461,40 +1392,57 @@ async fn scan_with_wallet_source(
     console_log!("Starting scan session: {}", session_id);
 
     // Set up enhanced progress callback wrapper
-    let progress_wrapper = progress_callback.map(|callback| {
-        let context = progress_context.clone();
+    let _progress_wrapper = progress_callback.map(|callback| {
+        let _context = progress_context.clone();
         let start_time = js_sys::Date::now();
 
-        Box::new(move |progress: &ProgressReport| {
+        Box::new(move |progress: &ProgressInfo| {
             let current_time = js_sys::Date::now();
             let elapsed_seconds = (current_time - start_time) / 1000.0;
 
             // Calculate additional metrics
             let blocks_per_second = if elapsed_seconds > 0.0 {
-                progress.blocks_completed as f64 / elapsed_seconds
+                progress.blocks_scanned as f64 / elapsed_seconds
             } else {
                 0.0
             };
 
             let current_batch = if scan_config.batch_size > 0 {
-                progress.blocks_completed / scan_config.batch_size + 1
+                progress.blocks_scanned / scan_config.batch_size + 1
             } else {
                 1
             };
 
             let total_batches = if scan_config.batch_size > 0 {
-                (progress.total_blocks + scan_config.batch_size - 1) / scan_config.batch_size
+                (progress.total_blocks.unwrap_or(0) + scan_config.batch_size - 1)
+                    / scan_config.batch_size
             } else {
                 1
             };
 
+            let current_balance = progress
+                .wallet_state
+                .as_ref()
+                .map(|ws| ws.get_balance().max(0) as u64)
+                .unwrap_or(0);
+
+            let percentage = if let Some(total) = progress.target_height {
+                if total > 0 {
+                    (progress.current_height as f64 / total as f64 * 100.0).min(100.0)
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+
             let wasm_progress = WasmProgressReport {
                 current_height: progress.current_height,
-                total_blocks: progress.total_blocks,
-                blocks_completed: progress.blocks_completed,
-                percentage: progress.percentage,
-                outputs_found: progress.outputs_found,
-                current_balance: progress.current_balance,
+                total_blocks: progress.total_blocks.unwrap_or(0),
+                blocks_completed: progress.blocks_scanned,
+                percentage: percentage as f32,
+                outputs_found: progress.outputs_found as usize,
+                current_balance,
                 elapsed_seconds,
                 estimated_remaining_seconds: progress.estimated_remaining_seconds,
                 scan_phase: WasmScanPhase::Scanning, // Will be enhanced based on actual phase
@@ -1517,14 +1465,14 @@ async fn scan_with_wallet_source(
                     console_log!("Failed to serialize progress report: {}", e);
                 }
             }
-        }) as Box<dyn Fn(&ProgressReport)>
+        }) as Box<dyn Fn(&ProgressInfo)>
     });
 
     // Perform the scan
     let start_time = js_sys::Date::now();
 
     let scan_results = scanner_engine
-        .scan_range(&scan_config, progress_wrapper.as_deref())
+        .scan_range()
         .await
         .map_err(|e| JsValue::from_str(&format!("Scan failed: {}", e)))?;
 
@@ -1533,7 +1481,7 @@ async fn scan_with_wallet_source(
 
     // Calculate performance metrics
     let average_blocks_per_second = if duration_seconds > 0.0 {
-        scan_results.blocks_scanned as f64 / duration_seconds
+        scan_results.final_progress.blocks_scanned as f64 / duration_seconds
     } else {
         0.0
     };
@@ -1547,18 +1495,18 @@ async fn scan_with_wallet_source(
 
     // Convert results to enhanced WASM format
     let wasm_results = WasmScanResults {
-        blocks_scanned: scan_results.blocks_scanned,
-        outputs_found: scan_results.outputs_found,
-        total_balance: scan_results.total_balance,
+        blocks_scanned: scan_results.final_progress.blocks_scanned,
+        outputs_found: scan_results.final_progress.outputs_found as usize,
+        total_balance: scan_results.wallet_state.get_balance().max(0) as u64,
         duration_seconds,
-        final_height: scan_results.final_height,
+        final_height: scan_results.scan_config_summary.end_height.unwrap_or(0),
         scan_phase: WasmScanPhase::Complete,
         completed: true,
         error: None,
         config_summary: Some(format!(
             "Scanned blocks {} to {} using {:?} (batch size: {})",
             scan_config.start_height,
-            scan_results.final_height,
+            scan_results.scan_config_summary.end_height.unwrap_or(0),
             source_type,
             scan_config.batch_size
         )),
@@ -1577,7 +1525,8 @@ async fn scan_with_wallet_source(
 /// Get current blockchain tip height
 #[wasm_bindgen]
 pub async fn wasm_get_tip_height(base_url: &str) -> Result<u64, JsValue> {
-    let scanner = HttpBlockchainScanner::new(base_url)
+    let mut scanner = HttpBlockchainScanner::new(base_url.to_string())
+        .await
         .map_err(|e| JsValue::from_str(&format!("Failed to create scanner: {}", e)))?;
 
     let tip_info = scanner
@@ -1585,7 +1534,7 @@ pub async fn wasm_get_tip_height(base_url: &str) -> Result<u64, JsValue> {
         .await
         .map_err(|e| JsValue::from_str(&format!("Failed to get tip info: {}", e)))?;
 
-    Ok(tip_info.height)
+    Ok(tip_info.best_block_height)
 }
 
 /// Create a wallet from seed phrase (for address generation, etc.)
@@ -1595,8 +1544,11 @@ pub fn wasm_create_wallet_from_seed_phrase(seed_phrase: &str) -> Result<JsValue,
         .map_err(|e| JsValue::from_str(&format!("Failed to create wallet: {}", e)))?;
 
     // Return basic wallet info as JSON
+    let address = wallet
+        .get_dual_address(TariAddressFeatures::default(), None)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
     let wallet_info = serde_json::json!({
-        "address": wallet.get_dual_address(0, None).map_err(|e| JsValue::from_str(&e.to_string()))?.to_string(),
+        "address": address.to_base58(),
         "created": true
     });
 

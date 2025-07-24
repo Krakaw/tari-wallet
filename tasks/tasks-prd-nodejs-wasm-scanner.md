@@ -1,5 +1,6 @@
 ## Relevant Files
 
+- `src/bin/scanner.rs` **NB** This is the most important file, it is the reference design we are replicating in javascript.
 - `src/wasm.rs` - Complete WASM library with memory management, automatic cleanup, paginated results, streaming processing, and garbage collection utilities
 - `examples/wasm/scanner.js` - Complete Node.js CLI with commander.js argument parsing, progress display, error handling, and signal management
 - `examples/wasm/pkg/` - Generated WASM package directory (created by wasm-pack)
@@ -12,9 +13,10 @@
 
 ### Notes
 
-- Use `wasm-pack build --target nodejs --out-dir examples/wasm/pkg --features http` to build the WASM package
+- Use `wasm-pack build --target nodejs --out-dir examples/wasm/pkg --features wasm-node` to build the WASM package
 - Use `cargo test --features http --target wasm32-unknown-unknown` for WASM-specific tests  
 - The WASM package will be consumed by the Node.js CLI script using standard ES6 imports
+- Before marking a task as complete, run `make all`
 
 ## Tasks
 
@@ -36,12 +38,12 @@
 
 - [ ] 3.0 Implement Node.js CLI interface matching scanner.rs behavior
   - [x] 3.1 Create `examples/wasm/scanner.js` with command-line argument parsing (using commander.js or similar)
-  - [ ] 3.2 Implement identical CLI arguments: --seed-phrase, --view-key, --base-url, --from-block, --to-block, --blocks
-  - [ ] 3.3 Add configuration arguments: --batch-size, --progress-frequency, --quiet, --format
-  - [ ] 3.4 Import and initialize WASM module in Node.js script
-  - [ ] 3.5 Implement argument validation and error messages matching scanner.rs
-  - [ ] 3.6 Add help text and usage examples identical to Rust scanner
-  - [ ] 3.7 Handle process.argv parsing and execute appropriate scan function
+  - [x] 3.1.1 Fix WASM build errors - ProgressReport type, WalletSource serialization, field access, unused variables
+  - [x] 3.2 Implement identical CLI arguments: --seed-phrase, --view-key, --base-url, --from-block, --to-block, --blocks
+  - [ ] 3.3 Import and initialize WASM module in Node.js script
+  - [ ] 3.4 Implement argument validation and error messages matching scanner.rs
+  - [ ] 3.5 Add help text and usage examples identical to Rust scanner
+  - [ ] 3.6 Handle process.argv parsing and execute appropriate scan function
 
 - [ ] 4.0 Create JavaScript API for programmatic scanning access
   - [ ] 4.1 Design JavaScript API interface matching the PRD specification

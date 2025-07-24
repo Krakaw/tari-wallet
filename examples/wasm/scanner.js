@@ -16,7 +16,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 // Import WASM module
-import init, {
+import {
     wasm_scan_with_seed_phrase,
     wasm_scan_with_view_key,
     wasm_validate_seed_phrase,
@@ -52,14 +52,14 @@ program
     .version(packageInfo.version || 'unknown')
     .usage('[options]');
 
-// CLI Arguments matching scanner.rs
+// CLI Arguments matching scanner.rs exactly
 program
     .option('-s, --seed-phrase <phrase>', 'Seed phrase for the wallet (uses memory-only storage)')
-    .option('--view-key <key>', 'Private view key in hex format (64 characters). Uses memory-only storage')
-    .option('-b, --base-url <url>', 'Base URL for Tari base node HTTP endpoint', 'http://127.0.0.1:18142')
-    .option('--from-block <height>', 'Starting block height (defaults to wallet birthday or 0)', parseInteger)
+    .option('--view-key <key>', 'Private view key in hex format (64 characters). Uses memory-only storage. Not required when resuming from database')
+    .option('-b, --base-url <url>', 'Base URL for Tari base node GRPC', 'http://127.0.0.1:18142')
+    .option('--from-block <height>', 'Starting block height (defaults to wallet birthday or last scanned block)', parseInteger)
     .option('--to-block <height>', 'Ending block height (defaults to current tip)', parseInteger)
-    .option('--blocks <heights>', 'Specific block heights to scan (comma-separated). Overrides from-block and to-block', parseBlockList)
+    .option('--blocks <heights>', 'Specific block heights to scan (comma-separated). If provided, overrides from-block and to-block', parseBlockList)
     .option('--batch-size <size>', 'Batch size for scanning', parseInteger, 10)
     .option('--progress-frequency <freq>', 'Update progress every N blocks', parseInteger, 10)
     .option('-q, --quiet', 'Quiet mode - only show essential information', false)
@@ -151,23 +151,24 @@ function validateArgs(options) {
 function createScanConfig(options) {
     const config = new WasmScanConfig(options.baseUrl);
     
-    if (options.fromBlock !== undefined) config.set_from_block(options.fromBlock);
-    if (options.toBlock !== undefined) config.set_to_block(options.toBlock);
-    if (options.blocks) config.set_blocks(options.blocks);
+    // Set basic scan parameters using direct field access (convert to BigInt for u64)
+    if (options.fromBlock !== undefined) config.from_block = BigInt(options.fromBlock);
+    if (options.toBlock !== undefined) config.to_block = BigInt(options.toBlock);
+    if (options.blocks) config.set_blocks(options.blocks.map(b => BigInt(b))); // Convert array elements to BigInt
     
-    config.set_batch_size(options.batchSize);
-    config.set_progress_frequency(options.progressFrequency);
-    config.set_request_timeout_seconds(options.requestTimeout);
-    config.set_scan_stealth_addresses(options.scanStealthAddresses);
-    config.set_max_addresses_per_account(options.maxAddressesPerAccount);
-    config.set_scan_imported_keys(options.scanImportedKeys);
-    config.set_quiet(options.quiet);
+    config.batch_size = BigInt(options.batchSize);
+    config.progress_frequency = BigInt(options.progressFrequency);
+    config.request_timeout_seconds = BigInt(options.requestTimeout);
+    config.scan_stealth_addresses = options.scanStealthAddresses;
+    config.max_addresses_per_account = options.maxAddressesPerAccount;
+    config.scan_imported_keys = options.scanImportedKeys;
+    config.quiet = options.quiet;
 
-    // Set output format
+    // Set output format using direct field access
     const wasmFormat = options.format === 'detailed' ? WasmOutputFormat.Detailed :
                       options.format === 'json' ? WasmOutputFormat.Json :
                       WasmOutputFormat.Summary;
-    config.set_output_format(wasmFormat);
+    config.output_format = wasmFormat;
 
     return config;
 }
@@ -262,8 +263,7 @@ async function runScan(options) {
     const spinner = ora('Initializing WASM module...').start();
     
     try {
-        // Initialize WASM module
-        await init();
+        // WASM module is automatically initialized for Node.js target
         spinner.succeed('WASM module initialized');
 
         // Validate arguments
