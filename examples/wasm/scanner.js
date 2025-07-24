@@ -36,6 +36,8 @@
 const fs = require('fs');
 const path = require('path');
 
+
+
 // Polyfills for Node.js to make WASM work with wasm-node feature
 if (typeof global !== 'undefined' && !global.fetch) {
     // Set up global fetch for Node.js WASM target
@@ -141,7 +143,7 @@ class CLIScanner {
     }
 
     /**
-     * Create and initialize scanner using modern async initialization
+     * Create and initialize scanner using Rust HTTP implementation
      */
     async createAndInitializeScanner(data) {
         try {
@@ -153,7 +155,7 @@ class CLIScanner {
                 process.stderr.write(`Initializing scanner with ${this.options.maxRetries} max retries...\n`);
             }
 
-            // Use the modern async initialization with retries
+            // Use the Rust HTTP scanner initialization
             this.scanner = await this.wasm.create_and_initialize_scanner_async(
                 data,
                 this.options.baseUrl,
@@ -307,22 +309,117 @@ class CLIScanner {
     }
 
     /**
-     * Memory-optimized scan using modern async wrapper
+     * Memory-optimized scan using the same method as HTML scanner (legacy but working)
      */
     async memoryOptimizedScan(startHeight, endHeight) {
         if (this.options.showProgress) {
             process.stderr.write(`Memory-optimized scan: blocks ${startHeight} to ${endHeight || 'tip'}...\n`);
         }
 
-        // Use the modern memory management async function
-        // Convert heights to BigInt for WASM u64 parameters
-        const resultJson = await this.wasm.scan_with_memory_management_async(
-            this.scanner,
-            BigInt(startHeight),
-            BigInt(endHeight || 0)
-        );
+        // Use the same approach as the HTML scanner - fetch HTTP blocks and use process_http_blocks
+        const actualEndHeight = endHeight || this.results.health_check?.tip_info?.best_block_height || 56563;
         
-        return JSON.parse(resultJson);
+        console.log(`DEBUG: Scanning from ${startHeight} to ${actualEndHeight} using HTML scanner method`);
+        
+        let totalResults = {
+            total_outputs: 0,
+            total_spent: 0,
+            total_value: 0,
+            current_balance: 0,
+            blocks_processed: 0,
+            transactions: [],
+            success: true,
+            error: null
+        };
+        
+        try {
+            // Create HTTP client like the HTML scanner does
+            const baseUrl = this.options.baseUrl;
+            
+            // Process in batches like the HTML scanner
+            let currentHeight = startHeight;
+            const batchSize = 50; // Similar to HTML scanner limit
+            
+            while (currentHeight <= actualEndHeight) {
+                const batchEnd = Math.min(currentHeight + batchSize - 1, actualEndHeight);
+                
+                console.log(`DEBUG: Fetching batch ${currentHeight} to ${batchEnd}`);
+                
+                // Get header for start of batch
+                const headerUrl = `${baseUrl}/get_header_by_height?height=${currentHeight}`;
+                const headerResponse = await fetch(headerUrl);
+                if (!headerResponse.ok) {
+                    throw new Error(`Failed to fetch header: ${headerResponse.status}`);
+                }
+                const header = await headerResponse.json();
+                const startHeaderHash = Array.from(header.hash, b => b.toString(16).padStart(2, '0')).join('');
+                
+                // Sync UTXOs for this batch
+                const limit = batchEnd - currentHeight + 1;
+                const syncUrl = `${baseUrl}/sync_utxos_by_block?start_header_hash=${startHeaderHash}&limit=${limit}&page=0`;
+                const syncResponse = await fetch(syncUrl);
+                if (!syncResponse.ok) {
+                    throw new Error(`Failed to sync UTXOs: ${syncResponse.status}`);
+                }
+                const httpResponse = await syncResponse.json();
+                
+                console.log(`DEBUG: Got ${httpResponse.blocks?.length || 0} blocks in batch`);
+                
+                if (httpResponse.blocks && httpResponse.blocks.length > 0) {
+                    // Use process_http_blocks like the HTML scanner
+                    const httpResponseJson = JSON.stringify(httpResponse);
+                    const resultJson = this.wasm.process_http_blocks(this.scanner, httpResponseJson);
+                    const batchResult = JSON.parse(resultJson);
+                    
+                    console.log(`DEBUG: Batch result - success: ${batchResult.success}, blocks_processed: ${batchResult.blocks_processed}, transactions: ${batchResult.transactions?.length || 0}`);
+                    
+                    if (batchResult.success) {
+                        totalResults.blocks_processed += batchResult.blocks_processed;
+                        totalResults.transactions = totalResults.transactions.concat(batchResult.transactions || []);
+                        
+                        // Update cumulative stats (get latest from scanner state)
+                        try {
+                            const statsJson = this.wasm.get_scanner_stats(this.scanner);
+                            const stats = JSON.parse(statsJson);
+                            totalResults.total_outputs = stats.total_outputs || 0;
+                            totalResults.total_spent = stats.total_spent || 0;
+                            totalResults.total_value = stats.total_value || 0;
+                            totalResults.current_balance = stats.current_balance || 0;
+                        } catch (e) {
+                            console.log(`DEBUG: Could not get scanner stats: ${e.message}`);
+                        }
+                    } else {
+                        totalResults.success = false;
+                        totalResults.error = batchResult.error;
+                        break;
+                    }
+                }
+                
+                currentHeight = batchEnd + 1;
+                
+                // Show progress
+                if (this.options.showProgress) {
+                    const progress = ((currentHeight - startHeight) / (actualEndHeight - startHeight + 1)) * 100;
+                    process.stderr.write(`Progress: ${progress.toFixed(1)}% - Block ${currentHeight} - ${totalResults.transactions.length} transactions\r`);
+                }
+            }
+            
+            console.log(`DEBUG: Final results - blocks_processed: ${totalResults.blocks_processed}, transactions: ${totalResults.transactions.length}`);
+            return totalResults;
+            
+        } catch (error) {
+            console.error(`DEBUG: WASM scan failed:`, error);
+            return {
+                total_outputs: 0,
+                total_spent: 0,
+                total_value: 0,
+                current_balance: 0,
+                blocks_processed: 0,
+                transactions: [],
+                success: false,
+                error: error.message
+            };
+        }
     }
 
     /**

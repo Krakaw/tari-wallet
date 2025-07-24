@@ -84,8 +84,13 @@ use crate::{
 /// HTTP API block response structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpBlockResponse {
+    #[serde(default)]
     pub blocks: Vec<HttpBlockData>,
+    #[serde(default)]
     pub has_next_page: bool,
+    // Additional fields that might be in the response
+    #[serde(default)]
+    pub next_header_to_scan: Option<Vec<u8>>,
 }
 
 /// HTTP API input data structure - SIMPLIFIED for actual API response
@@ -679,7 +684,7 @@ impl HttpBlockchainScanner {
         Ok(None)
     }
 
-    /// Fetch blocks by heights using HTTP API - converts to header-based requests
+    /// Fetch blocks by heights using HTTP API - uses sync_utxos_by_block endpoint
     async fn fetch_blocks_by_heights(
         &self,
         heights: Vec<u64>,
@@ -688,36 +693,84 @@ impl HttpBlockchainScanner {
         let mut sorted_heights = heights;
         sorted_heights.sort();
 
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(
+            &format!(
+                "DEBUG: fetch_blocks_by_heights called with {} heights: {:?}",
+                sorted_heights.len(),
+                sorted_heights
+            )
+            .into(),
+        );
+
         if sorted_heights.is_empty() {
             return Ok(HttpBlockResponse {
                 blocks: vec![],
                 has_next_page: false,
+                next_header_to_scan: None,
             });
         }
 
-        // For the Tari base node API, we need to fetch blocks sequentially using header hashes
-        // We will fetch each height individually
+        // We need to use sync_utxos_by_block which requires header hashes
+        // First, get the header hash for the start height
+        let start_height = sorted_heights[0];
+        let end_height = sorted_heights[sorted_heights.len() - 1];
 
-        // Fetch blocks for all heights individually using the base node API
-        let mut all_blocks = Vec::new();
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(
+            &format!("DEBUG: Getting header for start_height: {}", start_height).into(),
+        );
 
-        for &height in &sorted_heights {
-            match self.get_header_by_height(height).await {
-                Ok(block_response) => {
-                    // Add all blocks from this response to our collection
-                    all_blocks.extend(block_response.blocks);
-                }
-                Err(e) => {
-                    eprintln!("Failed to fetch block at height {}: {}", height, e);
-                    // Continue with other blocks rather than failing completely
-                }
-            }
+        // Get the header hash for the start height using get_header_by_height
+        let start_header_response = self.get_header_by_height(start_height).await?;
+
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(
+            &format!(
+                "DEBUG: Header response has {} blocks",
+                start_header_response.blocks.len()
+            )
+            .into(),
+        );
+
+        if start_header_response.blocks.is_empty() {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::error_1(&"DEBUG: No header found for start height".into());
+            return Ok(HttpBlockResponse {
+                blocks: vec![],
+                has_next_page: false,
+                next_header_to_scan: None,
+            });
         }
 
-        Ok(HttpBlockResponse {
-            blocks: all_blocks,
-            has_next_page: false, // We've fetched the specific heights requested
-        })
+        let start_header_hash = hex::encode(&start_header_response.blocks[0].header_hash);
+
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(
+            &format!(
+                "DEBUG: Start header hash: {}, calling sync_utxos_by_block with limit: {}",
+                start_header_hash,
+                (end_height - start_height + 1)
+            )
+            .into(),
+        );
+
+        // Use sync_utxos_by_block to get all blocks in the range
+        let limit = (end_height - start_height + 1) as u64;
+        let sync_response = self
+            .sync_utxos_by_block(&start_header_hash, None, limit)
+            .await?;
+
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(
+            &format!(
+                "DEBUG: sync_utxos_by_block returned {} blocks",
+                sync_response.blocks.len()
+            )
+            .into(),
+        );
+
+        Ok(sync_response)
     }
 
     /// Get header by height using Tari base node API
@@ -725,29 +778,23 @@ impl HttpBlockchainScanner {
         &self,
         height: u64,
     ) -> LightweightWalletResult<HttpBlockResponse> {
-        let url = format!("{}/get_header_by_height", self.base_url);
+        let url = format!("{}/get_header_by_height?height={}", self.base_url, height);
 
-        // Create request body with height
-        let request_body = serde_json::json!({
-            "height": height
-        });
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(
+            &format!("DEBUG: get_header_by_height requesting URL: {}", url).into(),
+        );
 
         // Native implementation using reqwest
         #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
         {
-            let response = self
-                .client
-                .post(&url)
-                .json(&request_body)
-                .send()
-                .await
-                .map_err(|e| {
-                    LightweightWalletError::ScanningError(
-                        crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                            "HTTP request failed: {e}"
-                        )),
-                    )
-                })?;
+            let response = self.client.get(&url).send().await.map_err(|e| {
+                LightweightWalletError::ScanningError(
+                    crate::errors::ScanningError::blockchain_connection_failed(&format!(
+                        "HTTP request failed: {e}"
+                    )),
+                )
+            })?;
 
             if !response.status().is_success() {
                 return Err(LightweightWalletError::ScanningError(
@@ -772,32 +819,146 @@ impl HttpBlockchainScanner {
         // WASM implementation using web-sys
         #[cfg(all(feature = "http", target_arch = "wasm32"))]
         {
-            let json_body = serde_json::to_string(&request_body).map_err(|e| {
+            let opts = RequestInit::new();
+            opts.set_method("GET");
+            opts.set_mode(RequestMode::Cors);
+
+            let request = Request::new_with_str_and_init(&url, &opts)?;
+
+            let response = self.fetch_request(&request).await?;
+
+            if !response.ok() {
+                return Err(LightweightWalletError::ScanningError(
+                    crate::errors::ScanningError::blockchain_connection_failed(&format!(
+                        "HTTP error: {}",
+                        response.status()
+                    )),
+                ));
+            }
+
+            // Get JSON response
+            let json_promise = response.json().map_err(|_| {
+                LightweightWalletError::ScanningError(
+                    crate::errors::ScanningError::blockchain_connection_failed(
+                        "Failed to get JSON response",
+                    ),
+                )
+            })?;
+
+            let json_value = JsFuture::from(json_promise).await.map_err(|_| {
+                LightweightWalletError::ScanningError(
+                    crate::errors::ScanningError::blockchain_connection_failed(
+                        "Failed to parse JSON response",
+                    ),
+                )
+            })?;
+
+            // get_header_by_height returns a single header, not a blocks array
+            #[derive(Deserialize)]
+            struct HeaderResponse {
+                hash: Vec<u8>,
+                height: u64,
+                timestamp: u64,
+            }
+
+            // Try to deserialize as a single header first
+            let header_response: HeaderResponse =
+                serde_wasm_bindgen::from_value(json_value.clone()).map_err(|e| {
+                    #[cfg(target_arch = "wasm32")]
+                    web_sys::console::error_1(
+                        &format!("DEBUG: Failed to deserialize as header: {}", e).into(),
+                    );
+                    LightweightWalletError::ScanningError(
+                        crate::errors::ScanningError::blockchain_connection_failed(&format!(
+                            "Failed to deserialize header response: {}",
+                            e
+                        )),
+                    )
+                })?;
+
+            // Convert single header to HttpBlockResponse format
+            let http_response = HttpBlockResponse {
+                blocks: vec![HttpBlockData {
+                    header_hash: header_response.hash,
+                    height: header_response.height,
+                    outputs: vec![], // Header endpoint doesn't include outputs
+                    inputs: None,    // Header endpoint doesn't include inputs
+                    mined_timestamp: header_response.timestamp,
+                }],
+                has_next_page: false,
+                next_header_to_scan: None,
+            };
+
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::log_1(
+                &format!(
+                    "DEBUG: Converted header to HttpBlockResponse with {} blocks",
+                    http_response.blocks.len()
+                )
+                .into(),
+            );
+
+            Ok(http_response)
+        }
+    }
+
+    /// Sync UTXOs by block using the sync_utxos_by_block endpoint
+    async fn sync_utxos_by_block(
+        &self,
+        start_header_hash: &str,
+        end_header_hash: Option<&str>,
+        limit: u64,
+    ) -> LightweightWalletResult<HttpBlockResponse> {
+        let mut url = format!(
+            "{}/sync_utxos_by_block?start_header_hash={}&limit={}&page=0",
+            self.base_url, start_header_hash, limit
+        );
+
+        if let Some(end_hash) = end_header_hash {
+            url.push_str(&format!("&end_header_hash={}", end_hash));
+        }
+
+        // Native implementation using reqwest
+        #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+        {
+            let response = self.client.get(&url).send().await.map_err(|e| {
                 LightweightWalletError::ScanningError(
                     crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                        "Failed to serialize request: {}",
-                        e
+                        "HTTP request failed: {e}"
                     )),
                 )
             })?;
 
+            if !response.status().is_success() {
+                return Err(LightweightWalletError::ScanningError(
+                    crate::errors::ScanningError::blockchain_connection_failed(&format!(
+                        "HTTP error: {}",
+                        response.status()
+                    )),
+                ));
+            }
+
+            let http_response: HttpBlockResponse = response.json().await.map_err(|e| {
+                LightweightWalletError::ScanningError(
+                    crate::errors::ScanningError::blockchain_connection_failed(&format!(
+                        "Failed to parse response: {e}"
+                    )),
+                )
+            })?;
+
+            Ok(http_response)
+        }
+
+        // WASM implementation using web-sys
+        #[cfg(all(feature = "http", target_arch = "wasm32"))]
+        {
             let opts = RequestInit::new();
-            opts.set_method("POST");
+            opts.set_method("GET");
             opts.set_mode(RequestMode::Cors);
-            opts.set_body(&JsValue::from_str(&json_body));
 
             let request = Request::new_with_str_and_init(&url, &opts)?;
 
-            // Set Content-Type header
-            request.headers().set("Content-Type", "application/json")?;
-
-            let response: Response = self.fetch_request(&request).await.map_err(|_| {
-                LightweightWalletError::ScanningError(
-                    crate::errors::ScanningError::blockchain_connection_failed(
-                        "Invalid response type",
-                    ),
-                )
-            })?;
+            let response = self.fetch_request(&request).await?;
 
             if !response.ok() {
                 return Err(LightweightWalletError::ScanningError(
@@ -911,7 +1072,16 @@ impl BlockchainScanner for HttpBlockchainScanner {
         let tip_info = self.get_tip_info().await?;
         let end_height = config.end_height.unwrap_or(tip_info.best_block_height);
 
+        eprintln!(
+            "DEBUG: Scan config - start: {}, end: {}, batch_size: {}",
+            config.start_height, end_height, config.batch_size
+        );
+
         if config.start_height > end_height {
+            eprintln!(
+                "DEBUG: Early return - start_height {} > end_height {}",
+                config.start_height, end_height
+            );
             return Ok(Vec::new());
         }
 
@@ -923,7 +1093,22 @@ impl BlockchainScanner for HttpBlockchainScanner {
             let heights: Vec<u64> = (current_height..=batch_end).collect();
 
             // Fetch blocks for this batch
-            let http_response = self.fetch_blocks_by_heights(heights).await?;
+            let http_response = self.fetch_blocks_by_heights(heights.clone()).await?;
+
+            // Debug: Log what we got back
+            #[cfg(feature = "tracing")]
+            debug!(
+                "Fetched {} blocks for heights {:?}",
+                http_response.blocks.len(),
+                heights
+            );
+
+            // Print to stderr for debugging even without tracing
+            eprintln!(
+                "DEBUG: Scanning batch heights {:?}, got {} blocks",
+                heights,
+                http_response.blocks.len()
+            );
 
             for http_block in http_response.blocks {
                 let block_info = Self::convert_http_block_to_block_info(&http_block)?;

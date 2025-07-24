@@ -951,12 +951,20 @@ impl ScannerEngine {
         let start_time = get_current_time();
 
         if heights.is_empty() {
+            eprintln!("DEBUG: ScannerEngine.scan_blocks_with_progress - no heights provided");
             return Err(LightweightWalletError::InvalidArgument {
                 argument: "heights".to_string(),
                 value: "empty_vec".to_string(),
                 message: "No block heights provided for scanning".to_string(),
             });
         }
+
+        eprintln!(
+            "DEBUG: ScannerEngine.scan_blocks_with_progress - scanning {} heights from {} to {}",
+            heights.len(),
+            heights.iter().min().unwrap(),
+            heights.iter().max().unwrap()
+        );
 
         let start_height = *heights.iter().min().unwrap();
         let end_height = *heights.iter().max().unwrap();

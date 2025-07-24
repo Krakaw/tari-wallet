@@ -1320,9 +1320,23 @@ impl WasmScanner {
         to_height: u64,
         base_url: Option<&str>,
     ) -> ScanResult {
+        web_sys::console::log_1(
+            &format!(
+                "DEBUG: scan_block_range called with from_height={}, to_height={}, base_url={:?}",
+                from_height, to_height, base_url
+            )
+            .into(),
+        );
+
         // Initialize scanner engine if needed
         if let Some(url) = base_url {
+            web_sys::console::log_1(
+                &format!("DEBUG: Initializing scanner engine with URL: {}", url).into(),
+            );
             if let Err(e) = self.initialize_scanner_engine(url).await {
+                web_sys::console::error_1(
+                    &format!("DEBUG: Failed to initialize scanner engine: {}", e).into(),
+                );
                 return ScanResult {
                     total_outputs: 0,
                     total_spent: 0,
@@ -1337,8 +1351,12 @@ impl WasmScanner {
         }
 
         let scanner_engine = match self.scanner_engine.as_mut() {
-            Some(engine) => engine,
+            Some(engine) => {
+                web_sys::console::log_1(&"DEBUG: Scanner engine is available".into());
+                engine
+            }
             None => {
+                web_sys::console::error_1(&"DEBUG: Scanner engine not initialized".into());
                 return ScanResult {
                     total_outputs: 0,
                     total_spent: 0,
@@ -1353,8 +1371,25 @@ impl WasmScanner {
         };
 
         // Initialize wallet context in the scanner engine if we have one
+        web_sys::console::log_1(
+            &format!(
+                "DEBUG: Checking wallet context - scanner has wallet: {}, self has wallet: {}",
+                scanner_engine.wallet_context().is_some(),
+                self.wallet_context.is_some()
+            )
+            .into(),
+        );
+
         if scanner_engine.wallet_context().is_none() && self.wallet_context.is_some() {
+            web_sys::console::log_1(&"DEBUG: Initializing wallet in scanner engine".into());
             if let Err(e) = scanner_engine.initialize_wallet().await {
+                web_sys::console::error_1(
+                    &format!(
+                        "DEBUG: Failed to initialize wallet in scanner engine: {}",
+                        e
+                    )
+                    .into(),
+                );
                 return ScanResult {
                     total_outputs: 0,
                     total_spent: 0,
@@ -1374,18 +1409,33 @@ impl WasmScanner {
         // For now, collect all heights in the range and scan them as specific blocks
         let block_heights: Vec<u64> = (from_height..=to_height).collect();
 
+        web_sys::console::log_1(
+            &format!(
+                "DEBUG: WASM scan_block_range calling scanner_engine.scan_blocks with {} heights",
+                block_heights.len()
+            )
+            .into(),
+        );
+
         match scanner_engine.scan_blocks(block_heights).await {
-            Ok(scan_results) => self.convert_lib_scan_results_to_wasm_complete(scan_results),
-            Err(e) => ScanResult {
-                total_outputs: 0,
-                total_spent: 0,
-                total_value: 0,
-                current_balance: 0,
-                blocks_processed: 0,
-                transactions: Vec::new(),
-                success: false,
-                error: Some(format!("Scanner engine scan failed: {}", e)),
-            },
+            Ok(scan_results) => {
+                web_sys::console::log_1(&format!("DEBUG: Scanner engine returned results successfully - total_blocks_scanned: {}, completed_successfully: {}", 
+                                                scan_results.scan_config_summary.total_blocks_scanned, scan_results.completed_successfully).into());
+                self.convert_lib_scan_results_to_wasm_complete(scan_results)
+            }
+            Err(e) => {
+                web_sys::console::error_1(&format!("DEBUG: Scanner engine failed: {}", e).into());
+                ScanResult {
+                    total_outputs: 0,
+                    total_spent: 0,
+                    total_value: 0,
+                    current_balance: 0,
+                    blocks_processed: 0,
+                    transactions: Vec::new(),
+                    success: false,
+                    error: Some(format!("Scanner engine scan failed: {}", e)),
+                }
+            }
         }
     }
 }
@@ -1671,18 +1721,43 @@ pub async fn create_and_initialize_scanner_with_fetch_async(
     max_retries: Option<u32>,
     fetch_function: Option<js_sys::Function>,
 ) -> Result<WasmScanner, JsValue> {
+    eprintln!(
+        "DEBUG: create_and_initialize_scanner_with_fetch_async called with base_url: {}",
+        base_url
+    );
     let mut scanner = WasmScanner::from_str(data).map_err(|e| JsValue::from_str(&e))?;
+    eprintln!("DEBUG: WasmScanner created successfully");
 
     let retries = max_retries.unwrap_or(3);
     let mut last_error = "Unknown error".to_string();
 
     for attempt in 0..retries {
+        eprintln!(
+            "DEBUG: Scanner initialization attempt {} of {}",
+            attempt + 1,
+            retries
+        );
         match scanner
             .initialize_scanner_engine_with_fetch(base_url, fetch_function.clone())
             .await
         {
-            Ok(()) => return Ok(scanner),
+            Ok(()) => {
+                eprintln!(
+                    "DEBUG: Scanner engine initialized successfully on attempt {}",
+                    attempt + 1
+                );
+                eprintln!(
+                    "DEBUG: Scanner engine is Some: {}",
+                    scanner.scanner_engine.is_some()
+                );
+                return Ok(scanner);
+            }
             Err(e) => {
+                eprintln!(
+                    "DEBUG: Scanner initialization failed on attempt {}: {}",
+                    attempt + 1,
+                    e
+                );
                 last_error = e;
                 if attempt < retries - 1 {
                     // Wait before retry with exponential backoff
@@ -1840,19 +1915,51 @@ pub async fn scan_with_memory_management_async(
         error: None,
     };
 
+    // Use web_sys::console for WASM debugging
+    web_sys::console::log_1(
+        &format!(
+            "DEBUG: scan_with_memory_management_async called with from_height={}, to_height={}",
+            from_height, to_height
+        )
+        .into(),
+    );
+
     let mut current_height = from_height;
 
     while current_height <= to_height {
         // Scan in smaller batches to reduce memory pressure
         let batch_end = std::cmp::min(current_height + 100, to_height);
 
+        web_sys::console::log_1(
+            &format!(
+                "DEBUG: Processing batch from {} to {}",
+                current_height, batch_end
+            )
+            .into(),
+        );
+
         let batch_result = scanner
             .scan_block_range(current_height, batch_end, None)
             .await;
 
+        web_sys::console::log_1(
+            &format!(
+                "DEBUG: Batch result - success: {}, blocks_processed: {}, error: {:?}",
+                batch_result.success, batch_result.blocks_processed, batch_result.error
+            )
+            .into(),
+        );
+
         if !batch_result.success {
             total_results.success = false;
             total_results.error = batch_result.error;
+            web_sys::console::error_1(
+                &format!(
+                    "DEBUG: Batch failed, breaking. Error: {:?}",
+                    total_results.error
+                )
+                .into(),
+            );
             break;
         }
 
@@ -1870,6 +1977,14 @@ pub async fn scan_with_memory_management_async(
         let promise = js_sys::Promise::resolve(&JsValue::from(0));
         wasm_bindgen_futures::JsFuture::from(promise).await.ok();
     }
+
+    web_sys::console::log_1(
+        &format!(
+            "DEBUG: Final results - blocks_processed: {}, total_outputs: {}",
+            total_results.blocks_processed, total_results.total_outputs
+        )
+        .into(),
+    );
 
     serde_json::to_string(&total_results)
         .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
