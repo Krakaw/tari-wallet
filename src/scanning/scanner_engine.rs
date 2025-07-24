@@ -1454,7 +1454,18 @@ impl Default for ScannerEngineBuilder {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
-    use crate::scanning::{MockBlockchainScanner, TipInfo};
+    use crate::data_structures::{
+        transaction_output::LightweightTransactionOutput,
+        types::MicroMinotari,
+        wallet_output::{
+            LightweightOutputFeatures, LightweightOutputType, LightweightRangeProofType,
+        },
+    };
+    use crate::scanning::{
+        mocks::{MockBlockchainScanner, MockNetworkFailureModes},
+        BlockInfo, TipInfo,
+    };
+    use std::time::Duration;
 
     #[tokio::test]
     async fn test_scanner_engine_creation() {
@@ -1483,7 +1494,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scanner_engine_tip_info() {
-        let mut scanner = MockBlockchainScanner::new();
+        let scanner = MockBlockchainScanner::new();
         scanner.set_tip_info(TipInfo {
             best_block_height: 5000,
             best_block_hash: vec![1, 2, 3, 4],
@@ -1502,7 +1513,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_determine_scan_range() {
-        let mut scanner = MockBlockchainScanner::new();
+        let scanner = MockBlockchainScanner::new();
         scanner.set_tip_info(TipInfo {
             best_block_height: 5000,
             best_block_hash: vec![1, 2, 3, 4],
@@ -1521,7 +1532,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_determine_scan_range_no_end() {
-        let mut scanner = MockBlockchainScanner::new();
+        let scanner = MockBlockchainScanner::new();
         scanner.set_tip_info(TipInfo {
             best_block_height: 5000,
             best_block_hash: vec![1, 2, 3, 4],
@@ -1600,5 +1611,289 @@ mod tests {
 
         let resume_cmd = handler.generate_resume_command(&context);
         assert!(resume_cmd.contains("--blocks 1000,1001,1002"));
+    }
+
+    // === Enhanced Mock Tests ===
+
+    #[tokio::test]
+    async fn test_scanner_engine_with_mock_blocks() {
+        let scanner = MockBlockchainScanner::new();
+
+        // Add test blocks with known outputs
+        scanner.add_block(BlockInfo {
+            height: 1000,
+            hash: vec![0x10; 32],
+            timestamp: 1640995200,
+            outputs: vec![create_test_output(5000, 1000)],
+            inputs: vec![],
+            kernels: vec![],
+            http_output_hashes: None,
+        });
+
+        scanner.add_block(BlockInfo {
+            height: 1001,
+            hash: vec![0x11; 32],
+            timestamp: 1640995800,
+            outputs: vec![create_test_output(7500, 1001)],
+            inputs: vec![],
+            kernels: vec![],
+            http_output_hashes: None,
+        });
+
+        let config = ScanConfiguration::new_range(1000, 1001);
+        let mut engine = ScannerEngine::new(Box::new(scanner), config);
+
+        let results = engine.scan_blocks(vec![1000, 1001]).await.unwrap();
+
+        // Verify results structure (ScanResults, not individual blocks)
+        assert!(!results.block_results.is_empty());
+        assert_eq!(results.scan_config_summary.start_height, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_scanner_engine_network_error_handling() {
+        let scanner = MockBlockchainScanner::new();
+
+        // Set up failure mode
+        scanner.set_failure_modes(MockNetworkFailureModes {
+            next_error_message: Some("Mock failure: scan_blocks".to_string()),
+            ..Default::default()
+        });
+
+        let config = ScanConfiguration::new(1000);
+        let mut engine = ScannerEngine::new(Box::new(scanner), config);
+
+        let result = engine.scan_blocks(vec![1000]).await;
+        assert!(result.is_err());
+
+        // Error should contain mock failure message
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Mock failure: scan_blocks"));
+    }
+
+    #[tokio::test]
+    async fn test_scanner_engine_network_timeout_simulation() {
+        let mut scanner = MockBlockchainScanner::new();
+
+        // Set network delay and timeout
+        scanner.set_network_delay(Duration::from_millis(50));
+        scanner.set_failure_modes(MockNetworkFailureModes {
+            simulate_timeout: true,
+            ..Default::default()
+        });
+
+        let config = ScanConfiguration::new(1000);
+        let mut engine = ScannerEngine::new(Box::new(scanner), config);
+
+        let start_time = std::time::Instant::now();
+        let result = engine.scan_blocks(vec![1000]).await;
+        let elapsed = start_time.elapsed();
+
+        assert!(result.is_err());
+        assert!(elapsed >= Duration::from_millis(40)); // Should have some delay
+        assert!(result.unwrap_err().to_string().contains("Mock timeout"));
+    }
+
+    #[tokio::test]
+    async fn test_scanner_engine_empty_results_mode() {
+        let scanner = MockBlockchainScanner::new();
+
+        // Add blocks but set empty results mode
+        scanner.add_block(BlockInfo {
+            height: 1000,
+            hash: vec![0x10; 32],
+            timestamp: 1640995200,
+            outputs: vec![create_test_output(5000, 1000)],
+            inputs: vec![],
+            kernels: vec![],
+            http_output_hashes: None,
+        });
+
+        scanner.set_failure_modes(MockNetworkFailureModes {
+            return_empty_results: true,
+            ..Default::default()
+        });
+
+        let config = ScanConfiguration::new(1000);
+        let mut engine = ScannerEngine::new(Box::new(scanner), config);
+
+        let results = engine.scan_blocks(vec![1000]).await.unwrap();
+        assert!(
+            results.block_results.is_empty(),
+            "Should return no results when empty mode is set"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scanner_engine_progressive_scan() {
+        let scanner = MockBlockchainScanner::new();
+
+        // Add multiple blocks in sequence
+        for height in 1000..1010 {
+            scanner.add_block(BlockInfo {
+                height,
+                hash: vec![height as u8; 32],
+                timestamp: 1640995200 + (height * 600),
+                outputs: vec![create_test_output((height * 100) as u64, height)],
+                inputs: vec![],
+                kernels: vec![],
+                http_output_hashes: None,
+            });
+        }
+
+        let config = ScanConfiguration::new_range(1000, 1009);
+        let mut engine = ScannerEngine::new(Box::new(scanner), config);
+
+        let blocks: Vec<u64> = (1000..1010).collect();
+        let results = engine.scan_blocks(blocks).await.unwrap();
+
+        // Verify scan completed successfully
+        assert!(!results.block_results.is_empty());
+        assert_eq!(results.scan_config_summary.start_height, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_scanner_engine_batch_scanning() {
+        let scanner = MockBlockchainScanner::new();
+
+        // Set up tip info
+        scanner.set_tip_info(TipInfo {
+            best_block_height: 1100,
+            best_block_hash: vec![0xFF; 32],
+            accumulated_difficulty: vec![0xAA; 32],
+            pruned_height: 500,
+            timestamp: 1640995200,
+        });
+
+        // Add blocks across a range
+        for height in 1000..1050 {
+            scanner.add_block(BlockInfo {
+                height,
+                hash: vec![height as u8; 32],
+                timestamp: 1640995200 + (height * 600),
+                outputs: vec![create_test_output(1000, height)],
+                inputs: vec![],
+                kernels: vec![],
+                http_output_hashes: None,
+            });
+        }
+
+        let config = ScanConfiguration::new_range(1000, 1049).with_batch_size(10);
+        let mut engine = ScannerEngine::new(Box::new(scanner), config);
+
+        let (start, end) = engine.determine_scan_range().await.unwrap();
+        assert_eq!(start, 1000);
+        assert_eq!(end, 1049);
+
+        // Scan in batches
+        let batch1: Vec<u64> = (1000..1010).collect();
+        let batch2: Vec<u64> = (1010..1020).collect();
+
+        let results1 = engine.scan_blocks(batch1).await.unwrap();
+        let results2 = engine.scan_blocks(batch2).await.unwrap();
+
+        // Verify both batches completed successfully
+        assert!(!results1.block_results.is_empty());
+        assert!(!results2.block_results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_scanner_engine_utxo_search() {
+        let scanner = MockBlockchainScanner::new();
+
+        // Add UTXO for search
+        let test_output = create_test_output(5000, 1000);
+        let commitment = test_output.commitment().as_bytes().to_vec();
+        scanner.add_utxo(commitment.clone(), test_output.clone());
+
+        let config = ScanConfiguration::new(1000);
+        let mut engine = ScannerEngine::new(Box::new(scanner), config);
+
+        let search_results = engine.scanner.search_utxos(vec![commitment]).await.unwrap();
+        assert_eq!(search_results.len(), 1);
+        assert_eq!(search_results[0].outputs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_scanner_engine_error_recovery() {
+        let scanner = MockBlockchainScanner::new();
+
+        // Set up to fail initially, then succeed
+        scanner.set_failure_modes(MockNetworkFailureModes {
+            next_error_message: Some("Temporary network error".to_string()),
+            ..Default::default()
+        });
+
+        let config = ScanConfiguration::new(1000);
+        let mut engine = ScannerEngine::new(Box::new(scanner), config);
+
+        // First attempt should fail
+        let result1 = engine.scan_blocks(vec![1000]).await;
+        assert!(result1.is_err());
+        assert!(result1
+            .unwrap_err()
+            .to_string()
+            .contains("Temporary network error"));
+
+        // Second attempt should succeed (error flag was consumed)
+        let result2 = engine.scan_blocks(vec![1000]).await;
+        assert!(result2.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_scanner_engine_builder_with_mocks() {
+        let scanner = MockBlockchainScanner::new();
+        scanner.set_tip_info(TipInfo {
+            best_block_height: 2000,
+            best_block_hash: vec![0x20; 32],
+            accumulated_difficulty: vec![0xBB; 32],
+            pruned_height: 1000,
+            timestamp: 1640995200,
+        });
+
+        let engine = ScannerEngineBuilder::new()
+            .with_scanner(Box::new(scanner))
+            .with_height_range(1500, Some(1800))
+            .with_batch_size(25)
+            .build()
+            .unwrap();
+
+        assert_eq!(engine.configuration().start_height, 1500);
+        assert_eq!(engine.configuration().end_height, Some(1800));
+        assert_eq!(engine.configuration().batch_size, 25);
+
+        // Verify we can still get tip info
+        let mut engine = engine;
+        let tip = engine.get_tip_info().await.unwrap();
+        assert_eq!(tip.best_block_height, 2000);
+        assert_eq!(tip.pruned_height, 1000);
+    }
+
+    // Helper function to create test outputs
+    fn create_test_output(value: u64, height: u64) -> LightweightTransactionOutput {
+        use crate::data_structures::{
+            encrypted_data::EncryptedData,
+            types::CompressedCommitment,
+            wallet_output::{LightweightCovenant, LightweightScript, LightweightSignature},
+        };
+
+        let features = LightweightOutputFeatures {
+            output_type: LightweightOutputType::Payment,
+            maturity: height,
+            range_proof_type: LightweightRangeProofType::BulletProofPlus,
+        };
+
+        LightweightTransactionOutput::new(
+            0, // version
+            features,
+            CompressedCommitment::new([(height % 256) as u8; 32]), // commitment - unique per height
+            None,                                                  // range_proof
+            LightweightScript::default(),                          // script
+            crate::data_structures::types::CompressedPublicKey::new([0u8; 32]), // sender_offset_public_key
+            LightweightSignature::default(), // metadata_signature
+            LightweightCovenant::default(),  // covenant
+            EncryptedData::from_bytes(&[0u8; 80]).unwrap(), // encrypted_data
+            MicroMinotari::from(value),      // minimum_value_promise
+        )
     }
 }

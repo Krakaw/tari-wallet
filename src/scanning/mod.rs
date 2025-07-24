@@ -40,6 +40,10 @@ pub mod wallet_source;
 pub mod output_formatter;
 pub mod progress_reporter;
 
+// Mock implementations for testing
+#[cfg(test)]
+pub mod mocks;
+
 // Include GRPC scanner when the feature is enabled
 #[cfg(feature = "grpc")]
 pub mod grpc_scanner;

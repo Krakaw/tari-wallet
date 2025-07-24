@@ -3619,11 +3619,59 @@ mod tests {
         );
         storage.initialize().await.unwrap();
 
+        // Create a test wallet first
+        let mut test_wallet = crate::storage::StoredWallet {
+            id: None, // Let database assign ID
+            name: "test_wallet".to_string(),
+            seed_phrase: Some("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string()),
+            view_key_hex: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef".to_string(),
+            spend_key_hex: Some("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string()),
+            birthday_block: 0,
+            latest_scanned_block: None,
+            created_at: Some(chrono::Utc::now().to_rfc3339()),
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        };
+        storage.save_wallet(&test_wallet).await.unwrap();
+
+        // Get the assigned wallet ID
+        let saved_wallet = storage
+            .get_wallet_by_name("test_wallet")
+            .await
+            .unwrap()
+            .unwrap();
+        let wallet_id = saved_wallet.id.unwrap();
+
+        // Create a second test wallet for testing with different IDs
+        let test_wallet2 = crate::storage::StoredWallet {
+            id: None, // Let database assign ID
+            name: "test_wallet2".to_string(),
+            seed_phrase: Some("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string()),
+            view_key_hex: "2234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef".to_string(),
+            spend_key_hex: Some("bcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890a".to_string()),
+            birthday_block: 0,
+            latest_scanned_block: None,
+            created_at: Some(chrono::Utc::now().to_rfc3339()),
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        };
+        storage.save_wallet(&test_wallet2).await.unwrap();
+        let saved_wallet2 = storage
+            .get_wallet_by_name("test_wallet2")
+            .await
+            .unwrap()
+            .unwrap();
+        let wallet_id2 = saved_wallet2.id.unwrap();
+
         // Test DirectStorageAdapter
         {
             let mut direct_adapter = DirectStorageAdapter::new(storage.clone());
-            direct_adapter.update_scanned_block(1, 100).await.unwrap();
-            let block = direct_adapter.get_latest_scanned_block(1).await.unwrap();
+            direct_adapter
+                .update_scanned_block(wallet_id, 100)
+                .await
+                .unwrap();
+            let block = direct_adapter
+                .get_latest_scanned_block(wallet_id)
+                .await
+                .unwrap();
             assert_eq!(
                 block,
                 Some(100),
@@ -3635,10 +3683,16 @@ mod tests {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut bg_adapter = BackgroundWriterAdapter::new(storage.clone());
-            bg_adapter.update_scanned_block(2, 200).await.unwrap();
+            bg_adapter
+                .update_scanned_block(wallet_id2, 200)
+                .await
+                .unwrap();
             // Flush to ensure write is completed
             bg_adapter.flush_pending_operations().await.unwrap();
-            let block = bg_adapter.get_latest_scanned_block(2).await.unwrap();
+            let block = bg_adapter
+                .get_latest_scanned_block(wallet_id2)
+                .await
+                .unwrap();
             assert_eq!(
                 block,
                 Some(200),
@@ -3662,6 +3716,48 @@ mod tests {
         );
         storage.initialize().await.unwrap();
 
+        // Create a test wallet first
+        let mut test_wallet = crate::storage::StoredWallet {
+            id: None, // Let database assign ID
+            name: "test_wallet".to_string(),
+            seed_phrase: Some("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string()),
+            view_key_hex: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef".to_string(),
+            spend_key_hex: Some("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string()),
+            birthday_block: 0,
+            latest_scanned_block: None,
+            created_at: Some(chrono::Utc::now().to_rfc3339()),
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        };
+        storage.save_wallet(&test_wallet).await.unwrap();
+
+        // Get the assigned wallet ID
+        let saved_wallet = storage
+            .get_wallet_by_name("test_wallet")
+            .await
+            .unwrap()
+            .unwrap();
+        let wallet_id = saved_wallet.id.unwrap();
+
+        // Create a second test wallet for testing with different IDs
+        let test_wallet2 = crate::storage::StoredWallet {
+            id: None, // Let database assign ID
+            name: "test_wallet2".to_string(),
+            seed_phrase: Some("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string()),
+            view_key_hex: "2234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef".to_string(),
+            spend_key_hex: Some("bcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890a".to_string()),
+            birthday_block: 0,
+            latest_scanned_block: None,
+            created_at: Some(chrono::Utc::now().to_rfc3339()),
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        };
+        storage.save_wallet(&test_wallet2).await.unwrap();
+        let saved_wallet2 = storage
+            .get_wallet_by_name("test_wallet2")
+            .await
+            .unwrap()
+            .unwrap();
+        let wallet_id2 = saved_wallet2.id.unwrap();
+
         // Test explicit DirectStorageAdapter selection
         let mut direct_manager = StorageManagerBuilder::new()
             .with_storage(storage.clone())
@@ -3670,8 +3766,14 @@ mod tests {
             .unwrap();
 
         // Test that it works correctly
-        direct_manager.update_scanned_block(1, 1000).await.unwrap();
-        let block = direct_manager.get_latest_scanned_block(1).await.unwrap();
+        direct_manager
+            .update_scanned_block(wallet_id, 1000)
+            .await
+            .unwrap();
+        let block = direct_manager
+            .get_latest_scanned_block(wallet_id)
+            .await
+            .unwrap();
         assert_eq!(block, Some(1000), "Direct adapter via builder should work");
 
         // Test BackgroundWriterAdapter selection (native only)
@@ -3683,9 +3785,15 @@ mod tests {
                 .build()
                 .unwrap();
 
-            bg_manager.update_scanned_block(2, 2000).await.unwrap();
+            bg_manager
+                .update_scanned_block(wallet_id2, 2000)
+                .await
+                .unwrap();
             bg_manager.flush_pending_operations().await.unwrap();
-            let block = bg_manager.get_latest_scanned_block(2).await.unwrap();
+            let block = bg_manager
+                .get_latest_scanned_block(wallet_id2)
+                .await
+                .unwrap();
             assert_eq!(
                 block,
                 Some(2000),
@@ -3700,12 +3808,18 @@ mod tests {
             .build()
             .unwrap();
 
-        auto_manager.update_scanned_block(3, 3000).await.unwrap();
+        auto_manager
+            .update_scanned_block(wallet_id, 3000)
+            .await
+            .unwrap();
         if cfg!(not(target_arch = "wasm32")) {
             // On native, auto strategy may use BackgroundWriterAdapter
             auto_manager.flush_pending_operations().await.unwrap();
         }
-        let block = auto_manager.get_latest_scanned_block(3).await.unwrap();
+        let block = auto_manager
+            .get_latest_scanned_block(wallet_id)
+            .await
+            .unwrap();
         assert_eq!(block, Some(3000), "Auto adapter selection should work");
     }
 
@@ -3751,6 +3865,28 @@ mod tests {
         );
         storage.initialize().await.unwrap();
 
+        // Create a test wallet first
+        let mut test_wallet = crate::storage::StoredWallet {
+            id: None, // Let database assign ID
+            name: "test_wallet".to_string(),
+            seed_phrase: Some("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string()),
+            view_key_hex: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef".to_string(),
+            spend_key_hex: Some("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string()),
+            birthday_block: 0,
+            latest_scanned_block: None,
+            created_at: Some(chrono::Utc::now().to_rfc3339()),
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        };
+        storage.save_wallet(&test_wallet).await.unwrap();
+
+        // Get the assigned wallet ID
+        let saved_wallet = storage
+            .get_wallet_by_name("test_wallet")
+            .await
+            .unwrap()
+            .unwrap();
+        let wallet_id = saved_wallet.id.unwrap();
+
         // Test BackgroundWriterAdapter with custom configuration
         let config = BackgroundWriterConfig {
             max_batch_size: 10,
@@ -3761,18 +3897,24 @@ mod tests {
             retry_base_delay_ms: 10,
         };
 
-        let mut bg_adapter = BackgroundWriterAdapter::with_config(storage, config);
+        let mut bg_adapter = BackgroundWriterAdapter::with_config(storage.clone(), config);
 
         // Test that batching works correctly
         for i in 0..5 {
-            bg_adapter.update_scanned_block(1, 1000 + i).await.unwrap();
+            bg_adapter
+                .update_scanned_block(wallet_id, 1000 + i)
+                .await
+                .unwrap();
         }
 
         // Flush to ensure all operations complete
         bg_adapter.flush_pending_operations().await.unwrap();
 
         // Verify final state
-        let final_block = bg_adapter.get_latest_scanned_block(1).await.unwrap();
+        let final_block = bg_adapter
+            .get_latest_scanned_block(wallet_id)
+            .await
+            .unwrap();
         assert_eq!(final_block, Some(1004), "Should have final block height");
     }
 
@@ -3833,5 +3975,61 @@ mod tests {
             }
             _ => panic!("Expected UpdateScannedBlock variant"),
         }
+    }
+
+    // === Mock-Based Storage Manager Tests ===
+
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_storage_manager_creation_with_mock() {
+        let mock_storage = Arc::new(crate::scanning::mocks::MockWalletStorage::new());
+
+        let manager = StorageManagerBuilder::new()
+            .with_storage(mock_storage.clone())
+            .with_direct_adapter()
+            .build();
+
+        assert!(
+            manager.is_ok(),
+            "StorageManager should be created successfully with mock storage"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_storage_manager_error_injection() {
+        let mock_storage = Arc::new(crate::scanning::mocks::MockWalletStorage::new());
+
+        // Set up failure mode
+        mock_storage.set_failure_mode(crate::scanning::mocks::MockFailureModes {
+            fail_save_wallet: true,
+            ..Default::default()
+        });
+
+        let manager = StorageManagerBuilder::new()
+            .with_storage(mock_storage.clone())
+            .with_direct_adapter()
+            .build();
+
+        assert!(
+            manager.is_ok(),
+            "StorageManager should be created even with failing mock storage"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_storage_manager_background_writer() {
+        let mock_storage = Arc::new(crate::scanning::mocks::MockWalletStorage::new());
+
+        let manager = StorageManagerBuilder::new()
+            .with_storage(mock_storage.clone())
+            .with_background_adapter()
+            .build();
+
+        assert!(
+            manager.is_ok(),
+            "StorageManager should be created with background adapter"
+        );
     }
 }

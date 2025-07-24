@@ -7,3 +7,6 @@ pub mod wallet_workflow;
 pub mod scanning_workflow;
 pub mod transaction_workflow;
 pub mod multi_network_compatibility;
+pub mod mock_usage_example;
+pub mod end_to_end_mock_workflows;
+pub mod error_scenario_tests;

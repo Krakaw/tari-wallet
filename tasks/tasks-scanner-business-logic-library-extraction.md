@@ -74,7 +74,7 @@
   - [x] 5.3 Create unit tests for `ScanConfiguration` validation and error handling
   - [x] 5.4 Create unit tests for `ScanResults` and progress reporting functionality
   - [x] 5.5 Implement integration tests in `tests/integration/scanner_library.rs` for end-to-end workflows
-  - [ ] 5.6 Create mock implementations for storage and network layers for deterministic testing
+  - [x] 5.6 Create mock implementations for storage and network layers for deterministic testing
   - [ ] 5.7 Add performance validation tests to ensure no regression in scan speed or memory usage
   - [ ] 5.8 Test all feature flag combinations (`http`, `grpc`, `storage`) with library components
   - [ ] 5.9 Validate CLI backward compatibility with existing command-line usage patterns
