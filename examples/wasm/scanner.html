@@ -992,7 +992,41 @@
             log('info', `   Using data: ${scannerData.substring(0, 20)}...`);
 
             scanner = wasm.create_wasm_scanner(scannerData);
-            log('success', '✅ Scanner created successfully');
+            
+            // Set up the new progress callback mechanism
+            if (wasm.set_scanner_progress_callback) {
+                wasm.set_scanner_progress_callback(scanner, (progressJson) => {
+                    const progress = JSON.parse(progressJson);
+                    
+                    // Update progress bar
+                    updateProgress(progress.completion_percentage, 
+                        `Block ${progress.current_height.toLocaleString()} - ${progress.outputs_found} outputs found`);
+                    
+                    // Update current block height display
+                    document.getElementById('currentBlockHeight').textContent = progress.current_height.toLocaleString();
+                    
+                    // Log detailed progress information
+                    const phaseNames = {
+                        0: 'Idle', 1: 'Initializing', 2: 'Connecting', 3: 'Scanning', 
+                        4: 'Processing', 5: 'Saving', 6: 'Finalizing', 7: 'Completed', 
+                        8: 'Interrupted', 9: 'Error'
+                    };
+                    
+                    const phaseName = phaseNames[progress.phase] || 'Unknown';
+                    const rate = progress.scan_rate > 0 ? ` (${progress.scan_rate.toFixed(1)} blocks/sec)` : '';
+                    
+                    log('info', `📈 Progress: ${progress.completion_percentage.toFixed(1)}% - ${phaseName}${rate}`, true);
+                    
+                    if (progress.estimated_remaining_seconds) {
+                        const eta = Math.round(progress.estimated_remaining_seconds);
+                        log('info', `   ETA: ${eta}s remaining`, true);
+                    }
+                });
+                
+                log('success', '✅ Scanner created with progress callbacks enabled');
+            } else {
+                log('success', '✅ Scanner created successfully (legacy mode)');
+            }
 
             return scanner;
         }
@@ -1137,7 +1171,7 @@
                 return;
             }
 
-                        try {
+            try {
                 isScanning = true;
                 
                 // Reset download size counter
@@ -1146,154 +1180,105 @@
                 // Update button state
                 updateScanButton(true);
                 
-                // Create scanner
+                // Create scanner with progress callbacks
                 createScanner();
 
                 const baseNodeUrl = document.getElementById('baseNodeUrl').value;
                 const scanMode = document.getElementById('scanMode').value;
-                const limit = 10;
-
-                const httpClient = new HttpClient(baseNodeUrl);
-
-                let blockIterator;
-                let totalBlocks;
-                let scanDescription;
-                let rangeStartHeight, rangeEndHeight; // Store range values for filtering
 
                 if (scanMode === 'specific') {
                     // Parse specific heights
                     const specificHeightsText = document.getElementById('specificHeights').value.trim();
                     if (!specificHeightsText) {
                         log('error', '❌ Please enter comma-separated block heights');
+                        isScanning = false;
+                        updateScanButton(false);
                         return;
                     }
 
-                    const heights = specificHeightsText
+                    const heightsArray = specificHeightsText
                         .split(',')
                         .map(h => parseInt(h.trim()))
                         .filter(h => !isNaN(h) && h >= 0)
-                        .sort((a, b) => a - b); // Sort for better progress tracking
+                        .sort((a, b) => a - b);
 
-                    if (heights.length === 0) {
+                    if (heightsArray.length === 0) {
                         log('error', '❌ No valid block heights found');
+                        isScanning = false;
+                        updateScanButton(false);
                         return;
                     }
 
-                    totalBlocks = heights.length;
-                    blockIterator = fetchSpecificBlocksBatches(httpClient, heights);
-                    scanDescription = `specific blocks: ${heights.join(', ')}`;
-                    log('info', `🔍 Starting scan of ${totalBlocks} specific blocks`);
+                    // Convert to BigUint64Array as expected by WASM
+                    const heights = new BigUint64Array(heightsArray.map(h => BigInt(h)));
 
-                } else {
-                    // Range mode
-                    rangeStartHeight = parseInt(document.getElementById('startHeight').value);
-                    let endHeight = document.getElementById('endHeight').value;
-
-                    // Get tip height if endHeight not specified
-                    if (!endHeight) {
-                        const tipInfo = await httpClient.getTipInfo();
-                        endHeight = tipInfo.metadata.best_block_height;
-                    }
-                    rangeEndHeight = parseInt(endHeight);
-
-                    totalBlocks = rangeEndHeight - rangeStartHeight + 1;
-                    blockIterator = httpClient.fetchBlockRangeBatches(rangeStartHeight, rangeEndHeight, limit);
-                    scanDescription = `height range ${rangeStartHeight} to ${rangeEndHeight}`;
-                    log('info', `🔍 Starting blockchain scan from height ${rangeStartHeight} to ${rangeEndHeight}`);
-                }
-
-                let blockCount = 0;
-                updateProgress(0, 'Starting scan...');
-
-
-                // Stream and scan block batches
-                for await (const httpResponse of blockIterator) {
-                    if (!isScanning) break; // Allow cancellation
-
-                    // Process block batch
-                    if (httpResponse.blocks && httpResponse.blocks.length > 0) {
-                        const heights = httpResponse.blocks.map(b => b.height).sort((a, b) => a - b);
+                    log('info', `🔍 Starting scan of ${heightsArray.length} specific blocks using new progress system`);
+                    
+                    // Use the new scan_specific_blocks_with_progress method
+                    try {
+                        const resultJson = await wasm.scan_specific_blocks_with_progress_async(scanner, heights, baseNodeUrl);
+                        const result = JSON.parse(resultJson);
                         
-                        // Filter blocks to only include those within our target range for range mode
-                        if (scanMode === 'range') {
-                            // Filter blocks to only count those within our target range
-                            const originalLength = httpResponse.blocks.length;
-                            httpResponse.blocks = httpResponse.blocks.filter(block => 
-                                block.height >= rangeStartHeight && block.height <= rangeEndHeight
-                            );
-                            
-                            if (originalLength !== httpResponse.blocks.length) {
-                                log('info', `🔍 Filtered batch: ${originalLength} → ${httpResponse.blocks.length} blocks (removed blocks outside range ${rangeStartHeight}-${rangeEndHeight})`, true);
-                            }
+                        if (result.success) {
+                            log('success', '📈 SPECIFIC BLOCKS SCAN COMPLETED SUCCESSFULLY');
+                            log('info', `Blocks processed: ${heightsArray.length}`);
+                            log('info', `Transactions found: ${result.transactions?.length || 0}`);
+                            log('info', `Current balance: ${(result.current_balance / 1000000).toFixed(6)} T`);
+                        } else {
+                            log('error', `❌ Scan failed: ${result.error}`);
                         }
+                    } catch (error) {
+                        log('error', `❌ Scan failed: ${error.message}`);
                     }
 
-                    // Process the entire batch
-                    const batchResult = scanHttpBlocks(httpResponse);
-                    
-                    // Update block count
-                    const batchSize = httpResponse.blocks.length;
-                    blockCount += batchSize;
-
-                    // Get cumulative stats from scanner
-                    const cumulativeStats = getCumulativeStats();
-
-                    // Get highest block height from this batch for display
-                    const highestBlockInBatch = Math.max(...httpResponse.blocks.map(b => b.height));
-
-                    // Update progress
-                    const percentage = (blockCount / totalBlocks) * 100;
-                    updateProgress(percentage, `Scanned ${blockCount}/${totalBlocks} blocks`);
-                    updateResults(blockCount, cumulativeStats, highestBlockInBatch, totalDownloadSize);
-                    
-                    // Debug logging for progress tracking
-                    log('info', `📈 Progress: ${blockCount}/${totalBlocks} blocks (${percentage.toFixed(1)}%)`, true);
-
-                    // Explicit memory cleanup to help garbage collection
-                    // Clear references to large HTTP response data
-                    httpResponse.blocks = null;
-                    
-                    // Allow UI to update and garbage collection
-                    await new Promise(resolve => setTimeout(resolve, 10));
-                }
-
-                if (blockCount === 0) {
-                    log('warning', '⚠️ No blocks found');
                 } else {
-                    // Get final cumulative stats
-                    const finalStats = getCumulativeStats();
-
-                 
-
-                    if (isScanning) {
-                        log('success', '📈 SCAN COMPLETED SUCCESSFULLY');
-                        log('info', `═══════════════════════════════`);
-                        log('info', `Scan type: ${scanDescription}`);
-                        log('info', `Blocks processed: ${blockCount.toLocaleString()}`);
-                        log('info', `Total transactions: ${finalStats.total_transactions.toLocaleString()}`);
-                        log('info', `Current balance: ${(finalStats.current_balance / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
-                        log('info', `Data downloaded: ${formatFileSize(totalDownloadSize)}`);
-                        
-                        updateProgress(100, 'Scan completed!');
+                    // Range mode - use the new scan_blocks_with_progress method
+                    const startHeight = BigInt(parseInt(document.getElementById('startHeight').value));
+                    let endHeight = document.getElementById('endHeight').value;
+                    
+                    if (endHeight) {
+                        endHeight = BigInt(parseInt(endHeight));
                     } else {
-                        log('info', '📈 SCAN STOPPED');
-                        log('info', `═══════════════════════════════`);
-                        log('info', `Scan type: ${scanDescription}`);
-                        log('info', `Blocks processed before stop: ${blockCount.toLocaleString()}`);
-                        log('info', `Total transactions found: ${finalStats.total_transactions.toLocaleString()}`);
-                        log('info', `Current balance: ${(finalStats.current_balance / 1000000).toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 })} T`);
-                        log('info', `Data downloaded: ${formatFileSize(totalDownloadSize)}`);
+                        endHeight = null; // Let the scanner determine tip height
+                    }
+
+                    log('info', `🔍 Starting blockchain scan from height ${startHeight} to ${endHeight || 'tip'} using new progress system`);
+                    
+                    // Debug: Check if function exists
+                    if (!wasm.scan_blocks_with_progress_async) {
+                        log('error', '❌ scan_blocks_with_progress_async function not found in WASM module');
+                        log('info', `Available functions: ${Object.keys(wasm).filter(key => typeof wasm[key] === 'function').join(', ')}`);
+                        isScanning = false;
+                        updateScanButton(false);
+                        return;
+                    }
+                    
+                    try {
+                        const resultJson = await wasm.scan_blocks_with_progress_async(scanner, startHeight, endHeight, baseNodeUrl);
+                        const result = JSON.parse(resultJson);
+                        
+                        if (result.success) {
+                            log('success', '📈 RANGE SCAN COMPLETED SUCCESSFULLY');
+                            log('info', `Blocks processed: ${result.blocks_processed}`);
+                            log('info', `Transactions found: ${result.transactions?.length || 0}`);
+                            log('info', `Current balance: ${(result.current_balance / 1000000).toFixed(6)} T`);
+                        } else {
+                            log('error', `❌ Scan failed: ${result.error}`);
+                        }
+                    } catch (error) {
+                        log('error', `❌ Scan failed: ${error.message}`);
                     }
                 }
 
+                // Get final stats and update UI
+                const finalStats = getCumulativeStats();
+                updateResults(finalStats.total_transactions || 0, finalStats, null, totalDownloadSize);
+                updateProgress(100, 'Scan completed!');
             } catch (error) {
                 log('error', `❌ Scan failed: ${error.message || error}`);
                 updateProgress(0, 'Scan failed');
-                throw error;
             } finally {
                 isScanning = false;
-
-                // Reset button state
                 updateScanButton(false);
             }
         };

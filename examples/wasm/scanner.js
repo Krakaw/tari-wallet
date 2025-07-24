@@ -162,13 +162,33 @@ class CLIScanner {
                 this.options.maxRetries
             );
             
+            // Set up progress callback if scanner supports it
+            if (this.wasm.set_scanner_progress_callback && this.options.showProgress) {
+                this.wasm.set_scanner_progress_callback(this.scanner, (progressJson) => {
+                    const progress = JSON.parse(progressJson);
+                    
+                    const phaseNames = {
+                        0: 'Idle', 1: 'Initializing', 2: 'Connecting', 3: 'Scanning', 
+                        4: 'Processing', 5: 'Saving', 6: 'Finalizing', 7: 'Completed', 
+                        8: 'Interrupted', 9: 'Error'
+                    };
+                    
+                    const phaseName = phaseNames[progress.phase] || 'Unknown';
+                    const rate = progress.scan_rate > 0 ? ` (${progress.scan_rate.toFixed(1)} blocks/sec)` : '';
+                    const eta = progress.estimated_remaining_seconds ? ` - ETA: ${Math.round(progress.estimated_remaining_seconds)}s` : '';
+                    
+                    process.stderr.write(`\r📈 Progress: ${progress.completion_percentage.toFixed(1)}% - Block ${progress.current_height.toLocaleString()} - ${progress.outputs_found} outputs - ${phaseName}${rate}${eta}`);
+                });
+            }
+            
             this.results.scanner_info.scanner_created = true;
             this.results.scanner_info.data_type = data.split(' ').length > 10 ? 'seed_phrase' : 'view_key';
             this.results.scanner_info.base_url = this.options.baseUrl;
             this.results.scanner_info.max_retries = this.options.maxRetries;
+            this.results.scanner_info.progress_callbacks_enabled = !!this.wasm.set_scanner_progress_callback;
             
             if (this.options.showProgress) {
-                process.stderr.write(`✅ Scanner initialized successfully\n`);
+                process.stderr.write(`✅ Scanner initialized successfully (progress callbacks: ${this.results.scanner_info.progress_callbacks_enabled ? 'enabled' : 'disabled'})\n`);
             }
             
         } catch (error) {
@@ -234,7 +254,7 @@ class CLIScanner {
     }
 
     /**
-     * Scan blocks using range mode with modern scanner engine
+     * Scan blocks using range mode with modern scanner engine and progress reporting
      */
     async scanRange(startHeight, endHeight = null) {
         const scanStart = Date.now();
@@ -245,8 +265,23 @@ class CLIScanner {
             if (this.options.useStreaming) {
                 // Use streaming scan for memory efficiency
                 scanResult = await this.streamingScan(startHeight, endHeight);
+            } else if (this.wasm.scan_blocks_with_progress_async) {
+                // Use the new progress-enabled scanning method
+                if (this.options.showProgress) {
+                    process.stderr.write(`🔍 Using new progress-enabled range scanning from ${startHeight} to ${endHeight || 'tip'}...\n`);
+                }
+                
+                const resultJson = await this.wasm.scan_blocks_with_progress_async(this.scanner, BigInt(startHeight), endHeight ? BigInt(endHeight) : null, this.options.baseUrl);
+                scanResult = JSON.parse(resultJson);
+                
+                if (this.options.showProgress) {
+                    process.stderr.write(`\n✅ Progress-enabled scan completed\n`);
+                }
             } else {
-                // Use memory-optimized scan
+                // Fallback to memory-optimized scan
+                if (this.options.showProgress) {
+                    process.stderr.write(`⚠️ Falling back to legacy memory-optimized scan\n`);
+                }
                 scanResult = await this.memoryOptimizedScan(startHeight, endHeight);
             }
 
@@ -267,35 +302,59 @@ class CLIScanner {
     }
 
     /**
-     * Scan specific block heights using modern multiple ranges function
+     * Scan specific block heights using new progress-enabled methods
      */
     async scanSpecificHeights(heights) {
         const scanStart = Date.now();
         
         try {
-            // Convert heights to scan ranges format
-            const ranges = heights.map(height => ({ from_height: height, to_height: height }));
-            const rangesJson = JSON.stringify(ranges);
+            let scanResult;
             
-            let progressCallback = null;
-            if (this.options.showProgress) {
-                progressCallback = (progressData) => {
-                    const progress = JSON.parse(progressData);
-                    process.stderr.write(`Progress: ${progress.overall_progress.toFixed(1)}% - Block ${progress.current_height} - ${progress.transactions_found} transactions\r`);
-                };
-            }
+            if (this.wasm.scan_specific_blocks_with_progress_async) {
+                // Use the new progress-enabled specific blocks scanning method
+                if (this.options.showProgress) {
+                    process.stderr.write(`🔍 Using new progress-enabled specific blocks scanning for ${heights.length} blocks...\n`);
+                }
+                
+                // Convert heights to BigUint64Array as expected by WASM
+                const heightsArray = new BigUint64Array(heights.map(h => BigInt(h)));
+                const resultJson = await this.wasm.scan_specific_blocks_with_progress_async(this.scanner, heightsArray, this.options.baseUrl);
+                scanResult = JSON.parse(resultJson);
+                
+                if (this.options.showProgress) {
+                    process.stderr.write(`\n✅ Progress-enabled specific blocks scan completed\n`);
+                }
+            } else {
+                // Fallback to legacy multiple ranges approach
+                if (this.options.showProgress) {
+                    process.stderr.write(`⚠️ Falling back to legacy multiple ranges scan\n`);
+                }
+                
+                // Convert heights to scan ranges format
+                const ranges = heights.map(height => ({ from_height: height, to_height: height }));
+                const rangesJson = JSON.stringify(ranges);
+                
+                let progressCallback = null;
+                if (this.options.showProgress) {
+                    progressCallback = (progressData) => {
+                        const progress = JSON.parse(progressData);
+                        process.stderr.write(`Progress: ${progress.overall_progress.toFixed(1)}% - Block ${progress.current_height} - ${progress.transactions_found} transactions\r`);
+                    };
+                }
 
-            const resultJson = await this.wasm.scan_multiple_ranges_async(
-                this.scanner,
-                rangesJson,
-                this.options.batchSize,
-                progressCallback
-            );
+                const resultJson = await this.wasm.scan_multiple_ranges_async(
+                    this.scanner,
+                    rangesJson,
+                    this.options.batchSize,
+                    progressCallback
+                );
+                
+                scanResult = JSON.parse(resultJson);
+            }
             
-            const result = JSON.parse(resultJson);
-            this.results.scan_results = result;
+            this.results.scan_results = scanResult;
             this.results.performance.scan_time_ms = Date.now() - scanStart;
-            return result;
+            return scanResult;
             
         } catch (error) {
             this.results.scan_results = {

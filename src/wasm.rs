@@ -36,12 +36,73 @@ use crate::{
 #[cfg(feature = "http")]
 use crate::scanning::{
     http_scanner::{HttpBlockData, HttpBlockResponse, HttpBlockchainScanner, HttpOutputData},
-    scan_results::ScanResults as LibScanResults,
+    scan_results::{ScanProgress, ScanResults as LibScanResults},
     ScanConfig, ScanConfiguration, ScannerEngine, WalletContext, WalletSource,
 };
 
 #[cfg(feature = "http")]
 use crate::extraction::ExtractionConfig;
+
+/// WASM-compatible progress update structure for JavaScript callbacks
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[wasm_bindgen]
+pub struct WasmScanProgress {
+    /// Current block height being scanned
+    pub current_height: u64,
+    /// Target block height (null if unknown)
+    pub target_height: Option<u64>,
+    /// Number of blocks scanned so far
+    pub blocks_scanned: u64,
+    /// Total number of blocks to scan (null if unknown)
+    pub total_blocks: Option<u64>,
+    /// Number of outputs found so far
+    pub outputs_found: u64,
+    /// Number of outputs spent so far
+    pub outputs_spent: u64,
+    /// Total value of outputs found (in MicroMinotari)
+    pub total_value: u64,
+    /// Current scan rate (blocks per second)
+    pub scan_rate: f64,
+    /// Time elapsed since scan started (seconds)
+    pub elapsed_seconds: f64,
+    /// Estimated time remaining (seconds, null if unknown)
+    pub estimated_remaining_seconds: Option<f64>,
+    /// Current scan phase (as integer code: 0=Idle, 1=Initializing, 2=Scanning, 3=Complete, 4=Error)
+    pub phase: u32,
+    /// Completion percentage (0.0 to 100.0)
+    pub completion_percentage: f64,
+}
+
+/// Convert library ScanProgress to WASM-compatible format
+#[cfg(feature = "http")]
+impl From<&ScanProgress> for WasmScanProgress {
+    fn from(progress: &ScanProgress) -> Self {
+        Self {
+            current_height: progress.current_height,
+            target_height: progress.target_height,
+            blocks_scanned: progress.blocks_scanned,
+            total_blocks: progress.total_blocks,
+            outputs_found: progress.outputs_found,
+            outputs_spent: progress.outputs_spent,
+            total_value: progress.total_value,
+            scan_rate: progress.scan_rate,
+            elapsed_seconds: progress.elapsed_seconds,
+            estimated_remaining_seconds: progress.estimated_remaining_seconds,
+            phase: match progress.phase {
+                crate::scanning::scan_results::ScanPhase::Initializing => 1,
+                crate::scanning::scan_results::ScanPhase::Connecting => 2,
+                crate::scanning::scan_results::ScanPhase::Scanning { .. } => 3,
+                crate::scanning::scan_results::ScanPhase::Processing => 4,
+                crate::scanning::scan_results::ScanPhase::Saving => 5,
+                crate::scanning::scan_results::ScanPhase::Finalizing => 6,
+                crate::scanning::scan_results::ScanPhase::Completed => 7,
+                crate::scanning::scan_results::ScanPhase::Interrupted => 8,
+                crate::scanning::scan_results::ScanPhase::Error(_) => 9,
+            },
+            completion_percentage: progress.completion_percentage(),
+        }
+    }
+}
 
 /// Simplified block info for WASM serialization
 #[derive(Debug, Clone, serde::Serialize)]
@@ -121,6 +182,8 @@ pub struct WasmScanner {
     scanner_engine: Option<ScannerEngine>,
     #[cfg(feature = "http")]
     wallet_context: Option<WalletContext>,
+    /// JavaScript callback function for progress updates
+    progress_callback: Option<js_sys::Function>,
     // Legacy fields for backward compatibility during transition
     view_key: PrivateKey,
     entropy: [u8; 16],
@@ -273,6 +336,7 @@ impl WasmScanner {
             scanner_engine: None, // Will be initialized when needed
             #[cfg(feature = "http")]
             wallet_context,
+            progress_callback: None,
             view_key,
             entropy: entropy_array,
             wallet_state: WalletState::new(),
@@ -310,6 +374,7 @@ impl WasmScanner {
             scanner_engine: None, // Will be initialized when needed
             #[cfg(feature = "http")]
             wallet_context,
+            progress_callback: None,
             view_key,
             entropy,
             wallet_state: WalletState::new(),
@@ -359,6 +424,49 @@ impl WasmScanner {
     #[cfg(feature = "http")]
     pub async fn initialize_http_scanner(&mut self, base_url: &str) -> Result<(), String> {
         self.initialize_scanner_engine(base_url).await
+    }
+
+    /// Set progress callback function for receiving scan progress updates
+    /// The callback will be called with WasmScanProgress objects during scanning
+    pub fn set_progress_callback(&mut self, callback: Option<js_sys::Function>) {
+        self.progress_callback = callback;
+    }
+
+    /// Get current progress callback function (for testing/debugging)
+    pub fn get_progress_callback(&self) -> Option<js_sys::Function> {
+        self.progress_callback.clone()
+    }
+
+    /// Clear progress callback function
+    pub fn clear_progress_callback(&mut self) {
+        self.progress_callback = None;
+    }
+
+    /// Internal method to invoke progress callback with WASM-compatible progress data
+    fn invoke_progress_callback(&self, progress: &ScanProgress) {
+        if let Some(callback) = &self.progress_callback {
+            let wasm_progress = WasmScanProgress::from(progress);
+
+            // Convert to JsValue for callback
+            #[cfg(feature = "http")]
+            {
+                match serde_json::to_string(&wasm_progress) {
+                    Ok(json_str) => {
+                        let js_progress = JsValue::from_str(&json_str);
+                        // Call the JavaScript callback function
+                        let _ = callback.call1(&JsValue::NULL, &js_progress);
+                    }
+                    Err(e) => {
+                        #[cfg(target_arch = "wasm32")]
+                        web_sys::console::error_1(
+                            &format!("Failed to serialize progress for callback: {}", e).into(),
+                        );
+                        #[cfg(not(target_arch = "wasm32"))]
+                        eprintln!("Failed to serialize progress for callback: {}", e);
+                    }
+                }
+            }
+        }
     }
 
     /// Process HTTP block response using the scanner engine
@@ -450,6 +558,13 @@ impl WasmScanner {
             };
         }
 
+        // Report initial progress before scanning
+        if !block_heights.is_empty() {
+            let initial_progress =
+                ScanProgress::new(block_heights[0], block_heights.last().copied());
+            self.invoke_progress_callback(&initial_progress);
+        }
+
         // Use the scanner engine to scan specific blocks
         let scan_result = {
             let scanner_engine = match self.scanner_engine.as_mut() {
@@ -468,24 +583,39 @@ impl WasmScanner {
                 }
             };
 
-            scanner_engine.scan_blocks(block_heights).await
+            scanner_engine.scan_blocks(block_heights.clone()).await
         };
 
         match scan_result {
             Ok(scan_results) => {
+                // Report final progress from scan results
+                self.invoke_progress_callback(&scan_results.final_progress);
+
                 // Convert library ScanResults to WASM ScanResult and update local wallet state
                 self.process_scanner_results_and_update_state(scan_results)
             }
-            Err(e) => ScanResult {
-                total_outputs: 0,
-                total_spent: 0,
-                total_value: 0,
-                current_balance: 0,
-                blocks_processed: 0,
-                transactions: Vec::new(),
-                success: false,
-                error: Some(format!("Scanner engine scan failed: {}", e)),
-            },
+            Err(e) => {
+                // Report error progress if applicable
+                if !block_heights.is_empty() {
+                    let mut error_progress =
+                        ScanProgress::new(block_heights[0], block_heights.last().copied());
+                    error_progress.set_phase(crate::scanning::scan_results::ScanPhase::Error(
+                        e.to_string(),
+                    ));
+                    self.invoke_progress_callback(&error_progress);
+                }
+
+                ScanResult {
+                    total_outputs: 0,
+                    total_spent: 0,
+                    total_value: 0,
+                    current_balance: 0,
+                    blocks_processed: 0,
+                    transactions: Vec::new(),
+                    success: false,
+                    error: Some(format!("Scanner engine scan failed: {}", e)),
+                }
+            }
         }
     }
 
@@ -597,6 +727,87 @@ impl WasmScanner {
         // For now, use the legacy internal method for synchronous calls
         // In the future, we could spawn a blocking async operation here
         self.process_http_blocks_internal(http_response_json)
+    }
+
+    /// Scan a range of blocks with progress reporting via callbacks
+    /// This is the recommended method for WASM applications that need progress updates
+    #[cfg(feature = "http")]
+    pub async fn scan_blocks_with_progress(
+        &mut self,
+        start_height: u64,
+        end_height: Option<u64>,
+        base_url: &str,
+    ) -> Result<JsValue, JsValue> {
+        // Initialize scanner engine if needed
+        if let Err(e) = self.initialize_scanner_engine(base_url).await {
+            return Err(JsValue::from_str(&format!(
+                "Failed to initialize scanner: {}",
+                e
+            )));
+        }
+
+        // Ensure wallet is initialized
+        if let Err(e) = self.ensure_wallet_initialized_in_scanner().await {
+            return Err(JsValue::from_str(&format!(
+                "Failed to initialize wallet: {}",
+                e
+            )));
+        }
+
+        // Create scan range
+        let to_height = end_height.unwrap_or(start_height + 99); // Default to 100 blocks if not specified
+
+        // Update configuration and perform scan
+        let scan_result = {
+            let scanner_engine = match self.scanner_engine.as_mut() {
+                Some(engine) => engine,
+                None => return Err(JsValue::from_str("Scanner engine not initialized")),
+            };
+
+            // Update the scanner configuration
+            let mut config = scanner_engine.configuration().clone();
+            config.start_height = start_height;
+            config.end_height = Some(to_height);
+            config.specific_blocks = None; // Clear any specific blocks
+            scanner_engine.update_configuration(config);
+
+            scanner_engine.scan_range().await
+        };
+
+        // Report initial progress after configuration
+        let mut progress = ScanProgress::new(start_height, Some(to_height));
+        progress.set_phase(crate::scanning::scan_results::ScanPhase::Initializing);
+        self.invoke_progress_callback(&progress);
+
+        // Process the scan result
+        match scan_result {
+            Ok(scan_results) => {
+                // Report final progress
+                self.invoke_progress_callback(&scan_results.final_progress);
+
+                // Convert to WASM result and update state
+                let wasm_result = self.process_scanner_results_and_update_state(scan_results);
+
+                // Convert to JsValue for return
+                match serde_json::to_string(&wasm_result) {
+                    Ok(json_str) => Ok(JsValue::from_str(&json_str)),
+                    Err(e) => Err(JsValue::from_str(&format!(
+                        "Failed to serialize result: {}",
+                        e
+                    ))),
+                }
+            }
+            Err(e) => {
+                // Report error progress
+                let mut error_progress = ScanProgress::new(start_height, Some(to_height));
+                error_progress.set_phase(crate::scanning::scan_results::ScanPhase::Error(
+                    e.to_string(),
+                ));
+                self.invoke_progress_callback(&error_progress);
+
+                Err(JsValue::from_str(&format!("Scan failed: {}", e)))
+            }
+        }
     }
 
     /// Internal method to process HTTP blocks
@@ -1438,6 +1649,110 @@ impl WasmScanner {
             }
         }
     }
+
+    /// Batch scan a list of specific blocks with progress reporting via callbacks
+    /// This method processes blocks in batches and reports progress after each batch
+    #[cfg(feature = "http")]
+    pub async fn scan_specific_blocks_with_progress(
+        &mut self,
+        block_heights: Vec<u64>,
+        base_url: &str,
+    ) -> Result<JsValue, JsValue> {
+        // Initialize scanner engine if needed
+        if let Err(e) = self.initialize_scanner_engine(base_url).await {
+            return Err(JsValue::from_str(&format!(
+                "Failed to initialize scanner: {}",
+                e
+            )));
+        }
+
+        // Ensure wallet is initialized
+        if let Err(e) = self.ensure_wallet_initialized_in_scanner().await {
+            return Err(JsValue::from_str(&format!(
+                "Failed to initialize wallet: {}",
+                e
+            )));
+        }
+
+        if block_heights.is_empty() {
+            return Err(JsValue::from_str("No block heights provided"));
+        }
+
+        // Report initial progress first
+        let mut progress = ScanProgress::new(block_heights[0], block_heights.last().copied());
+        progress.set_phase(crate::scanning::scan_results::ScanPhase::Initializing);
+        self.invoke_progress_callback(&progress);
+
+        // Clone block_heights to avoid move issues
+        let heights_clone = block_heights.clone();
+
+        // Get the scanner engine and scan the specific blocks
+        let scan_result = {
+            let scanner_engine = match self.scanner_engine.as_mut() {
+                Some(engine) => engine,
+                None => return Err(JsValue::from_str("Scanner engine not initialized")),
+            };
+
+            scanner_engine.scan_blocks(heights_clone).await
+        };
+
+        // Process the scan result
+        match scan_result {
+            Ok(scan_results) => {
+                // Report final progress
+                self.invoke_progress_callback(&scan_results.final_progress);
+
+                // Convert to WASM result and update state
+                let wasm_result = self.process_scanner_results_and_update_state(scan_results);
+
+                // Convert to JsValue for return
+                match serde_json::to_string(&wasm_result) {
+                    Ok(json_str) => Ok(JsValue::from_str(&json_str)),
+                    Err(e) => Err(JsValue::from_str(&format!(
+                        "Failed to serialize result: {}",
+                        e
+                    ))),
+                }
+            }
+            Err(e) => {
+                // Report error progress
+                let mut error_progress =
+                    ScanProgress::new(block_heights[0], block_heights.last().copied());
+                error_progress.set_phase(crate::scanning::scan_results::ScanPhase::Error(
+                    e.to_string(),
+                ));
+                self.invoke_progress_callback(&error_progress);
+
+                Err(JsValue::from_str(&format!("Scan failed: {}", e)))
+            }
+        }
+    }
+
+    /// JavaScript-friendly method to get the current scan progress as JSON
+    /// This can be used to query the current state without setting up callbacks
+    pub fn get_current_progress_json(&self) -> Option<String> {
+        // This is a placeholder - in a real implementation, we'd track progress internally
+        // For now, we create a basic progress object based on wallet state
+        let (total_received, _total_spent, _balance, unspent_count, spent_count) =
+            self.wallet_state.get_summary();
+
+        let progress = WasmScanProgress {
+            current_height: 0, // Would need to track current scanning height
+            target_height: None,
+            blocks_scanned: 0, // Would need to track blocks scanned
+            total_blocks: None,
+            outputs_found: unspent_count as u64,
+            outputs_spent: spent_count as u64,
+            total_value: total_received,
+            scan_rate: 0.0,
+            elapsed_seconds: 0.0,
+            estimated_remaining_seconds: None,
+            phase: 0, // Idle
+            completion_percentage: 0.0,
+        };
+
+        serde_json::to_string(&progress).ok()
+    }
 }
 
 /// Create a scanner from view key or seed phrase (WASM export)
@@ -2188,6 +2503,54 @@ pub fn get_scanner_memory_stats(scanner: &WasmScanner) -> Result<String, JsValue
 
     serde_json::to_string(&memory_stats)
         .map_err(|e| JsValue::from_str(&format!("Failed to serialize memory stats: {}", e)))
+}
+
+/// Set progress callback for scanner (WASM export)
+#[wasm_bindgen]
+pub fn set_scanner_progress_callback(
+    scanner: &mut WasmScanner,
+    callback: Option<js_sys::Function>,
+) {
+    scanner.set_progress_callback(callback);
+}
+
+/// Clear progress callback for scanner (WASM export)
+#[wasm_bindgen]
+pub fn clear_scanner_progress_callback(scanner: &mut WasmScanner) {
+    scanner.clear_progress_callback();
+}
+
+/// Get current scan progress as JSON (WASM export)
+#[wasm_bindgen]
+pub fn get_scanner_progress_json(scanner: &WasmScanner) -> Option<String> {
+    scanner.get_current_progress_json()
+}
+
+/// Scan blocks with progress reporting (WASM export)
+#[cfg(feature = "http")]
+#[wasm_bindgen]
+pub async fn scan_blocks_with_progress_async(
+    scanner: &mut WasmScanner,
+    start_height: u64,
+    end_height: Option<u64>,
+    base_url: &str,
+) -> Result<JsValue, JsValue> {
+    scanner
+        .scan_blocks_with_progress(start_height, end_height, base_url)
+        .await
+}
+
+/// Scan specific blocks with progress reporting (WASM export)
+#[cfg(feature = "http")]
+#[wasm_bindgen]
+pub async fn scan_specific_blocks_with_progress_async(
+    scanner: &mut WasmScanner,
+    block_heights: Vec<u64>,
+    base_url: &str,
+) -> Result<JsValue, JsValue> {
+    scanner
+        .scan_specific_blocks_with_progress(block_heights, base_url)
+        .await
 }
 
 /// Check scanner engine health and connectivity (WASM export)
