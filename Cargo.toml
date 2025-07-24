@@ -90,6 +90,7 @@ getrandom = { version = "0.2", features = ["js"] }  # WASM-compatible random num
 wasm-bindgen-futures = { version = "0.4", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 uuid = { version = "1.0", features = ["v4", "js"] }
+console_error_panic_hook = { version = "0.1", optional = true }
 
 [dev-dependencies]
 # Test dependencies
@@ -117,8 +118,9 @@ grpc = ["rayon", "tonic", "prost", "async-trait", "tokio", "tracing", "tracing-s
 http = ["async-trait", "tracing", "web-sys", "js-sys", "serde-wasm-bindgen", "wasm-bindgen-futures", "reqwest", "tokio"]
 
 # WASM target-specific features
-wasm-web = ["http"]    # For browser environments (uses web-sys window.fetch)
-wasm-node = ["http"]   # For Node.js environments (uses custom fetch implementation)
+wasm = ["http", "console_error_panic_hook"]  # Core WASM features
+wasm-web = ["wasm"]    # For browser environments (uses web-sys window.fetch)
+wasm-node = ["wasm"]   # For Node.js environments (uses custom fetch implementation)
 
 storage = ["rusqlite", "tokio-rusqlite", "async-trait", "tokio"]
 grpc-storage = ["grpc", "storage"]

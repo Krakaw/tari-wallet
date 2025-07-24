@@ -17,7 +17,7 @@ pub mod storage;
 pub mod utils;
 pub mod validation;
 pub mod wallet;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 pub mod wasm;
 
 // Include generated GRPC code when the feature is enabled
