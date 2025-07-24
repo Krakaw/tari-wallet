@@ -68,8 +68,8 @@
   - [x] 4.3 Add memory management optimizations for large scans in WASM environment
   - [x] 4.5 Add WASM-specific progress reporting mechanisms (callbacks)
 
-- [ ] 5.0 Implement Comprehensive Testing Strategy
-  - [ ] 5.1 Create unit tests for `ScannerEngine` covering all initialization and scanning methods
+- [ ] 5.0 Implement Comprehensive Testing Strategy **IMPORTANT - NEVER add TODO tests, they must fail if they are not implemented with clear messaging**
+  - [x] 5.1 Create unit tests for `ScannerEngine` covering all initialization and scanning methods
   - [ ] 5.2 Create unit tests for `StorageManager` testing both adapter implementations
   - [ ] 5.3 Create unit tests for `ScanConfiguration` validation and error handling
   - [ ] 5.4 Create unit tests for `ScanResults` and progress reporting functionality
