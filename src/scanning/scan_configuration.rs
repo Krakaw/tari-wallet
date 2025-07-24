@@ -520,3 +520,583 @@ mod duration_serde {
         Ok(Duration::from_secs(secs))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_scan_configuration_default() {
+        let config = ScanConfiguration::default();
+        assert_eq!(config.start_height, 0);
+        assert_eq!(config.end_height, None);
+        assert_eq!(config.specific_blocks, None);
+        assert_eq!(config.batch_size, 100);
+        assert_eq!(config.request_timeout, Duration::from_secs(30));
+        assert_eq!(config.progress_frequency, 10);
+        assert!(config.scan_stealth_addresses);
+        assert_eq!(config.max_addresses_per_account, 1000);
+        assert!(config.scan_imported_keys);
+        assert!(!config.quiet);
+        assert!(matches!(config.output_format, OutputFormat::Summary));
+    }
+
+    #[test]
+    fn test_scan_configuration_new() {
+        let config = ScanConfiguration::new(1000);
+        assert_eq!(config.start_height, 1000);
+        assert_eq!(config.end_height, None);
+        // All other fields should be defaults
+        assert_eq!(config.batch_size, 100);
+    }
+
+    #[test]
+    fn test_scan_configuration_new_range() {
+        let config = ScanConfiguration::new_range(1000, 2000);
+        assert_eq!(config.start_height, 1000);
+        assert_eq!(config.end_height, Some(2000));
+    }
+
+    #[test]
+    fn test_scan_configuration_new_specific_blocks() {
+        let blocks = vec![1000, 1500, 2000];
+        let config = ScanConfiguration::new_specific_blocks(blocks.clone());
+        assert_eq!(config.start_height, 1000); // minimum value
+        assert_eq!(config.specific_blocks, Some(blocks));
+    }
+
+    #[test]
+    fn test_scan_configuration_new_specific_blocks_empty() {
+        let blocks = vec![];
+        let config = ScanConfiguration::new_specific_blocks(blocks);
+        assert_eq!(config.start_height, 0); // default when empty
+        assert_eq!(config.specific_blocks, Some(vec![]));
+    }
+
+    #[test]
+    fn test_scan_configuration_builder_methods() {
+        let config = ScanConfiguration::new(0)
+            .with_end_height(1000)
+            .with_batch_size(50)
+            .with_request_timeout(Duration::from_secs(60))
+            .with_progress_frequency(5)
+            .with_stealth_address_scanning(false)
+            .with_max_addresses_per_account(500)
+            .with_imported_key_scanning(false)
+            .with_output_format(OutputFormat::Json)
+            .with_quiet(true);
+
+        assert_eq!(config.end_height, Some(1000));
+        assert_eq!(config.batch_size, 50);
+        assert_eq!(config.request_timeout, Duration::from_secs(60));
+        assert_eq!(config.progress_frequency, 5);
+        assert!(!config.scan_stealth_addresses);
+        assert_eq!(config.max_addresses_per_account, 500);
+        assert!(!config.scan_imported_keys);
+        assert!(matches!(config.output_format, OutputFormat::Json));
+        assert!(config.quiet);
+    }
+
+    #[test]
+    fn test_scan_configuration_validate_success() {
+        let config = ScanConfiguration::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_scan_configuration_validate_batch_size_zero() {
+        let mut config = ScanConfiguration::default();
+        config.batch_size = 0;
+
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(
+            err,
+            LightweightWalletError::InvalidArgument { .. }
+        ));
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "batch_size");
+            assert!(message.contains("must be greater than 0"));
+        }
+    }
+
+    #[test]
+    fn test_scan_configuration_validate_batch_size_too_large() {
+        let mut config = ScanConfiguration::default();
+        config.batch_size = 1001;
+
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "batch_size");
+            assert!(message.contains("should not exceed 1000"));
+        }
+    }
+
+    #[test]
+    fn test_scan_configuration_validate_progress_frequency_zero() {
+        let mut config = ScanConfiguration::default();
+        config.progress_frequency = 0;
+
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "progress_frequency");
+            assert!(message.contains("must be greater than 0"));
+        }
+    }
+
+    #[test]
+    fn test_scan_configuration_validate_timeout_zero() {
+        let mut config = ScanConfiguration::default();
+        config.request_timeout = Duration::from_secs(0);
+
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "request_timeout");
+            assert!(message.contains("must be greater than 0"));
+        }
+    }
+
+    #[test]
+    fn test_scan_configuration_validate_timeout_too_large() {
+        let mut config = ScanConfiguration::default();
+        config.request_timeout = Duration::from_secs(301); // Over 5 minutes
+
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "request_timeout");
+            assert!(message.contains("should not exceed 5 minutes"));
+        }
+    }
+
+    #[test]
+    fn test_scan_configuration_validate_invalid_block_range() {
+        let mut config = ScanConfiguration::default();
+        config.start_height = 2000;
+        config.end_height = Some(1000); // End < start
+
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "end_height");
+            assert!(message.contains("cannot be less than start height"));
+        }
+    }
+
+    #[test]
+    fn test_scan_configuration_validate_empty_specific_blocks() {
+        let mut config = ScanConfiguration::default();
+        config.specific_blocks = Some(vec![]);
+
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "specific_blocks");
+            assert!(message.contains("cannot be empty"));
+        }
+    }
+
+    #[test]
+    fn test_scan_configuration_validate_duplicate_specific_blocks() {
+        let mut config = ScanConfiguration::default();
+        config.specific_blocks = Some(vec![1000, 1500, 1000, 2000]); // Contains duplicate
+
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "specific_blocks");
+            assert!(message.contains("contains duplicates"));
+        }
+    }
+
+    #[test]
+    fn test_scan_configuration_validate_max_addresses_zero() {
+        let mut config = ScanConfiguration::default();
+        config.max_addresses_per_account = 0;
+
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "max_addresses_per_account");
+            assert!(message.contains("must be greater than 0"));
+        }
+    }
+
+    #[test]
+    fn test_scan_configuration_validate_max_addresses_too_large() {
+        let mut config = ScanConfiguration::default();
+        config.max_addresses_per_account = 10001;
+
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "max_addresses_per_account");
+            assert!(message.contains("should not exceed 10000"));
+        }
+    }
+
+    #[test]
+    fn test_scan_configuration_get_total_blocks_range() {
+        let config = ScanConfiguration::new_range(1000, 1010);
+        assert_eq!(config.get_total_blocks(), Some(11)); // 1000-1010 inclusive
+    }
+
+    #[test]
+    fn test_scan_configuration_get_total_blocks_specific() {
+        let config = ScanConfiguration::new_specific_blocks(vec![1000, 1500, 2000]);
+        assert_eq!(config.get_total_blocks(), Some(3));
+    }
+
+    #[test]
+    fn test_scan_configuration_get_total_blocks_open_ended() {
+        let config = ScanConfiguration::new(1000);
+        assert_eq!(config.get_total_blocks(), None); // Scanning to tip
+    }
+
+    #[test]
+    fn test_scan_configuration_is_scanning_specific_blocks() {
+        let mut config = ScanConfiguration::new(0);
+        assert!(!config.is_scanning_specific_blocks());
+
+        config.specific_blocks = Some(vec![1000]);
+        assert!(config.is_scanning_specific_blocks());
+    }
+
+    #[test]
+    fn test_scan_configuration_get_blocks_to_scan_range() {
+        let config = ScanConfiguration::new_range(1000, 2000);
+        match config.get_blocks_to_scan() {
+            ScanBlocks::Range { start, end } => {
+                assert_eq!(start, 1000);
+                assert_eq!(end, Some(2000));
+            }
+            _ => panic!("Expected Range variant"),
+        }
+    }
+
+    #[test]
+    fn test_scan_configuration_get_blocks_to_scan_specific() {
+        let blocks = vec![1000, 1500, 2000];
+        let config = ScanConfiguration::new_specific_blocks(blocks.clone());
+        match config.get_blocks_to_scan() {
+            ScanBlocks::Specific(scan_blocks) => {
+                assert_eq!(scan_blocks, blocks);
+            }
+            _ => panic!("Expected Specific variant"),
+        }
+    }
+
+    #[test]
+    fn test_output_format_from_str_valid() {
+        assert!(matches!(
+            "detailed".parse::<OutputFormat>().unwrap(),
+            OutputFormat::Detailed
+        ));
+        assert!(matches!(
+            "SUMMARY".parse::<OutputFormat>().unwrap(),
+            OutputFormat::Summary
+        ));
+        assert!(matches!(
+            "Json".parse::<OutputFormat>().unwrap(),
+            OutputFormat::Json
+        ));
+    }
+
+    #[test]
+    fn test_output_format_from_str_invalid() {
+        let result = "invalid".parse::<OutputFormat>();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument,
+            value,
+            message,
+        } = err
+        {
+            assert_eq!(argument, "output_format");
+            assert_eq!(value, "invalid");
+            assert!(message.contains("Valid options: detailed, summary, json"));
+        }
+    }
+
+    #[test]
+    fn test_wallet_source_validate_seed_phrase_valid() {
+        let source = WalletSource::SeedPhrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string());
+        assert!(source.validate().is_ok());
+    }
+
+    #[test]
+    fn test_wallet_source_validate_seed_phrase_empty() {
+        let source = WalletSource::SeedPhrase("".to_string());
+        let result = source.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "seed_phrase");
+            assert!(message.contains("cannot be empty"));
+        }
+    }
+
+    #[test]
+    fn test_wallet_source_validate_seed_phrase_too_few_words() {
+        let source = WalletSource::SeedPhrase("abandon abandon abandon".to_string());
+        let result = source.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "seed_phrase");
+            assert!(message.contains("should contain 12-24 words"));
+        }
+    }
+
+    #[test]
+    fn test_wallet_source_validate_seed_phrase_too_many_words() {
+        // 25 words
+        let source = WalletSource::SeedPhrase("abandon ".repeat(25).trim().to_string());
+        let result = source.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "seed_phrase");
+            assert!(message.contains("should contain 12-24 words"));
+        }
+    }
+
+    #[test]
+    fn test_wallet_source_validate_view_key_valid() {
+        let source = WalletSource::ViewKey(
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string(),
+        );
+        assert!(source.validate().is_ok());
+    }
+
+    #[test]
+    fn test_wallet_source_validate_view_key_empty() {
+        let source = WalletSource::ViewKey("".to_string());
+        let result = source.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "view_key");
+            assert!(message.contains("cannot be empty"));
+        }
+    }
+
+    #[test]
+    fn test_wallet_source_validate_view_key_wrong_length() {
+        let source = WalletSource::ViewKey("abcdef123".to_string()); // Too short
+        let result = source.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "view_key");
+            assert!(message.contains("must be exactly 64 hex characters"));
+        }
+    }
+
+    #[test]
+    fn test_wallet_source_validate_view_key_invalid_hex() {
+        let source = WalletSource::ViewKey(
+            "ghijklmnopqrstuvwxyzghijklmnopqrstuvwxyzghijklmnopqrstuvwxyzghij".to_string(),
+        );
+        let result = source.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "view_key");
+            assert!(message.contains("must contain only hexadecimal characters"));
+        }
+    }
+
+    #[test]
+    fn test_wallet_source_validate_existing_valid() {
+        let source = WalletSource::Existing("my_wallet".to_string());
+        assert!(source.validate().is_ok());
+    }
+
+    #[test]
+    fn test_wallet_source_validate_existing_empty() {
+        let source = WalletSource::Existing("".to_string());
+        let result = source.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        if let LightweightWalletError::InvalidArgument {
+            argument, message, ..
+        } = err
+        {
+            assert_eq!(argument, "wallet_name");
+            assert!(message.contains("cannot be empty"));
+        }
+    }
+
+    #[test]
+    fn test_wallet_source_validate_generated() {
+        let source = WalletSource::Generated;
+        assert!(source.validate().is_ok());
+    }
+
+    #[test]
+    fn test_wallet_context_new() {
+        let source = WalletSource::Generated;
+        let extraction_config = ExtractionConfig::default();
+        let context = WalletContext::new(source.clone(), extraction_config);
+
+        assert!(matches!(context.source, WalletSource::Generated));
+        // Note: ExtractionConfig doesn't implement PartialEq, so we just verify structure
+        assert!(context.key_manager.is_none());
+        assert!(context.key_store.is_none());
+    }
+
+    #[test]
+    fn test_wallet_context_validate() {
+        let source = WalletSource::Generated;
+        let extraction_config = ExtractionConfig::default();
+        let context = WalletContext::new(source, extraction_config);
+
+        assert!(context.validate().is_ok());
+    }
+
+    #[test]
+    fn test_wallet_context_validate_invalid_source() {
+        let source = WalletSource::SeedPhrase("".to_string()); // Invalid empty seed phrase
+        let extraction_config = ExtractionConfig::default();
+        let context = WalletContext::new(source, extraction_config);
+
+        let result = context.validate();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_wallet_context_clone() {
+        let source = WalletSource::Generated;
+        let extraction_config = ExtractionConfig::default();
+        let context = WalletContext::new(source.clone(), extraction_config);
+
+        let cloned = context.clone();
+        assert!(matches!(cloned.source, WalletSource::Generated));
+        // Note: ExtractionConfig doesn't implement PartialEq, so we just verify structure
+        assert!(cloned.key_manager.is_none()); // KeyManager cannot be cloned
+        assert!(cloned.key_store.is_none());
+    }
+
+    #[test]
+    fn test_scan_blocks_debug() {
+        let range_blocks = ScanBlocks::Range {
+            start: 1000,
+            end: Some(2000),
+        };
+        let debug_str = format!("{:?}", range_blocks);
+        assert!(debug_str.contains("Range"));
+        assert!(debug_str.contains("1000"));
+        assert!(debug_str.contains("2000"));
+
+        let specific_blocks = ScanBlocks::Specific(vec![1000, 1500, 2000]);
+        let debug_str = format!("{:?}", specific_blocks);
+        assert!(debug_str.contains("Specific"));
+        assert!(debug_str.contains("1000"));
+    }
+
+    #[test]
+    fn test_duration_serde() {
+        let config = ScanConfiguration::default();
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&config).expect("Failed to serialize");
+        assert!(json.contains("\"request_timeout\":30"));
+
+        // Deserialize from JSON
+        let deserialized: ScanConfiguration =
+            serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(deserialized.request_timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_edge_case_block_range_equal() {
+        let config = ScanConfiguration::new_range(1000, 1000);
+        assert!(config.validate().is_ok());
+        assert_eq!(config.get_total_blocks(), Some(1)); // Single block
+    }
+
+    #[test]
+    fn test_edge_case_large_valid_values() {
+        let mut config = ScanConfiguration::default();
+        config.batch_size = 1000; // Maximum allowed
+        config.request_timeout = Duration::from_secs(300); // Maximum allowed (5 minutes)
+        config.max_addresses_per_account = 10000; // Maximum allowed
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_edge_case_minimal_valid_values() {
+        let mut config = ScanConfiguration::default();
+        config.batch_size = 1; // Minimum allowed
+        config.progress_frequency = 1; // Minimum allowed
+        config.request_timeout = Duration::from_secs(1); // Minimum allowed
+        config.max_addresses_per_account = 1; // Minimum allowed
+
+        assert!(config.validate().is_ok());
+    }
+}
