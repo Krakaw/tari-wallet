@@ -9,17 +9,19 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::{
-    data_structures::{
-        transaction::TransactionDirection,
-        types::CompressedCommitment,
-        wallet_transaction::{WalletState, WalletTransaction},
-    },
-    errors::{LightweightWalletError, LightweightWalletResult},
-    storage::storage_trait::{
-        OutputFilter, OutputStatus, StorageStats, StoredOutput, StoredWallet, TransactionFilter,
-        WalletStorage,
-    },
+use crate::errors::{LightweightWalletError, LightweightWalletResult};
+
+#[cfg(feature = "storage")]
+use crate::data_structures::{
+    transaction::TransactionDirection,
+    types::CompressedCommitment,
+    wallet_transaction::{WalletState, WalletTransaction},
+};
+
+#[cfg(feature = "storage")]
+use crate::storage::storage_trait::{
+    OutputFilter, OutputStatus, StorageStats, StoredOutput, StoredWallet, TransactionFilter,
+    WalletStorage,
 };
 
 use crate::data_structures::transaction_output::LightweightTransactionOutput;
@@ -27,6 +29,7 @@ use crate::data_structures::transaction_output::LightweightTransactionOutput;
 use super::{BlockInfo, BlockScanResult, BlockchainScanner, ScanConfig, TipInfo};
 
 /// Mock storage implementation for deterministic testing
+#[cfg(feature = "storage")]
 #[derive(Debug, Clone)]
 pub struct MockWalletStorage {
     /// In-memory storage for wallets
@@ -59,12 +62,14 @@ pub struct MockFailureModes {
     pub next_error_message: Option<String>,
 }
 
+#[cfg(feature = "storage")]
 impl Default for MockWalletStorage {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "storage")]
 impl MockWalletStorage {
     /// Create a new mock storage instance
     pub fn new() -> Self {
@@ -164,7 +169,8 @@ impl MockWalletStorage {
     }
 }
 
-#[async_trait]
+#[cfg(feature = "storage")]
+#[async_trait::async_trait]
 impl WalletStorage for MockWalletStorage {
     async fn initialize(&self) -> LightweightWalletResult<()> {
         // Mock storage is always initialized
@@ -848,7 +854,26 @@ impl MockBlockchainScanner {
         // Simulate network delay
         if !self.network_delay.is_zero() {
             drop(modes); // Release lock during delay
+            #[cfg(not(target_arch = "wasm32"))]
             tokio::time::sleep(self.network_delay).await;
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                // WASM doesn't have tokio::time::sleep, use a simpler delay
+                let delay = self.network_delay.as_millis() as u32;
+                if delay > 0 {
+                    let promise = js_sys::Promise::new(&mut |resolve, _| {
+                        web_sys::window()
+                            .unwrap()
+                            .set_timeout_with_callback_and_timeout_and_arguments_0(
+                                &resolve,
+                                delay as i32,
+                            )
+                            .unwrap();
+                    });
+                    wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+                }
+            }
             modes = self.failure_modes.lock().unwrap();
         }
 
@@ -991,6 +1016,14 @@ impl BlockchainScanner for MockBlockchainScanner {
         &mut self,
         heights: Vec<u64>,
     ) -> LightweightWalletResult<Vec<BlockInfo>> {
+        self.get_blocks_by_heights_with_config(heights, None).await
+    }
+
+    async fn get_blocks_by_heights_with_config(
+        &mut self,
+        heights: Vec<u64>,
+        _extraction_config: Option<&crate::extraction::ExtractionConfig>,
+    ) -> LightweightWalletResult<Vec<BlockInfo>> {
         self.check_failure("get_blocks").await?;
 
         let modes = self.failure_modes.lock().unwrap();
@@ -1008,6 +1041,7 @@ impl BlockchainScanner for MockBlockchainScanner {
             }
         }
 
+        // Note: Mock scanner doesn't process extraction config for simplicity
         Ok(results)
     }
 
@@ -1024,8 +1058,10 @@ impl BlockchainScanner for MockBlockchainScanner {
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_mock_wallet_storage_basic_operations() {
         let storage = MockWalletStorage::new();
@@ -1048,6 +1084,7 @@ mod tests {
         assert_eq!(retrieved.unwrap().name, "test_wallet");
     }
 
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_mock_wallet_storage_failure_modes() {
         let storage = MockWalletStorage::new();
@@ -1072,6 +1109,7 @@ mod tests {
             .contains("Mock failure: save_wallet"));
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_mock_blockchain_scanner_basic_operations() {
         let mut scanner = MockBlockchainScanner::new();
@@ -1086,6 +1124,7 @@ mod tests {
         assert!(results.is_empty()); // No blocks added yet
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_mock_blockchain_scanner_failure_modes() {
         let mut scanner = MockBlockchainScanner::new();

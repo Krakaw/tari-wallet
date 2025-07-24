@@ -394,10 +394,13 @@ impl ScannerEngine {
                 callback(progress.clone());
             }
 
-            // Fetch blocks via scanner
+            // Fetch blocks via scanner with extraction config
             let batch_results = match self
                 .scanner
-                .get_blocks_by_heights(batch_heights.to_vec())
+                .get_blocks_by_heights_with_config(
+                    batch_heights.to_vec(),
+                    Some(&self.configuration.extraction_config),
+                )
                 .await
             {
                 Ok(blocks) => blocks,
@@ -756,10 +759,13 @@ impl ScannerEngine {
                 callback(progress.clone());
             }
 
-            // Fetch blocks via scanner
+            // Fetch blocks via scanner with extraction config
             let batch_results = match self
                 .scanner
-                .get_blocks_by_heights(batch_heights.to_vec())
+                .get_blocks_by_heights_with_config(
+                    batch_heights.to_vec(),
+                    Some(&self.configuration.extraction_config),
+                )
                 .await
             {
                 Ok(blocks) => blocks,
@@ -995,7 +1001,13 @@ impl ScannerEngine {
             callback(progress.clone());
         }
 
-        let blocks = self.scanner.get_blocks_by_heights(heights.clone()).await?;
+        let blocks = self
+            .scanner
+            .get_blocks_by_heights_with_config(
+                heights.clone(),
+                Some(&self.configuration.extraction_config),
+            )
+            .await?;
 
         // Process the blocks
         progress.phase = ScanPhase::Processing;

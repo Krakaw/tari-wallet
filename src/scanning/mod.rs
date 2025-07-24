@@ -352,6 +352,13 @@ pub trait BlockchainScanner: Send + Sync {
         heights: Vec<u64>,
     ) -> LightweightWalletResult<Vec<BlockInfo>>;
 
+    /// Get blocks by height range with extraction config for wallet output processing
+    async fn get_blocks_by_heights_with_config(
+        &mut self,
+        heights: Vec<u64>,
+        extraction_config: Option<&crate::extraction::ExtractionConfig>,
+    ) -> LightweightWalletResult<Vec<BlockInfo>>;
+
     /// Get a single block by height
     async fn get_block_by_height(
         &mut self,
@@ -913,6 +920,14 @@ impl BlockchainScanner for MockBlockchainScanner {
         &mut self,
         heights: Vec<u64>,
     ) -> LightweightWalletResult<Vec<BlockInfo>> {
+        self.get_blocks_by_heights_with_config(heights, None).await
+    }
+
+    async fn get_blocks_by_heights_with_config(
+        &mut self,
+        heights: Vec<u64>,
+        _extraction_config: Option<&crate::extraction::ExtractionConfig>,
+    ) -> LightweightWalletResult<Vec<BlockInfo>> {
         let mut result = Vec::new();
         for height in heights {
             if let Some(block) = self.blocks.iter().find(|b| b.height == height) {
@@ -994,6 +1009,189 @@ impl BlockchainScannerBuilder {
 impl Default for BlockchainScannerBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Generic wallet output scanning functions
+/// These provide consistent scanning logic for both GRPC and HTTP scanners
+pub struct GenericScanningLogic;
+
+impl GenericScanningLogic {
+    /// Scan for regular recoverable outputs using encrypted data decryption
+    /// This replaces scanner-specific implementations with a unified approach
+    pub fn scan_for_recoverable_output(
+        output: &LightweightTransactionOutput,
+        extraction_config: &ExtractionConfig,
+    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+        // Skip non-payment outputs for this scan type
+        if !matches!(
+            output.features().output_type,
+            crate::data_structures::LightweightOutputType::Payment
+        ) {
+            return Ok(None);
+        }
+
+        // Use the standard extraction logic
+        match extract_wallet_output(output, extraction_config) {
+            Ok(wallet_output) => Ok(Some(wallet_output)),
+            Err(_) => Ok(None), // Not a wallet output or decryption failed
+        }
+    }
+
+    /// Scan for one-sided payments
+    /// This replaces scanner-specific implementations with a unified approach
+    pub fn scan_for_one_sided_payment(
+        output: &LightweightTransactionOutput,
+        extraction_config: &ExtractionConfig,
+    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+        // Skip non-payment outputs for this scan type
+        if !matches!(
+            output.features().output_type,
+            crate::data_structures::LightweightOutputType::Payment
+        ) {
+            return Ok(None);
+        }
+
+        // Use the same extraction logic - the difference is in creation, not detection
+        match extract_wallet_output(output, extraction_config) {
+            Ok(wallet_output) => Ok(Some(wallet_output)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Scan for coinbase outputs
+    /// This replaces scanner-specific implementations with a unified approach
+    pub fn scan_for_coinbase_output(
+        output: &LightweightTransactionOutput,
+    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+        // Only handle coinbase outputs
+        if !matches!(
+            output.features().output_type,
+            crate::data_structures::LightweightOutputType::Coinbase
+        ) {
+            return Ok(None);
+        }
+
+        // For coinbase outputs, the value is typically revealed in the minimum value promise
+        if output.minimum_value_promise().as_u64() > 0 {
+            let wallet_output = LightweightWalletOutput::new(
+                output.version(),
+                output.minimum_value_promise(),
+                crate::data_structures::wallet_output::LightweightKeyId::Zero,
+                output.features().clone(),
+                output.script().clone(),
+                crate::data_structures::wallet_output::LightweightExecutionStack::default(),
+                crate::data_structures::wallet_output::LightweightKeyId::Zero,
+                output.sender_offset_public_key().clone(),
+                output.metadata_signature().clone(),
+                0,
+                output.covenant().clone(),
+                output.encrypted_data().clone(),
+                output.minimum_value_promise(),
+                output.proof().cloned(),
+                crate::data_structures::payment_id::PaymentId::Empty,
+            );
+
+            return Ok(Some(wallet_output));
+        }
+
+        Ok(None)
+    }
+
+    /// Generic multi-strategy wallet output scanning
+    /// This provides a unified scanning approach that both GRPC and HTTP scanners can use
+    pub fn scan_output_for_wallet(
+        output: &LightweightTransactionOutput,
+        extraction_config: &ExtractionConfig,
+    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+        // Debug output for troubleshooting
+        #[cfg(target_arch = "wasm32")]
+        {
+            use web_sys::console;
+            console::log_1(
+                &format!(
+                    "DEBUG: GenericScanningLogic scanning output commitment: {}",
+                    hex::encode(output.commitment().as_bytes())
+                )
+                .into(),
+            );
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            eprintln!(
+                "DEBUG: GenericScanningLogic scanning output commitment: {}",
+                hex::encode(output.commitment().as_bytes())
+            );
+        }
+
+        // Strategy 1: Regular recoverable outputs (encrypted data decryption)
+        if let Some(wallet_output) = Self::scan_for_recoverable_output(output, extraction_config)? {
+            #[cfg(target_arch = "wasm32")]
+            {
+                use web_sys::console;
+                console::log_1(&format!("DEBUG: GenericScanningLogic found wallet output via recoverable scan, value: {:?}", 
+                    wallet_output.value()).into());
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                eprintln!("DEBUG: GenericScanningLogic found wallet output via recoverable scan, value: {:?}", 
+                    wallet_output.value());
+            }
+            return Ok(Some(wallet_output));
+        }
+
+        // Strategy 2: One-sided payments (different detection logic)
+        if let Some(wallet_output) = Self::scan_for_one_sided_payment(output, extraction_config)? {
+            #[cfg(target_arch = "wasm32")]
+            {
+                use web_sys::console;
+                console::log_1(&format!("DEBUG: GenericScanningLogic found wallet output via one-sided scan, value: {:?}", 
+                    wallet_output.value()).into());
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                eprintln!("DEBUG: GenericScanningLogic found wallet output via one-sided scan, value: {:?}", 
+                    wallet_output.value());
+            }
+            return Ok(Some(wallet_output));
+        }
+
+        // Strategy 3: Coinbase outputs (special handling)
+        if let Some(wallet_output) = Self::scan_for_coinbase_output(output)? {
+            #[cfg(target_arch = "wasm32")]
+            {
+                use web_sys::console;
+                console::log_1(&format!("DEBUG: GenericScanningLogic found wallet output via coinbase scan, value: {:?}", 
+                    wallet_output.value()).into());
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                eprintln!("DEBUG: GenericScanningLogic found wallet output via coinbase scan, value: {:?}", 
+                    wallet_output.value());
+            }
+            return Ok(Some(wallet_output));
+        }
+
+        // No wallet output found with any strategy
+        #[cfg(target_arch = "wasm32")]
+        {
+            use web_sys::console;
+            console::log_1(
+                &format!(
+                    "DEBUG: GenericScanningLogic found no wallet output for commitment: {}",
+                    hex::encode(output.commitment().as_bytes())
+                )
+                .into(),
+            );
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            eprintln!(
+                "DEBUG: GenericScanningLogic found no wallet output for commitment: {}",
+                hex::encode(output.commitment().as_bytes())
+            );
+        }
+        Ok(None)
     }
 }
 

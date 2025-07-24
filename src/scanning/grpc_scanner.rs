@@ -29,8 +29,8 @@ use crate::{
     errors::{LightweightWalletError, LightweightWalletResult},
     extraction::{extract_wallet_output, ExtractionConfig},
     scanning::{
-        BlockInfo, BlockScanResult, BlockchainScanner, DefaultScanningLogic, ProgressCallback,
-        ScanConfig, TipInfo, WalletScanConfig, WalletScanResult, WalletScanner,
+        BlockInfo, BlockScanResult, BlockchainScanner, DefaultScanningLogic, GenericScanningLogic,
+        ProgressCallback, ScanConfig, TipInfo, WalletScanConfig, WalletScanResult, WalletScanner,
     },
     wallet::Wallet,
 };
@@ -431,84 +431,8 @@ impl GrpcBlockchainScanner {
         }
     }
 
-    /// Scan for regular recoverable outputs using encrypted data decryption (GRPC version)
-    fn scan_for_recoverable_output_grpc(
-        output: &LightweightTransactionOutput,
-        extraction_config: &ExtractionConfig,
-    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
-        // Skip non-payment outputs for this scan type
-        if !matches!(
-            output.features().output_type,
-            crate::data_structures::wallet_output::LightweightOutputType::Payment
-        ) {
-            return Ok(None);
-        }
-
-        // Use the standard extraction logic - the view key should be correctly derived already
-        match extract_wallet_output(output, extraction_config) {
-            Ok(wallet_output) => Ok(Some(wallet_output)),
-            Err(_) => Ok(None), // Not a wallet output or decryption failed
-        }
-    }
-
-    /// Scan for one-sided payments (GRPC version)
-    fn scan_for_one_sided_payment_grpc(
-        output: &LightweightTransactionOutput,
-        extraction_config: &ExtractionConfig,
-    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
-        // Skip non-payment outputs for this scan type
-        if !matches!(
-            output.features().output_type,
-            crate::data_structures::wallet_output::LightweightOutputType::Payment
-        ) {
-            return Ok(None);
-        }
-
-        // For one-sided payments, use the same extraction logic
-        // The difference is in how the outputs are created, not how they're decrypted
-        match extract_wallet_output(output, extraction_config) {
-            Ok(wallet_output) => Ok(Some(wallet_output)),
-            Err(_) => Ok(None), // Not a wallet output or decryption failed
-        }
-    }
-
-    /// Scan for coinbase outputs (GRPC version)
-    fn scan_for_coinbase_output_grpc(
-        output: &LightweightTransactionOutput,
-    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
-        // Only handle coinbase outputs
-        if !matches!(
-            output.features().output_type,
-            crate::data_structures::wallet_output::LightweightOutputType::Coinbase
-        ) {
-            return Ok(None);
-        }
-
-        // For coinbase outputs, the value is typically revealed in the minimum value promise
-        if output.minimum_value_promise().as_u64() > 0 {
-            let wallet_output = LightweightWalletOutput::new(
-                output.version(),
-                output.minimum_value_promise(),
-                crate::data_structures::wallet_output::LightweightKeyId::Zero,
-                output.features().clone(),
-                output.script().clone(),
-                crate::data_structures::wallet_output::LightweightExecutionStack::default(),
-                crate::data_structures::wallet_output::LightweightKeyId::Zero,
-                output.sender_offset_public_key().clone(),
-                output.metadata_signature().clone(),
-                0,
-                output.covenant().clone(),
-                output.encrypted_data().clone(),
-                output.minimum_value_promise(),
-                output.proof().cloned(),
-                crate::data_structures::payment_id::PaymentId::Empty,
-            );
-
-            return Ok(Some(wallet_output));
-        }
-
-        Ok(None)
-    }
+    // Note: GRPC scanner now uses GenericScanningLogic instead of scanner-specific methods
+    // This ensures both GRPC and HTTP scanners use identical wallet output detection logic
 
     /// Get all outputs from a specific block
     pub async fn get_outputs_from_block(
@@ -804,39 +728,12 @@ impl BlockchainScanner for GrpcBlockchainScanner {
 
                     println!("Outputs: {:?}", block_info.outputs.len());
                     for output in &block_info.outputs {
-                        // Use enhanced multi-strategy scanning instead of basic extraction
-                        let mut found_output = false;
-
-                        // Strategy 1: Regular recoverable outputs (encrypted data decryption)
-                        if !found_output {
-                            if let Some(wallet_output) = Self::scan_for_recoverable_output_grpc(
-                                output,
-                                &config.extraction_config,
-                            )? {
-                                wallet_outputs.push(wallet_output);
-                                found_output = true;
-                            }
-                        }
-
-                        // Strategy 2: One-sided payments (different detection logic)
-                        if !found_output {
-                            if let Some(wallet_output) = Self::scan_for_one_sided_payment_grpc(
-                                output,
-                                &config.extraction_config,
-                            )? {
-                                wallet_outputs.push(wallet_output);
-                                found_output = true;
-                            }
-                        }
-
-                        // Strategy 3: Coinbase outputs (special handling)
-                        if !found_output {
-                            if let Some(wallet_output) =
-                                Self::scan_for_coinbase_output_grpc(output)?
-                            {
-                                wallet_outputs.push(wallet_output);
-                                // found_output = true;
-                            }
+                        // Use generic scanning logic instead of scanner-specific methods
+                        if let Some(wallet_output) = GenericScanningLogic::scan_output_for_wallet(
+                            output,
+                            &config.extraction_config,
+                        )? {
+                            wallet_outputs.push(wallet_output);
                         }
                     }
 
@@ -978,6 +875,14 @@ impl BlockchainScanner for GrpcBlockchainScanner {
         &mut self,
         heights: Vec<u64>,
     ) -> LightweightWalletResult<Vec<BlockInfo>> {
+        self.get_blocks_by_heights_with_config(heights, None).await
+    }
+
+    async fn get_blocks_by_heights_with_config(
+        &mut self,
+        heights: Vec<u64>,
+        _extraction_config: Option<&crate::extraction::ExtractionConfig>,
+    ) -> LightweightWalletResult<Vec<BlockInfo>> {
         if heights.is_empty() {
             return Ok(Vec::new());
         }
@@ -1011,6 +916,8 @@ impl BlockchainScanner for GrpcBlockchainScanner {
             }
         }
 
+        // Note: For GRPC scanner, the extraction config is typically handled
+        // at a higher level in the scanner_engine, so we don't process it here
         Ok(blocks)
     }
 

@@ -41,7 +41,7 @@
   - [x] 3.1.1 Fix WASM build errors - ProgressReport type, WalletSource serialization, field access, unused variables
   - [x] 3.2 Implement identical CLI arguments: --seed-phrase, --view-key, --base-url, --from-block, --to-block, --blocks
   - [x] 3.3 Import and initialize WASM module in Node.js script
-  - [ ] 3.4 Implement argument validation and error messages matching scanner.rs
+  - [x] 3.4 Implement argument validation and error messages matching scanner.rs
   - [ ] 3.5 Add help text and usage examples identical to Rust scanner
   - [ ] 3.6 Handle process.argv parsing and execute appropriate scan function
 
@@ -55,7 +55,7 @@
 
 - [ ] 5.0 Add comprehensive error handling, progress reporting, and testing
   - [ ] 5.1 Implement Rust error to JavaScript exception conversion with detailed error messages
-  - [ ] 5.2 Add graceful Ctrl+C handling in Node.js CLI with partial results preservation
+  - [x] 5.2 Add graceful Ctrl+C handling in Node.js CLI with partial results preservation (Enhanced: Now captures progress data and displays summary even when scan is interrupted mid-stream)
   - [ ] 5.3 Implement interactive error recovery options (Continue, Skip block, Abort) 
   - [ ] 5.4 Add progress reporting using console output or Node.js events
   - [ ] 5.5 Create integration tests comparing WASM scanner output to Rust scanner
