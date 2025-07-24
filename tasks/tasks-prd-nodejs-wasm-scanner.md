@@ -1,7 +1,7 @@
 ## Relevant Files
 
 - `src/wasm.rs` - Complete WASM library with memory management, automatic cleanup, paginated results, streaming processing, and garbage collection utilities
-- `examples/wasm/scanner.js` - Node.js CLI script that uses the WASM package
+- `examples/wasm/scanner.js` - Complete Node.js CLI with commander.js argument parsing, progress display, error handling, and signal management
 - `examples/wasm/pkg/` - Generated WASM package directory (created by wasm-pack)
 - `examples/wasm/package.json` - Updated Node.js package with CLI dependencies (commander, chalk, ora, inquirer)
 - `Cargo.toml` - Updated with WASM dependencies (console_error_panic_hook) and wasm feature flag
@@ -35,7 +35,7 @@
   - [x] 2.7 Handle WASM memory management and proper cleanup of large scan results
 
 - [ ] 3.0 Implement Node.js CLI interface matching scanner.rs behavior
-  - [ ] 3.1 Create `examples/wasm/scanner.js` with command-line argument parsing (using commander.js or similar)
+  - [x] 3.1 Create `examples/wasm/scanner.js` with command-line argument parsing (using commander.js or similar)
   - [ ] 3.2 Implement identical CLI arguments: --seed-phrase, --view-key, --base-url, --from-block, --to-block, --blocks
   - [ ] 3.3 Add configuration arguments: --batch-size, --progress-frequency, --quiet, --format
   - [ ] 3.4 Import and initialize WASM module in Node.js script
