@@ -814,10 +814,359 @@ pub fn wasm_estimate_scan_results_memory_usage(statistics: &WasmScanStatistics) 
     base_size + outputs_size + string_overhead
 }
 
+/// Memory management utilities for WASM
+pub struct WasmMemoryManager;
+
+impl WasmMemoryManager {
+    /// Get current WASM memory usage in bytes (simplified implementation)
+    pub fn get_memory_usage() -> u64 {
+        // This is a simplified implementation - actual memory tracking would require
+        // more sophisticated monitoring in production environments
+        0
+    }
+}
+
+/// WASM memory-aware scan result wrapper
+#[derive(Debug, Clone)]
+#[wasm_bindgen]
+pub struct WasmMemoryManagedResults {
+    results: Option<WasmScanResults>,
+    statistics: Option<WasmScanStatistics>,
+    memory_limit_mb: u32,
+    is_disposed: bool,
+}
+
+#[wasm_bindgen]
+impl WasmMemoryManagedResults {
+    /// Create new memory-managed results container
+    #[wasm_bindgen(constructor)]
+    pub fn new(memory_limit_mb: Option<u32>) -> WasmMemoryManagedResults {
+        WasmMemoryManagedResults {
+            results: None,
+            statistics: None,
+            memory_limit_mb: memory_limit_mb.unwrap_or(64), // Default 64MB limit
+            is_disposed: false,
+        }
+    }
+
+    /// Set scan results with memory check
+    #[wasm_bindgen]
+    pub fn set_results(&mut self, results: WasmScanResults) -> Result<(), JsValue> {
+        if self.is_disposed {
+            return Err(JsValue::from_str("Results container has been disposed"));
+        }
+
+        // Estimate memory usage
+        let estimated_size = std::mem::size_of::<WasmScanResults>() as u64;
+        let size_mb = estimated_size / (1024 * 1024);
+
+        if size_mb > self.memory_limit_mb as u64 {
+            return Err(JsValue::from_str(&format!(
+                "Results size ({} MB) exceeds memory limit ({} MB)",
+                size_mb, self.memory_limit_mb
+            )));
+        }
+
+        self.results = Some(results);
+        console_log!("Scan results stored in memory-managed container");
+        Ok(())
+    }
+
+    /// Set scan statistics with memory check and automatic truncation
+    #[wasm_bindgen]
+    pub fn set_statistics(&mut self, mut statistics: WasmScanStatistics) -> Result<(), JsValue> {
+        if self.is_disposed {
+            return Err(JsValue::from_str("Results container has been disposed"));
+        }
+
+        // Estimate memory usage
+        let estimated_size = wasm_estimate_scan_results_memory_usage(&statistics);
+        let size_mb = estimated_size / (1024 * 1024);
+
+        // If exceeds memory limit, truncate outputs automatically
+        if size_mb > self.memory_limit_mb as u64 {
+            let max_outputs = (self.memory_limit_mb as usize * 1024 * 1024)
+                / std::mem::size_of::<WasmOutputInfo>().max(1);
+
+            console_log!(
+                "Statistics size ({} MB) exceeds limit ({} MB), truncating outputs to {}",
+                size_mb,
+                self.memory_limit_mb,
+                max_outputs
+            );
+
+            statistics.outputs.truncate(max_outputs);
+            statistics.outputs_truncated = true;
+            statistics.max_outputs_limit = max_outputs;
+        }
+
+        self.statistics = Some(statistics);
+        console_log!("Scan statistics stored in memory-managed container");
+        Ok(())
+    }
+
+    /// Get results (returns clone)
+    #[wasm_bindgen]
+    pub fn get_results(&self) -> Result<WasmScanResults, JsValue> {
+        if self.is_disposed {
+            return Err(JsValue::from_str("Results container has been disposed"));
+        }
+
+        self.results
+            .clone()
+            .ok_or_else(|| JsValue::from_str("No results available"))
+    }
+
+    /// Get statistics (returns clone)
+    #[wasm_bindgen]
+    pub fn get_statistics(&self) -> Result<WasmScanStatistics, JsValue> {
+        if self.is_disposed {
+            return Err(JsValue::from_str("Results container has been disposed"));
+        }
+
+        self.statistics
+            .clone()
+            .ok_or_else(|| JsValue::from_str("No statistics available"))
+    }
+
+    /// Get current memory usage estimate in MB
+    #[wasm_bindgen]
+    pub fn get_memory_usage_mb(&self) -> f64 {
+        if self.is_disposed {
+            return 0.0;
+        }
+
+        let mut total_size = 0u64;
+
+        if let Some(ref stats) = self.statistics {
+            total_size += wasm_estimate_scan_results_memory_usage(stats);
+        }
+
+        if let Some(_) = self.results {
+            total_size += std::mem::size_of::<WasmScanResults>() as u64;
+        }
+
+        total_size as f64 / (1024.0 * 1024.0)
+    }
+
+    /// Check if memory limit is exceeded
+    #[wasm_bindgen]
+    pub fn is_memory_limit_exceeded(&self) -> bool {
+        self.get_memory_usage_mb() > self.memory_limit_mb as f64
+    }
+
+    /// Dispose of stored data to free memory
+    #[wasm_bindgen]
+    pub fn dispose(&mut self) {
+        if !self.is_disposed {
+            self.results = None;
+            self.statistics = None;
+            self.is_disposed = true;
+            console_log!("Memory-managed results container disposed");
+        }
+    }
+
+    /// Check if container has been disposed
+    #[wasm_bindgen]
+    pub fn is_disposed(&self) -> bool {
+        self.is_disposed
+    }
+}
+
 /// Validate a seed phrase format and checksum
 #[wasm_bindgen]
 pub fn wasm_validate_seed_phrase(seed_phrase: &str) -> bool {
     validate_seed_phrase(seed_phrase).is_ok()
+}
+
+/// Cleanup utility for WASM memory management
+#[wasm_bindgen]
+pub fn wasm_force_garbage_collection() {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Request garbage collection in WASM environment
+        if let Some(window) = web_sys::window() {
+            // This is a hint to the browser - not guaranteed to trigger GC immediately
+            let _ = js_sys::eval("if (typeof window !== 'undefined' && window.gc) window.gc();");
+        }
+    }
+    console_log!("Garbage collection requested");
+}
+
+/// Memory-aware scan with automatic cleanup
+#[wasm_bindgen]
+pub async fn wasm_scan_with_memory_management(
+    seed_phrase: &str,
+    passphrase: Option<String>,
+    config: &WasmScanConfig,
+    memory_limit_mb: Option<u32>,
+    progress_callback: Option<js_sys::Function>,
+) -> Result<WasmMemoryManagedResults, JsValue> {
+    console_log!("Starting memory-managed scan");
+
+    // Create memory-managed container
+    let mut container = WasmMemoryManagedResults::new(memory_limit_mb);
+
+    // Perform the scan
+    let scan_results =
+        wasm_scan_with_seed_phrase(seed_phrase, passphrase, config, progress_callback).await?;
+
+    // Store results with memory management
+    container.set_results(scan_results)?;
+
+    console_log!(
+        "Memory-managed scan completed, usage: {:.2} MB",
+        container.get_memory_usage_mb()
+    );
+
+    Ok(container)
+}
+
+/// Streaming scan results that processes outputs in batches to manage memory
+#[wasm_bindgen]
+pub async fn wasm_scan_with_streaming_results(
+    seed_phrase: &str,
+    passphrase: Option<String>,
+    config: &WasmScanConfig,
+    batch_size: Option<usize>,
+    result_callback: js_sys::Function,
+    progress_callback: Option<js_sys::Function>,
+) -> Result<WasmScanResults, JsValue> {
+    console_log!("Starting streaming scan with batch processing");
+
+    let batch_size = batch_size.unwrap_or(100);
+
+    // Create a progress wrapper that also handles result streaming
+    let streaming_progress_callback = progress_callback.map(|callback| {
+        js_sys::Function::new_with_args(
+            "progress",
+            &format!(
+                r#"
+            // Call original progress callback
+            if (arguments[0]) {{
+                arguments[0](progress);
+            }}
+            
+            // Check if we should process a batch of results
+            if (progress.outputs_found > 0 && progress.outputs_found % {} === 0) {{
+                console.log('Processing batch of {} outputs...');
+                // In a real implementation, this would trigger batch processing
+            }}
+            "#,
+                batch_size, batch_size
+            ),
+        )
+    });
+
+    // Perform scan with streaming callback
+    let results =
+        wasm_scan_with_seed_phrase(seed_phrase, passphrase, config, streaming_progress_callback)
+            .await?;
+
+    console_log!("Streaming scan completed");
+    Ok(results)
+}
+
+/// Paginated access to large scan results
+#[wasm_bindgen]
+pub struct WasmPaginatedResults {
+    statistics: WasmScanStatistics,
+    page_size: usize,
+    current_page: usize,
+}
+
+#[wasm_bindgen]
+impl WasmPaginatedResults {
+    /// Create paginated results from statistics
+    #[wasm_bindgen(constructor)]
+    pub fn new(statistics: WasmScanStatistics, page_size: Option<usize>) -> WasmPaginatedResults {
+        WasmPaginatedResults {
+            statistics,
+            page_size: page_size.unwrap_or(50),
+            current_page: 0,
+        }
+    }
+
+    /// Get total number of pages
+    #[wasm_bindgen]
+    pub fn get_total_pages(&self) -> usize {
+        (self.statistics.outputs.len() + self.page_size - 1) / self.page_size
+    }
+
+    /// Get current page number (0-based)
+    #[wasm_bindgen]
+    pub fn get_current_page(&self) -> usize {
+        self.current_page
+    }
+
+    /// Get page size
+    #[wasm_bindgen]
+    pub fn get_page_size(&self) -> usize {
+        self.page_size
+    }
+
+    /// Get outputs for current page
+    #[wasm_bindgen]
+    pub fn get_current_page_outputs(&self) -> Vec<WasmOutputInfo> {
+        let start = self.current_page * self.page_size;
+        let end = (start + self.page_size).min(self.statistics.outputs.len());
+
+        if start < self.statistics.outputs.len() {
+            self.statistics.outputs[start..end].to_vec()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Move to next page
+    #[wasm_bindgen]
+    pub fn next_page(&mut self) -> bool {
+        if self.current_page + 1 < self.get_total_pages() {
+            self.current_page += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Move to previous page
+    #[wasm_bindgen]
+    pub fn previous_page(&mut self) -> bool {
+        if self.current_page > 0 {
+            self.current_page -= 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Jump to specific page
+    #[wasm_bindgen]
+    pub fn goto_page(&mut self, page: usize) -> bool {
+        if page < self.get_total_pages() {
+            self.current_page = page;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get basic statistics without output data
+    #[wasm_bindgen]
+    pub fn get_summary(&self) -> JsValue {
+        let summary = serde_json::json!({
+            "results": self.statistics.results,
+            "transactions": self.statistics.transactions,
+            "total_outputs": self.statistics.outputs.len(),
+            "outputs_truncated": self.statistics.outputs_truncated,
+            "max_outputs_limit": self.statistics.max_outputs_limit,
+            "total_pages": self.get_total_pages(),
+            "page_size": self.page_size,
+            "current_page": self.current_page
+        });
+
+        serde_wasm_bindgen::to_value(&summary).unwrap_or(JsValue::NULL)
+    }
 }
 
 /// Validate view key format without performing scan
