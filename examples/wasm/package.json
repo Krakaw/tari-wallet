@@ -1,11 +1,14 @@
 {
   "name": "tari-wasm-scanner-cli",
   "version": "1.0.0",
-  "description": "CLI client for Tari WASM Scanner using modern scanner engine",
+  "description": "Node.js CLI client for Tari WASM Scanner with seed phrase and view key support",
   "main": "scanner.js",
+  "type": "module",
   "scripts": {
     "scan": "node scanner.js",
-    "test": "node scanner.js --help"
+    "test": "node scanner.js --help",
+    "build-wasm": "cd ../.. && make wasm-node",
+    "prepare": "npm run build-wasm"
   },
   "keywords": [
     "tari",
@@ -13,15 +16,37 @@
     "scanner",
     "wasm",
     "cli",
-    "scanner-engine"
+    "scanner-engine",
+    "seed-phrase",
+    "view-key"
   ],
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=16.0.0"
   },
   "bin": {
     "tari-scanner": "./scanner.js"
   },
   "dependencies": {
+    "commander": "^11.1.0",
+    "chalk": "^5.3.0",
+    "ora": "^7.0.1",
+    "inquirer": "^9.2.12",
     "node-fetch": "^3.3.2"
-  }
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.0",
+    "typescript": "^5.2.2"
+  },
+  "files": [
+    "scanner.js",
+    "pkg_node/",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Krakaw/tari-wallet.git",
+    "directory": "examples/wasm"
+  },
+  "license": "BSD-3-Clause",
+  "author": "Krakaw"
 }
