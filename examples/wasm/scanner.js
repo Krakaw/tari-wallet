@@ -22,10 +22,6 @@ import {
     wasm_validate_seed_phrase,
     wasm_validate_view_key,
     wasm_get_tip_height,
-    wasm_create_console_progress_callback,
-    wasm_create_rate_limited_progress_callback,
-    wasm_scan_with_memory_management,
-    wasm_force_garbage_collection,
     WasmScanConfig,
     WasmOutputFormat
 } from './pkg_node/lightweight_wallet_libs.js';
@@ -63,16 +59,7 @@ program
     .option('--batch-size <size>', 'Batch size for scanning', parseInteger, 10)
     .option('--progress-frequency <freq>', 'Update progress every N blocks', parseInteger, 10)
     .option('-q, --quiet', 'Quiet mode - only show essential information', false)
-    .option('--format <format>', 'Output format: detailed, summary, json', 'summary')
-    .option('--memory-limit <mb>', 'Memory limit in MB for result storage', parseInteger, 64)
-    .option('--request-timeout <seconds>', 'Request timeout in seconds', parseInteger, 30)
-    .option('--scan-stealth-addresses', 'Enable stealth address scanning', true)
-    .option('--no-scan-stealth-addresses', 'Disable stealth address scanning')
-    .option('--max-addresses-per-account <max>', 'Maximum addresses per account', parseInteger, 1000)
-    .option('--scan-imported-keys', 'Enable imported key scanning', true)
-    .option('--no-scan-imported-keys', 'Disable imported key scanning')
-    .option('--rate-limit-progress <ms>', 'Rate limit progress updates (milliseconds)', parseInteger)
-    .option('--force-gc', 'Force garbage collection after scan', false);
+    .option('--format <format>', 'Output format: detailed, summary, json', 'summary');
 
 /**
  * Parse integer from string with validation
@@ -158,10 +145,6 @@ function createScanConfig(options) {
     
     config.batch_size = BigInt(options.batchSize);
     config.progress_frequency = BigInt(options.progressFrequency);
-    config.request_timeout_seconds = BigInt(options.requestTimeout);
-    config.scan_stealth_addresses = options.scanStealthAddresses;
-    config.max_addresses_per_account = options.maxAddressesPerAccount;
-    config.scan_imported_keys = options.scanImportedKeys;
     config.quiet = options.quiet;
 
     // Set output format using direct field access
@@ -181,8 +164,8 @@ function createProgressCallback(options) {
         return null; // No progress updates in quiet mode
     }
 
-    // Create base progress callback
-    const baseCallback = (progress) => {
+    // Create progress callback
+    return (progress) => {
         const percentage = progress.percentage.toFixed(1);
         const current = progress.current_height;
         const total = progress.total_blocks;
@@ -201,13 +184,6 @@ function createProgressCallback(options) {
 
         console.log(chalk.cyan(message));
     };
-
-    // Apply rate limiting if specified
-    if (options.rateLimitProgress) {
-        return wasm_create_rate_limited_progress_callback(baseCallback, options.rateLimitProgress);
-    }
-
-    return baseCallback;
 }
 
 /**
@@ -296,25 +272,12 @@ async function runScan(options) {
         let results;
 
         if (options.seedPhrase) {
-            if (options.memoryLimit && options.memoryLimit < 256) {
-                // Use memory-managed scanning for smaller limits
-                const container = await wasm_scan_with_memory_management(
-                    options.seedPhrase,
-                    null, // No passphrase support in CLI yet
-                    config,
-                    options.memoryLimit,
-                    progressCallback
-                );
-                results = container.get_results();
-                container.dispose(); // Clean up
-            } else {
-                results = await wasm_scan_with_seed_phrase(
-                    options.seedPhrase,
-                    null, // No passphrase support in CLI yet
-                    config,
-                    progressCallback
-                );
-            }
+            results = await wasm_scan_with_seed_phrase(
+                options.seedPhrase,
+                null, // No passphrase support in CLI yet
+                config,
+                progressCallback
+            );
         } else if (options.viewKey) {
             results = await wasm_scan_with_view_key(
                 options.viewKey,
@@ -327,12 +290,6 @@ async function runScan(options) {
 
         // Display results
         displayResults(results, options);
-
-        // Force garbage collection if requested
-        if (options.forceGc) {
-            console.log(chalk.gray('Forcing garbage collection...'));
-            wasm_force_garbage_collection();
-        }
 
     } catch (error) {
         spinner.fail('Scan failed');
@@ -380,8 +337,6 @@ async function main() {
 // Handle process signals
 process.on('SIGINT', () => {
     console.log(chalk.yellow('\n⚠ Scan interrupted by user'));
-    console.log(chalk.gray('Cleaning up...'));
-    wasm_force_garbage_collection();
     process.exit(130);
 });
 
