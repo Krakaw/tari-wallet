@@ -28,8 +28,10 @@ use lightweight_wallet_libs::LightweightWalletResult;
 use lightweight_wallet_libs::scanning::{
     scan_configuration::ScanConfiguration,
     scan_results::{ScanConfigSummary, ScanPhase, ScanProgress, ScanResults},
-    storage_manager::StorageManagerBuilder,
 };
+
+#[cfg(feature = "storage")]
+use lightweight_wallet_libs::scanning::storage_manager::StorageManagerBuilder;
 
 use lightweight_wallet_libs::scanning::*;
 use lightweight_wallet_libs::wallet::*;
@@ -80,7 +82,7 @@ impl BlockchainScanner for TestBlockchainScanner {
     async fn scan_blocks(
         &mut self,
         config: ScanConfig,
-    ) -> LightweightWalletResult<Vec<lightweight_wallet_libs::BlockScanResult>> {
+    ) -> LightweightWalletResult<Vec<lightweight_wallet_libs::scanning::BlockScanResult>> {
         // Simulate network latency
         if self.latency_ms > 0 {
             tokio::time::sleep(Duration::from_millis(self.latency_ms)).await;
@@ -102,7 +104,7 @@ impl BlockchainScanner for TestBlockchainScanner {
     async fn search_utxos(
         &mut self,
         _commitments: Vec<Vec<u8>>,
-    ) -> LightweightWalletResult<Vec<lightweight_wallet_libs::BlockScanResult>> {
+    ) -> LightweightWalletResult<Vec<lightweight_wallet_libs::scanning::BlockScanResult>> {
         Ok(vec![])
     }
 
@@ -139,6 +141,14 @@ impl BlockchainScanner for TestBlockchainScanner {
             }
         }
         Ok(result)
+    }
+
+    async fn get_blocks_by_heights_with_config(
+        &mut self,
+        heights: Vec<u64>,
+        _extraction_config: Option<&lightweight_wallet_libs::extraction::ExtractionConfig>,
+    ) -> LightweightWalletResult<Vec<BlockInfo>> {
+        self.get_blocks_by_heights(heights).await
     }
 
     async fn get_block_by_height(
@@ -491,7 +501,7 @@ async fn test_progress_reporting_workflow() {
     let progress_updates = Arc::new(Mutex::new(Vec::<ScanProgress>::new()));
     let _progress_clone = Arc::clone(&progress_updates);
 
-    let _progress_callback = move |_progress: lightweight_wallet_libs::ScanProgress| {
+    let _progress_callback = move |_progress: ScanProgress| {
         // Progress tracking would be implemented here
     };
 

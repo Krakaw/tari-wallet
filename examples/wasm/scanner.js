@@ -1,797 +1,628 @@
 #!/usr/bin/env node
 
 /**
- * Tari WASM Scanner - Node.js CLI Client
+ * Tari WASM Scanner CLI
  * 
- * This CLI client uses the modern scanner engine and async wrapper functions
- * for robust blockchain scanning with JSON output.
- * 
- * Usage:
- *   node examples/wasm/scanner.js [options]
- * 
- * Options:
- *   --data <string>           View key or seed phrase (required)
- *   --base-url <url>          Base node URL (default: https://rpc.tari.com)
- *   --mode <mode>             Scan mode: 'range' or 'specific' (default: range)
- *   --start-height <number>   Start height for range mode (default: 0)
- *   --end-height <number>     End height for range mode (optional)
- *   --heights <numbers>       Comma-separated heights for specific mode
- *   --batch-size <number>     Batch size for processing (default: 50)
- *   --progress                Show progress updates
- *   --streaming               Use streaming scan for memory efficiency
- *   --health-check            Perform health check before scanning
- *   --memory-stats            Show memory statistics
- *   --max-retries <number>    Maximum retries for initialization (default: 3)
- *   --help                    Show help message
- * 
- * Examples:
- *   node scanner.js --data "your_hex_view_key" --start-height 1000 --end-height 2000
- *   node scanner.js --data "your 24 word seed phrase" --mode specific --heights "100,200,300"
- *   node scanner.js --data "key_or_phrase" --streaming --progress --batch-size 50
- * 
- * Output:
- *   All results are output as JSON to stdout for easy parsing by other tools.
+ * A Node.js CLI client for Tari WASM Scanner with seed phrase and view key support.
+ * This CLI replicates the functionality of the native Rust scanner using WASM.
  */
 
-const fs = require('fs');
-const path = require('path');
+import { Command } from 'commander';
+import chalk from 'chalk';
+import ora from 'ora';
+import inquirer from 'inquirer';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
+// Import WASM module
+import {
+    wasm_scan_with_seed_phrase,
+    wasm_scan_with_view_key,
+    wasm_validate_seed_phrase,
+    wasm_validate_view_key,
+    wasm_get_tip_height,
+    WasmScanConfig,
+    WasmOutputFormat
+} from './pkg_node/lightweight_wallet_libs.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
-// Polyfills for Node.js to make WASM work with wasm-node feature
-if (typeof global !== 'undefined' && !global.fetch) {
-    // Set up global fetch for Node.js WASM target
-    const fetch = require('node-fetch');
+// Package info
+let packageInfo;
+try {
+    packageInfo = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
+} catch (error) {
+    packageInfo = { version: 'unknown' };
+}
+
+/**
+ * CLI Program setup
+ */
+const program = new Command();
+
+program
+    .name('tari-scanner')
+    .description('Enhanced Tari Wallet Scanner (WASM)')
+    .version(packageInfo.version || 'unknown')
+    .usage('[options]');
+
+// CLI Arguments matching scanner.rs exactly
+program
+    .option('-s, --seed-phrase <phrase>', 'Seed phrase for the wallet (uses memory-only storage)')
+    .option('--view-key <key>', 'Private view key in hex format (64 characters). Uses memory-only storage. Not required when resuming from database')
+    .option('-b, --base-url <url>', 'Base URL for Tari base node GRPC', 'http://127.0.0.1:8080')
+    .option('--from-block <height>', 'Starting block height (defaults to wallet birthday or last scanned block)', parseInteger)
+    .option('--to-block <height>', 'Ending block height (defaults to current tip)', parseInteger)
+    .option('--blocks <heights>', 'Specific block heights to scan (comma-separated). If provided, overrides from-block and to-block', parseBlockList)
+    .option('--batch-size <size>', 'Batch size for scanning', parseInteger, 10)
+    .option('--progress-frequency <freq>', 'Update progress every N blocks', parseInteger, 10)
+    .option('-q, --quiet', 'Quiet mode - only show essential information', false)
+    .option('--format <format>', 'Output format: detailed, summary, json', 'summary');
+
+/**
+ * Parse integer from string with validation (matching scanner.rs style)
+ */
+function parseInteger(value) {
+    const parsed = parseInt(value, 10);
+    if (isNaN(parsed)) {
+        throw new Error(`❌ Error: Invalid number: '${value}' - must be a valid integer`);
+    }
+    if (parsed < 0) {
+        throw new Error(`❌ Error: Invalid number: '${value}' - must be >= 0`);
+    }
+    return parsed;
+}
+
+/**
+ * Parse comma-separated block list (matching scanner.rs validation)
+ */
+function parseBlockList(value) {
+    if (!value || value.trim().length === 0) {
+        throw new Error('❌ Error: blocks list cannot be empty');
+    }
     
-    // Set fetch as a global function that WASM can access
-    global.fetch = fetch;
+    const blocks = value.split(',').map((block, index) => {
+        const trimmed = block.trim();
+        if (trimmed.length === 0) {
+            throw new Error(`❌ Error: Empty block height at position ${index + 1}`);
+        }
+        
+        try {
+            return parseInteger(trimmed);
+        } catch (error) {
+            throw new Error(`❌ Error: Invalid block height '${trimmed}' at position ${index + 1}: ${error.message}`);
+        }
+    });
     
-    // Also add Response and Request constructors
-    global.Response = fetch.Response;
-    global.Request = fetch.Request;
-    global.Headers = fetch.Headers;
+    return blocks;
 }
 
 /**
- * CLI Scanner using the modern scanner engine
+ * Display error message and exit (matching scanner.rs style)
  */
-class CLIScanner {
-    constructor(options = {}) {
-        this.options = {
-            baseUrl: 'https://rpc.tari.com',
-            batchSize: 50,
-            maxRetries: 3,
-            showProgress: true,
-            useStreaming: false,
-            ...options
-        };
-        
-        this.wasm = null;
-        this.scanner = null;
-        this.results = {
-            success: false,
-            error: null,
-            scanner_info: {},
-            connection_status: {},
-            scan_results: {},
-            memory_stats: {},
-            health_check: {},
-            performance: {
-                initialization_time_ms: 0,
-                scan_time_ms: 0,
-                total_time_ms: 0
-            }
-        };
-        this.startTime = Date.now();
-    }
-
-    /**
-     * Initialize WASM module and create scanner with modern scanner engine
-     */
-    async init() {
-        const initStart = Date.now();
-        
-        try {
-            const wasmPath = path.join(__dirname, 'pkg_node/lightweight_wallet_libs.js');
-            
-            if (!fs.existsSync(wasmPath)) {
-                throw new Error(`WASM module not found. Build with: wasm-pack build --target nodejs --out-dir examples/wasm/pkg_node --features http,wasm-node`);
-            }
-
-            if (this.options.showProgress) {
-                console.error(`Loading WASM from: ${wasmPath}`);
-            }
-            
-            this.wasm = require(wasmPath);
-            
-            if (this.options.showProgress) {
-                console.error(`WASM module loaded, initializing...`);
-            }
-            
-            // For Node.js builds, we need to initialize the WASM module synchronously
-            const wasmBinaryPath = path.join(__dirname, 'pkg_node/lightweight_wallet_libs_bg.wasm');
-            const wasmBinary = fs.readFileSync(wasmBinaryPath);
-            
-            if (typeof this.wasm.initSync === 'function') {
-                this.wasm.initSync(wasmBinary);
-            } else if (typeof this.wasm.default === 'function') {
-                await this.wasm.default(wasmBinary);
-            }
-            
-            if (this.options.showProgress) {
-                console.error(`WASM initialized, getting version...`);
-            }
-            
-            this.results.scanner_info = {
-                version: this.wasm.get_version(),
-                wasm_loaded: true,
-                features: 'http',
-                timestamp: new Date().toISOString()
-            };
-            
-            this.results.performance.initialization_time_ms = Date.now() - initStart;
-            
-            if (this.options.showProgress) {
-                console.error(`WASM initialized successfully, version: ${this.results.scanner_info.version}`);
-            }
-            
-        } catch (error) {
-            console.error(`WASM initialization error:`, error);
-            this.results.error = `Failed to initialize WASM: ${error.message}`;
-            throw error;
-        }
-    }
-
-    /**
-     * Create and initialize scanner using Rust HTTP implementation
-     */
-    async createAndInitializeScanner(data) {
-        try {
-            if (!data) {
-                throw new Error('Scanner data (view key or seed phrase) is required');
-            }
-
-            if (this.options.showProgress) {
-                process.stderr.write(`Initializing scanner with ${this.options.maxRetries} max retries...\n`);
-            }
-
-            // Use the Rust HTTP scanner initialization
-            this.scanner = await this.wasm.create_and_initialize_scanner_async(
-                data,
-                this.options.baseUrl,
-                this.options.maxRetries
-            );
-            
-            // Set up progress callback if scanner supports it
-            if (this.wasm.set_scanner_progress_callback && this.options.showProgress) {
-                this.wasm.set_scanner_progress_callback(this.scanner, (progressJson) => {
-                    const progress = JSON.parse(progressJson);
-                    
-                    const phaseNames = {
-                        0: 'Idle', 1: 'Initializing', 2: 'Connecting', 3: 'Scanning', 
-                        4: 'Processing', 5: 'Saving', 6: 'Finalizing', 7: 'Completed', 
-                        8: 'Interrupted', 9: 'Error'
-                    };
-                    
-                    const phaseName = phaseNames[progress.phase] || 'Unknown';
-                    const rate = progress.scan_rate > 0 ? ` (${progress.scan_rate.toFixed(1)} blocks/sec)` : '';
-                    const eta = progress.estimated_remaining_seconds ? ` - ETA: ${Math.round(progress.estimated_remaining_seconds)}s` : '';
-                    
-                    process.stderr.write(`\r📈 Progress: ${progress.completion_percentage.toFixed(1)}% - Block ${progress.current_height.toLocaleString()} - ${progress.outputs_found} outputs - ${phaseName}${rate}${eta}`);
-                });
-            }
-            
-            this.results.scanner_info.scanner_created = true;
-            this.results.scanner_info.data_type = data.split(' ').length > 10 ? 'seed_phrase' : 'view_key';
-            this.results.scanner_info.base_url = this.options.baseUrl;
-            this.results.scanner_info.max_retries = this.options.maxRetries;
-            this.results.scanner_info.progress_callbacks_enabled = !!this.wasm.set_scanner_progress_callback;
-            
-            if (this.options.showProgress) {
-                process.stderr.write(`✅ Scanner initialized successfully (progress callbacks: ${this.results.scanner_info.progress_callbacks_enabled ? 'enabled' : 'disabled'})\n`);
-            }
-            
-        } catch (error) {
-            console.error('Scanner initialization error:', error);
-            this.results.error = `Failed to create and initialize scanner: ${error.message}`;
-            this.results.scanner_info.initialization_failed = true;
-            this.results.scanner_info.error = error.message;
-            throw error;
-        }
-    }
-
-    /**
-     * Perform health check using modern health check function
-     */
-    async performHealthCheck() {
-        try {
-            const healthResult = await this.wasm.check_scanner_health(this.scanner);
-            const health = JSON.parse(healthResult);
-            
-            this.results.health_check = health;
-            this.results.connection_status = {
-                connected: health.connectivity_ok || false,
-                base_url: this.options.baseUrl,
-                scanner_engine_initialized: health.scanner_engine_initialized,
-                wallet_context_available: health.wallet_context_available,
-                has_view_key: health.has_view_key,
-                transaction_count: health.transaction_count
-            };
-
-            if (health.tip_info) {
-                this.results.connection_status.chain_tip_height = health.tip_info.metadata?.best_block_height;
-            }
-
-            if (health.connectivity_error) {
-                this.results.connection_status.error = health.connectivity_error;
-            }
-            
-            return health.connectivity_ok !== false;
-        } catch (error) {
-            this.results.health_check = { error: error.message };
-            this.results.connection_status = {
-                connected: false,
-                error: error.message
-            };
-            return false;
-        }
-    }
-
-    /**
-     * Get memory statistics using modern memory stats function
-     */
-    getMemoryStats() {
-        try {
-            const statsResult = this.wasm.get_scanner_memory_stats(this.scanner);
-            const stats = JSON.parse(statsResult);
-            
-            this.results.memory_stats = stats;
-            return stats;
-        } catch (error) {
-            this.results.memory_stats = { error: error.message };
-            return null;
-        }
-    }
-
-    /**
-     * Scan blocks using range mode with modern scanner engine and progress reporting
-     */
-    async scanRange(startHeight, endHeight = null) {
-        const scanStart = Date.now();
-        
-        try {
-            let scanResult;
-            
-            if (this.options.useStreaming) {
-                // Use streaming scan for memory efficiency
-                scanResult = await this.streamingScan(startHeight, endHeight);
-            } else if (this.wasm.scan_blocks_with_progress_async) {
-                // Use the new progress-enabled scanning method
-                if (this.options.showProgress) {
-                    process.stderr.write(`🔍 Using new progress-enabled range scanning from ${startHeight} to ${endHeight || 'tip'}...\n`);
-                }
-                
-                const resultJson = await this.wasm.scan_blocks_with_progress_async(this.scanner, BigInt(startHeight), endHeight ? BigInt(endHeight) : null, this.options.baseUrl);
-                scanResult = JSON.parse(resultJson);
-                
-                if (this.options.showProgress) {
-                    process.stderr.write(`\n✅ Progress-enabled scan completed\n`);
-                }
-            } else {
-                // Fallback to memory-optimized scan
-                if (this.options.showProgress) {
-                    process.stderr.write(`⚠️ Falling back to legacy memory-optimized scan\n`);
-                }
-                scanResult = await this.memoryOptimizedScan(startHeight, endHeight);
-            }
-
-            this.results.scan_results = scanResult;
-            this.results.performance.scan_time_ms = Date.now() - scanStart;
-            return scanResult;
-            
-        } catch (error) {
-            this.results.scan_results = {
-                success: false,
-                error: error.message,
-                start_height: startHeight,
-                end_height: endHeight
-            };
-            this.results.performance.scan_time_ms = Date.now() - scanStart;
-            throw error;
-        }
-    }
-
-    /**
-     * Scan specific block heights using new progress-enabled methods
-     */
-    async scanSpecificHeights(heights) {
-        const scanStart = Date.now();
-        
-        try {
-            let scanResult;
-            
-            if (this.wasm.scan_specific_blocks_with_progress_async) {
-                // Use the new progress-enabled specific blocks scanning method
-                if (this.options.showProgress) {
-                    process.stderr.write(`🔍 Using new progress-enabled specific blocks scanning for ${heights.length} blocks...\n`);
-                }
-                
-                // Convert heights to BigUint64Array as expected by WASM
-                const heightsArray = new BigUint64Array(heights.map(h => BigInt(h)));
-                const resultJson = await this.wasm.scan_specific_blocks_with_progress_async(this.scanner, heightsArray, this.options.baseUrl);
-                scanResult = JSON.parse(resultJson);
-                
-                if (this.options.showProgress) {
-                    process.stderr.write(`\n✅ Progress-enabled specific blocks scan completed\n`);
-                }
-            } else {
-                // Fallback to legacy multiple ranges approach
-                if (this.options.showProgress) {
-                    process.stderr.write(`⚠️ Falling back to legacy multiple ranges scan\n`);
-                }
-                
-                // Convert heights to scan ranges format
-                const ranges = heights.map(height => ({ from_height: height, to_height: height }));
-                const rangesJson = JSON.stringify(ranges);
-                
-                let progressCallback = null;
-                if (this.options.showProgress) {
-                    progressCallback = (progressData) => {
-                        const progress = JSON.parse(progressData);
-                        process.stderr.write(`Progress: ${progress.overall_progress.toFixed(1)}% - Block ${progress.current_height} - ${progress.transactions_found} transactions\r`);
-                    };
-                }
-
-                const resultJson = await this.wasm.scan_multiple_ranges_async(
-                    this.scanner,
-                    rangesJson,
-                    this.options.batchSize,
-                    progressCallback
-                );
-                
-                scanResult = JSON.parse(resultJson);
-            }
-            
-            this.results.scan_results = scanResult;
-            this.results.performance.scan_time_ms = Date.now() - scanStart;
-            return scanResult;
-            
-        } catch (error) {
-            this.results.scan_results = {
-                success: false,
-                error: error.message,
-                heights: heights
-            };
-            this.results.performance.scan_time_ms = Date.now() - scanStart;
-            throw error;
-        }
-    }
-
-    /**
-     * Memory-optimized scan using the same method as HTML scanner (legacy but working)
-     */
-    async memoryOptimizedScan(startHeight, endHeight) {
-        if (this.options.showProgress) {
-            process.stderr.write(`Memory-optimized scan: blocks ${startHeight} to ${endHeight || 'tip'}...\n`);
-        }
-
-        // Use the same approach as the HTML scanner - fetch HTTP blocks and use process_http_blocks
-        const actualEndHeight = endHeight || this.results.health_check?.tip_info?.best_block_height || 56563;
-        
-        console.log(`DEBUG: Scanning from ${startHeight} to ${actualEndHeight} using HTML scanner method`);
-        
-        let totalResults = {
-            total_outputs: 0,
-            total_spent: 0,
-            total_value: 0,
-            current_balance: 0,
-            blocks_processed: 0,
-            transactions: [],
-            success: true,
-            error: null
-        };
-        
-        try {
-            // Create HTTP client like the HTML scanner does
-            const baseUrl = this.options.baseUrl;
-            
-            // Process in batches like the HTML scanner
-            let currentHeight = startHeight;
-            const batchSize = 50; // Similar to HTML scanner limit
-            
-            while (currentHeight <= actualEndHeight) {
-                const batchEnd = Math.min(currentHeight + batchSize - 1, actualEndHeight);
-                
-                console.log(`DEBUG: Fetching batch ${currentHeight} to ${batchEnd}`);
-                
-                // Get header for start of batch
-                const headerUrl = `${baseUrl}/get_header_by_height?height=${currentHeight}`;
-                const headerResponse = await fetch(headerUrl);
-                if (!headerResponse.ok) {
-                    throw new Error(`Failed to fetch header: ${headerResponse.status}`);
-                }
-                const header = await headerResponse.json();
-                const startHeaderHash = Array.from(header.hash, b => b.toString(16).padStart(2, '0')).join('');
-                
-                // Sync UTXOs for this batch
-                const limit = batchEnd - currentHeight + 1;
-                const syncUrl = `${baseUrl}/sync_utxos_by_block?start_header_hash=${startHeaderHash}&limit=${limit}&page=0`;
-                const syncResponse = await fetch(syncUrl);
-                if (!syncResponse.ok) {
-                    throw new Error(`Failed to sync UTXOs: ${syncResponse.status}`);
-                }
-                const httpResponse = await syncResponse.json();
-                
-                console.log(`DEBUG: Got ${httpResponse.blocks?.length || 0} blocks in batch`);
-                
-                if (httpResponse.blocks && httpResponse.blocks.length > 0) {
-                    // Use process_http_blocks like the HTML scanner
-                    const httpResponseJson = JSON.stringify(httpResponse);
-                    const resultJson = this.wasm.process_http_blocks(this.scanner, httpResponseJson);
-                    const batchResult = JSON.parse(resultJson);
-                    
-                    console.log(`DEBUG: Batch result - success: ${batchResult.success}, blocks_processed: ${batchResult.blocks_processed}, transactions: ${batchResult.transactions?.length || 0}`);
-                    
-                    if (batchResult.success) {
-                        totalResults.blocks_processed += batchResult.blocks_processed;
-                        totalResults.transactions = totalResults.transactions.concat(batchResult.transactions || []);
-                        
-                        // Update cumulative stats (get latest from scanner state)
-                        try {
-                            const statsJson = this.wasm.get_scanner_stats(this.scanner);
-                            const stats = JSON.parse(statsJson);
-                            totalResults.total_outputs = stats.total_outputs || 0;
-                            totalResults.total_spent = stats.total_spent || 0;
-                            totalResults.total_value = stats.total_value || 0;
-                            totalResults.current_balance = stats.current_balance || 0;
-                        } catch (e) {
-                            console.log(`DEBUG: Could not get scanner stats: ${e.message}`);
-                        }
-                    } else {
-                        totalResults.success = false;
-                        totalResults.error = batchResult.error;
-                        break;
-                    }
-                }
-                
-                currentHeight = batchEnd + 1;
-                
-                // Show progress
-                if (this.options.showProgress) {
-                    const progress = ((currentHeight - startHeight) / (actualEndHeight - startHeight + 1)) * 100;
-                    process.stderr.write(`Progress: ${progress.toFixed(1)}% - Block ${currentHeight} - ${totalResults.transactions.length} transactions\r`);
-                }
-            }
-            
-            console.log(`DEBUG: Final results - blocks_processed: ${totalResults.blocks_processed}, transactions: ${totalResults.transactions.length}`);
-            return totalResults;
-            
-        } catch (error) {
-            console.error(`DEBUG: WASM scan failed:`, error);
-            return {
-                total_outputs: 0,
-                total_spent: 0,
-                total_value: 0,
-                current_balance: 0,
-                blocks_processed: 0,
-                transactions: [],
-                success: false,
-                error: error.message
-            };
-        }
-    }
-
-    /**
-     * Streaming scan using modern streaming function for memory efficiency
-     */
-    async streamingScan(startHeight, endHeight) {
-        if (this.options.showProgress) {
-            process.stderr.write(`Streaming scan: blocks ${startHeight} to ${endHeight || 'tip'}...\n`);
-        }
-
-        let progressCallback = null;
-        if (this.options.showProgress) {
-            progressCallback = (progressData) => {
-                const progress = JSON.parse(progressData);
-                process.stderr.write(`Progress: ${progress.percentage.toFixed(1)}% - Block ${progress.current_height} - ${progress.transactions_found} transactions - Memory: ${progress.memory_usage}\r`);
-            };
-        }
-
-        // Use the modern streaming async function
-        // Convert heights to BigInt for WASM u64 parameters
-        const resultJson = await this.wasm.scan_blocks_streaming_async(
-            this.scanner,
-            BigInt(startHeight),
-            BigInt(endHeight || 0),
-            this.options.batchSize,
-            progressCallback
-        );
-        
-        return JSON.parse(resultJson);
-    }
-
-    /**
-     * Optimize scanner memory using modern optimization function
-     */
-    optimizeMemory() {
-        try {
-            const optimizeResult = this.wasm.optimize_scanner_memory(this.scanner);
-            const optimization = JSON.parse(optimizeResult);
-            
-            this.results.memory_optimization = optimization;
-            return optimization;
-        } catch (error) {
-            this.results.memory_optimization = { error: error.message };
-            return null;
-        }
-    }
-
-    /**
-     * Get final results
-     */
-    getResults() {
-        this.results.success = !this.results.error;
-        this.results.performance.total_time_ms = Date.now() - this.startTime;
-        
-        // Add summary statistics
-        if (this.results.scan_results && this.results.scan_results.success) {
-            this.results.summary = {
-                blocks_processed: this.results.scan_results.blocks_processed,
-                transactions_found: this.results.scan_results.transactions?.length || 0,
-                total_outputs: this.results.scan_results.total_outputs,
-                total_spent: this.results.scan_results.total_spent,
-                current_balance_microtari: this.results.scan_results.current_balance,
-                current_balance_tari: (this.results.scan_results.current_balance / 1000000).toFixed(6),
-                total_value_microtari: this.results.scan_results.total_value,
-                total_value_tari: (this.results.scan_results.total_value / 1000000).toFixed(6)
-            };
-        }
-        
-        return this.results;
-    }
+function showArgumentError(message) {
+    console.error(chalk.red(`❌ Error: ${message}`));
+    process.exit(1);
 }
 
 /**
- * Parse command line arguments
+ * Validate CLI arguments (matching scanner.rs validation exactly)
  */
-function parseArgs() {
-    const args = process.argv.slice(2);
-    const options = {
-        data: null,
-        baseUrl: 'https://rpc.tari.com',
-        mode: 'range',
-        startHeight: 0,
-        endHeight: null,
-        heights: [],
-        batchSize: 50,
-        maxRetries: 3,
-        showProgress: false,
-        useStreaming: false,
-        healthCheck: true, // Default to true for modern scanner
-        memoryStats: false,
-        help: false
-    };
+function validateArgs(options) {
+    const errors = [];
 
-    for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        
-        switch (arg) {
-            case '--data':
-                options.data = args[++i];
-                break;
-            case '--base-url':
-                options.baseUrl = args[++i];
-                break;
-            case '--mode':
-                options.mode = args[++i];
-                break;
-            case '--start-height':
-                options.startHeight = parseInt(args[++i]);
-                break;
-            case '--end-height':
-                options.endHeight = parseInt(args[++i]);
-                break;
-            case '--heights':
-                options.heights = args[++i].split(',').map(h => parseInt(h.trim()));
-                break;
-            case '--batch-size':
-                options.batchSize = parseInt(args[++i]);
-                break;
-            case '--max-retries':
-                options.maxRetries = parseInt(args[++i]);
-                break;
-            case '--progress':
-                options.showProgress = true;
-                break;
-            case '--streaming':
-                options.useStreaming = true;
-                break;
-            case '--health-check':
-                options.healthCheck = true;
-                break;
-            case '--memory-stats':
-                options.memoryStats = true;
-                break;
-            case '--help':
-                options.help = true;
-                break;
-            default:
-                if (!arg.startsWith('--') && !options.data) {
-                    options.data = arg; // Allow data as positional argument
-                }
-                break;
+    // Check for mutual exclusion of seed phrase and view key (matching scanner.rs)
+    if (options.seedPhrase && options.viewKey) {
+        showArgumentError('Cannot specify both --seed-phrase and --view-key. Choose one.');
+    }
+
+    // Must provide either seed phrase or view key  
+    if (!options.seedPhrase && !options.viewKey) {
+        errors.push('❌ Error: No keys provided - provide --seed-phrase or --view-key, or use an existing wallet.');
+    }
+
+    // Validate seed phrase format
+    if (options.seedPhrase) {
+        if (options.seedPhrase.trim().length === 0) {
+            errors.push('❌ Error: Seed phrase cannot be empty');
+        } else if (!wasm_validate_seed_phrase(options.seedPhrase)) {
+            errors.push('❌ Error: Invalid seed phrase format');
         }
     }
 
-    return options;
+    // Validate view key format (matching scanner.rs exact requirements)
+    if (options.viewKey) {
+        if (options.viewKey.trim().length === 0) {
+            errors.push('❌ Error: View key cannot be empty');
+        } else if (options.viewKey.trim().length !== 64) {
+            errors.push('❌ Error: View key must be exactly 64 hex characters (32 bytes)');
+        } else if (!/^[0-9a-fA-F]{64}$/.test(options.viewKey.trim())) {
+            errors.push('❌ Error: Invalid hex format for view key');
+        } else if (!wasm_validate_view_key(options.viewKey)) {
+            errors.push('❌ Error: Invalid view key format (must be 64 hex characters)');
+        }
+    }
+
+    // Validate format option (matching scanner.rs options)
+    const validFormats = ['detailed', 'summary', 'json'];
+    if (!validFormats.includes(options.format)) {
+        errors.push(`❌ Error: Invalid format: ${options.format}. Valid options: ${validFormats.join(', ')}`);
+    }
+
+    // Validate block range
+    if (options.fromBlock !== undefined && options.toBlock !== undefined) {
+        if (options.fromBlock < 0) {
+            errors.push('❌ Error: from-block must be >= 0');
+        }
+        if (options.toBlock < 0) {
+            errors.push('❌ Error: to-block must be >= 0');
+        }
+        if (options.fromBlock >= options.toBlock) {
+            errors.push('❌ Error: from-block must be less than to-block');
+        }
+    }
+
+    // Validate specific blocks
+    if (options.blocks) {
+        if (options.blocks.length === 0) {
+            errors.push('❌ Error: blocks list cannot be empty');
+        }
+        for (const block of options.blocks) {
+            if (block < 0) {
+                errors.push(`❌ Error: block height ${block} must be >= 0`);
+            }
+        }
+    }
+
+    // Validate batch size
+    if (options.batchSize <= 0) {
+        errors.push('❌ Error: batch-size must be greater than 0');
+    }
+
+    if (options.batchSize > 1000) {
+        console.warn(chalk.yellow(`⚠️  Warning: Large batch size (${options.batchSize}) may cause performance issues`));
+    }
+
+    // Validate progress frequency
+    if (options.progressFrequency <= 0) {
+        errors.push('❌ Error: progress-frequency must be greater than 0');
+    }
+
+    return errors;
 }
 
 /**
- * Show help message
+ * Create WASM scan configuration from CLI options
  */
-function showHelp() {
-    console.log(`
-Tari WASM Scanner - Node.js CLI Client (Modern Scanner Engine)
+function createScanConfig(options) {
+    const config = new WasmScanConfig(options.baseUrl);
+    
+    // Set basic scan parameters using direct field access (convert to BigInt for u64)
+    if (options.fromBlock !== undefined) config.from_block = BigInt(options.fromBlock);
+    if (options.toBlock !== undefined) config.to_block = BigInt(options.toBlock);
+    if (options.blocks) config.set_blocks(options.blocks.map(b => BigInt(b))); // Convert array elements to BigInt
+    
+    config.batch_size = BigInt(options.batchSize);
+    config.progress_frequency = BigInt(options.progressFrequency);
+    config.quiet = options.quiet;
 
-Usage:
-  node scanner.js [options]
+    // Set output format using direct field access
+    const wasmFormat = options.format === 'detailed' ? WasmOutputFormat.Detailed :
+                      options.format === 'json' ? WasmOutputFormat.Json :
+                      WasmOutputFormat.Summary;
+    config.output_format = wasmFormat;
 
-Options:
-  --data <string>           View key or seed phrase (required)
-  --base-url <url>          Base node URL (default: https://rpc.tari.com)
-  --mode <mode>             Scan mode: 'range' or 'specific' (default: range)
-  --start-height <number>   Start height for range mode (default: 0)
-  --end-height <number>     End height for range mode (optional, defaults to tip)
-  --heights <numbers>       Comma-separated heights for specific mode
-  --batch-size <number>     Batch size for processing (default: 50)
-  --max-retries <number>    Maximum retries for initialization (default: 3)
-  --progress                Show progress updates to stderr
-  --streaming               Use streaming scan for memory efficiency
-  --health-check            Perform health check before scanning (default: true)
-  --memory-stats            Include memory statistics in output
-  --help                    Show this help message
-
-Examples:
-  # Range scan with progress
-  node scanner.js --data "your_hex_view_key" --start-height 1000 --end-height 2000 --progress
-
-  # Specific heights scan
-  node scanner.js --data "your 24 word seed phrase" --mode specific --heights "100,200,300"
-
-  # Streaming scan for large ranges
-  node scanner.js --data "key_or_phrase" --streaming --progress --batch-size 25
-
-  # Full scan with health check and memory stats
-  node scanner.js --data "key_or_phrase" --health-check --memory-stats --start-height 0
-
-Features:
-  - Uses modern scanner engine with robust error handling
-  - Automatic retry logic for network failures
-  - Memory-optimized scanning for large ranges
-  - Streaming support for minimal memory usage
-  - Health checks for scanner and connectivity status
-  - Comprehensive memory statistics and performance metrics
-
-Output:
-  All results are output as JSON to stdout.
-  Progress messages (if enabled) are sent to stderr.
-`);
+    return config;
 }
 
-/**
- * Main execution function
- */
-async function main() {
-    const options = parseArgs();
 
-    if (options.help) {
-        showHelp();
+
+/**
+ * Display scan results
+ */
+function displayResults(results, options) {
+    if (options.format === 'json') {
+        console.log(JSON.stringify(results, null, 2));
         return;
     }
 
-    if (!options.data) {
-        console.error('Error: --data parameter is required');
-        showHelp();
-        process.exit(1);
+    const balance = (results.total_balance); // Convert to Tari
+    const duration = results.duration_seconds.toFixed(2);
+    const speed = results.average_blocks_per_second.toFixed(2);
+
+    console.log('\n' + chalk.green('✓ Scan completed successfully!'));
+    console.log(chalk.blue('═'.repeat(50)));
+    
+    if (options.format === 'detailed') {
+        console.log(chalk.white(`Session ID: ${results.session_id}`));
+        console.log(chalk.white(`Start Time: ${results.start_time}`));
+        console.log(chalk.white(`End Time: ${results.end_time}`));
+        console.log(chalk.white(`Configuration: ${results.config_summary || 'N/A'}`));
+        console.log('');
     }
 
-    const scanner = new CLIScanner(options);
+    console.log(chalk.white(`Blocks Scanned: ${results.blocks_scanned.toLocaleString()}`));
+    console.log(chalk.white(`Final Height: ${results.final_height.toLocaleString()}`));
+    console.log(chalk.white(`Outputs Found: ${results.outputs_found.toLocaleString()}`));
+    console.log(chalk.white(`Total Balance: ${balance} T`));
+    console.log(chalk.white(`Duration: ${duration}s`));
+    console.log(chalk.white(`Average Speed: ${speed} blocks/s`));
+    
+    if (results.peak_memory_usage_mb) {
+        console.log(chalk.white(`Peak Memory: ${results.peak_memory_usage_mb.toFixed(2)} MB`));
+    }
 
-    try {
-        // Initialize WASM module
-        await scanner.init();
+    console.log(chalk.blue('═'.repeat(50)));
+}
 
-        // Create and initialize scanner with modern async initialization
-        await scanner.createAndInitializeScanner(options.data);
+/**
+ * Display error and exit
+ */
+function displayError(error, exitCode = 1) {
+    console.error(chalk.red('✗ Error: ' + error.message));
+    process.exit(exitCode);
+}
 
-        // Perform health check (always done with modern scanner)
-        if (options.healthCheck) {
-            const connected = await scanner.performHealthCheck();
-            if (!connected) {
-                throw new Error('Health check failed - scanner or connectivity issues detected');
-            }
-        }
+/**
+ * Cancellation state for graceful interruption
+ */
+let scanCancelled = false;
+let currentScanProgress = null;
+let partialResults = null;
+let scanStartTime = null;
+let currentScanOptions = null;
 
-        // Only proceed with scanning if we have a valid scanner
-        if (!scanner.scanner) {
-            throw new Error('Scanner not properly initialized');
-        }
+/**
+ * Reset cancellation state for new scans
+ */
+function resetCancellationState() {
+    scanCancelled = false;
+    currentScanProgress = null;
+    partialResults = null;
+    scanStartTime = null;
+    currentScanOptions = null;
+}
 
-        // Perform scanning based on mode
-        if (options.mode === 'specific') {
-            if (options.heights.length === 0) {
-                throw new Error('Heights must be specified for specific mode');
-            }
-            await scanner.scanSpecificHeights(options.heights);
+/**
+ * Create partial results from current progress data
+ */
+function createPartialResultsFromProgress() {
+    if (!currentScanProgress || !scanStartTime) {
+        return null;
+    }
+    
+    const now = Date.now();
+    const durationSeconds = (now - scanStartTime) / 1000;
+    
+    return {
+        session_id: `interrupted-${Date.now()}`,
+        start_time: new Date(scanStartTime).toISOString(),
+        end_time: new Date(now).toISOString(),
+        blocks_scanned: currentScanProgress.blocks_completed || 0,
+        final_height: currentScanProgress.current_height || 0,
+        outputs_found: currentScanProgress.outputs_found || 0,
+        total_balance: currentScanProgress.current_balance || 0,
+        duration_seconds: durationSeconds,
+        average_blocks_per_second: currentScanProgress.blocks_per_second || 0,
+        peak_memory_usage_mb: null, // Not available from progress
+        config_summary: `Interrupted scan: ${currentScanProgress.blocks_completed || 0}/${currentScanProgress.total_blocks || '?'} blocks`
+    };
+}
+
+/**
+ * Handle scan interruption gracefully (matching scanner.rs behavior)
+ */
+function handleScanInterruption(options) {
+    if (!options.quiet) {
+        console.log(chalk.yellow('\n\n🛑 Scan interrupted by user (Ctrl+C)'));
+        console.log(chalk.yellow('📊 Waiting for current batch to complete...\n'));
+    }
+    
+    // Give a moment for the scan to notice the cancellation
+    setTimeout(() => {
+        // Try to use existing partial results, or create from progress data
+        const resultsToDisplay = partialResults || createPartialResultsFromProgress();
+        
+        if (resultsToDisplay) {
+            displayPartialResults(resultsToDisplay, options);
         } else {
-            await scanner.scanRange(options.startHeight, options.endHeight);
+            // No progress data available - scan was interrupted very early
+            if (!options.quiet) {
+                console.log(chalk.yellow('⚠️  Scan was interrupted before any blocks were processed.\n'));
+                
+                // Still provide resume command using original parameters
+                console.log(chalk.yellow('🔄 To resume scanning from where you left off, use:'));
+                
+                const baseCommand = './scanner.js';
+                let resumeCommand;
+                
+                if (options.seedPhrase) {
+                    resumeCommand = `${baseCommand} --seed-phrase "${options.seedPhrase}"`;
+                } else if (options.viewKey) {
+                    resumeCommand = `${baseCommand} --view-key "${options.viewKey}"`;
+                }
+                
+                // Add the original from-block or default
+                if (options.fromBlock) {
+                    resumeCommand += ` --from-block ${options.fromBlock}`;
+                }
+                
+                // Add other options to resume command
+                if (options.baseUrl !== 'http://127.0.0.1:8080') {
+                    resumeCommand += ` --base-url "${options.baseUrl}"`;
+                }
+                if (options.toBlock) {
+                    resumeCommand += ` --to-block ${options.toBlock}`;
+                }
+                if (options.batchSize !== 10) {
+                    resumeCommand += ` --batch-size ${options.batchSize}`;
+                }
+                if (options.format !== 'summary') {
+                    resumeCommand += ` --format ${options.format}`;
+                }
+                if (options.quiet) {
+                    resumeCommand += ' --quiet';
+                }
+                
+                console.log(chalk.gray(`   ${resumeCommand}`));
+            }
+            process.exit(130); // Standard exit code for SIGINT
+        }
+    }, 100);
+}
+
+/**
+ * Display partial results when scan is interrupted (matching scanner.rs)
+ */
+function displayPartialResults(results, options) {
+    if (!options.quiet) {
+        console.log(chalk.yellow('⚠️  Scan was interrupted but collected partial data:\n'));
+    }
+
+    // Display partial results based on output format (same as complete results)
+    displayResults(results, options);
+
+    // Determine resume block from results or current progress
+    const finalHeight = results.final_height || (currentScanProgress && currentScanProgress.current_height);
+    
+    if (!options.quiet && finalHeight) {
+        console.log(chalk.yellow('\n🔄 To resume scanning from where you left off, use:'));
+        
+        // Generate resume command based on scan type
+        const resumeBlock = finalHeight + 1;
+        const baseCommand = './scanner.js';
+        
+        let resumeCommand;
+        if (options.seedPhrase) {
+            resumeCommand = `${baseCommand} --seed-phrase "${options.seedPhrase}" --from-block ${resumeBlock}`;
+        } else if (options.viewKey) {
+            resumeCommand = `${baseCommand} --view-key "${options.viewKey}" --from-block ${resumeBlock}`;
+        }
+        
+        // Add other options to resume command
+        if (options.baseUrl !== 'http://127.0.0.1:8080') {
+            resumeCommand += ` --base-url "${options.baseUrl}"`;
+        }
+        if (options.toBlock) {
+            resumeCommand += ` --to-block ${options.toBlock}`;
+        }
+        if (options.format !== 'summary') {
+            resumeCommand += ` --format ${options.format}`;
+        }
+        if (options.quiet) {
+            resumeCommand += ' --quiet';
+        }
+        
+        console.log(chalk.gray(`   ${resumeCommand}`));
+    }
+    
+    process.exit(130); // Standard exit code for SIGINT
+}
+
+/**
+ * Enhanced progress callback with cancellation support
+ */
+function createProgressCallbackWithCancellation(options) {
+    if (options.quiet) {
+        return null; // No progress updates in quiet mode
+    }
+
+    return (progress) => {
+        // Store current progress for potential partial results
+        currentScanProgress = progress;
+        
+        // Check for cancellation
+        if (scanCancelled) {
+            return false; // Signal to WASM to stop scanning
+        }
+        
+        const percentage = progress.percentage.toFixed(1);
+        const current = progress.current_height;
+        const total = progress.total_blocks;
+        const completed = progress.blocks_completed;
+        const found = progress.outputs_found;
+        const balance = (progress.current_balance / 1000000).toFixed(6); // Convert to Tari
+        const speed = progress.blocks_per_second.toFixed(2);
+        
+        let message = `${percentage}% - Block ${current} (${completed}/${total}) - Found ${found} outputs`;
+        message += ` - Balance: ${balance} T - Speed: ${speed} blocks/s`;
+        
+        if (progress.estimated_remaining_seconds) {
+            const remaining = Math.round(progress.estimated_remaining_seconds);
+            message += ` - ETA: ${remaining}s`;
         }
 
-        // Get memory stats if requested
-        if (options.memoryStats) {
-            scanner.getMemoryStats();
+        console.log(chalk.cyan(message));
+        return true; // Continue scanning
+    };
+}
+
+/**
+ * Main scanner function with cancellation support
+ */
+async function runScan(options) {
+    // Reset cancellation state for new scan
+    resetCancellationState();
+    
+    // Store options and start time for interruption handling
+    currentScanOptions = options;
+    scanStartTime = Date.now();
+    
+    const spinner = ora('Initializing WASM module...').start();
+    
+    try {
+        // WASM module is automatically initialized for Node.js target
+        spinner.succeed('WASM module initialized');
+
+        // Validate arguments
+        const validationErrors = validateArgs(options);
+        if (validationErrors.length > 0) {
+            spinner.fail('Validation failed');
+            validationErrors.forEach(error => console.error(error));
+            process.exit(1);
         }
 
-        // Optimize memory for large scans
-        if (options.useStreaming || (options.endHeight && (options.endHeight - options.startHeight) > 1000)) {
-            scanner.optimizeMemory();
+        // Create scan configuration
+        const config = createScanConfig(options);
+        
+        // Create progress callback with cancellation support
+        const progressCallback = createProgressCallbackWithCancellation(options);
+
+        // Get tip height if needed
+        if (!options.quiet) {
+            spinner.start('Getting blockchain tip height...');
+            try {
+                const tipHeight = await wasm_get_tip_height(options.baseUrl);
+                spinner.succeed(`Blockchain tip height: ${tipHeight.toLocaleString()}`);
+            } catch (error) {
+                spinner.warn(`Could not get tip height: ${error.message}`);
+            }
         }
 
-        // Clear progress line if shown
-        if (options.showProgress) {
-            process.stderr.write('\n');
-        }
+        // Start scanning
+        spinner.start('Starting blockchain scan...');
+        let results;
 
-        // Output final results as JSON
-        const results = scanner.getResults();
-        console.log(JSON.stringify(results, null, 2));
+        try {
+            if (options.seedPhrase) {
+                results = await wasm_scan_with_seed_phrase(
+                    options.seedPhrase,
+                    null, // No passphrase support in CLI yet
+                    config,
+                    progressCallback
+                );
+            } else if (options.viewKey) {
+                results = await wasm_scan_with_view_key(
+                    options.viewKey,
+                    config,
+                    progressCallback
+                );
+            }
+
+            // Store results in case we get interrupted later
+            partialResults = results;
+
+            spinner.succeed('Blockchain scan completed');
+
+            // Display results
+            displayResults(results, options);
+
+        } catch (error) {
+            // Check if this was a cancellation-related error
+            if (scanCancelled) {
+                spinner.fail('Scan interrupted');
+                return; // Signal handler will take care of the rest
+            }
+            throw error; // Re-throw non-cancellation errors
+        }
 
     } catch (error) {
-        // Clear progress line if shown
-        if (options.showProgress) {
-            process.stderr.write('\n');
-        }
-        
-        // Ensure error is properly set in results
-        scanner.results.error = error.message;
-        scanner.results.success = false;
-        
-        // Output error results as JSON
-        const results = scanner.getResults();
-        console.log(JSON.stringify(results, null, 2));
-        process.exit(1);
+        console.log(error);
+        spinner.fail('Scan failed');
+        displayError(error);
     }
 }
 
 /**
- * Handle unhandled errors
+ * Main entry point
  */
-process.on('unhandledRejection', (error) => {
-    console.error(JSON.stringify({
-        success: false,
-        error: `Unhandled promise rejection: ${error.message}`,
-        timestamp: new Date().toISOString()
-    }, null, 2));
-    process.exit(1);
-});
+async function main() {
+    try {
+        // Parse command line arguments
+        program.parse();
+        const options = program.opts();
 
-process.on('uncaughtException', (error) => {
-    console.error(JSON.stringify({
-        success: false,
-        error: `Uncaught exception: ${error.message}`,
-        timestamp: new Date().toISOString()
-    }, null, 2));
-    process.exit(1);
-});
+        // Show help if no arguments provided (matching scanner.rs style)
+        if (process.argv.length <= 2) {
+            console.log(chalk.blue('🚀 Enhanced Tari Wallet Scanner (WASM)'));
+            console.log(chalk.blue('======================================='));
+            console.log();
+            console.log(chalk.gray('Use --help for detailed usage information'));
+            console.log();
+            console.log(chalk.yellow('## Quick Examples:'));
+            console.log();
+            console.log(chalk.white('# Scan with wallet from birthday to tip using seed phrase (memory only)'));
+            console.log(chalk.gray('./scanner.js --seed-phrase "your seed phrase here"'));
+            console.log();
+            console.log(chalk.white('# Scan using private view key (hex format, 64 characters, memory only)'));
+            console.log(chalk.gray('./scanner.js --view-key "a1b2c3d4e5f6789abcdef0123456789abcdef0123456789abcdef0123456789ab"'));
+            console.log();
+            console.log(chalk.white('# Scan specific range with view key (memory only)'));
+            console.log(chalk.gray('./scanner.js --view-key "your_view_key_here" --from-block 34920 --to-block 34930'));
+            console.log();
+            console.log(chalk.white('# Scan specific blocks only (memory only)'));
+            console.log(chalk.gray('./scanner.js --seed-phrase "your seed phrase" --blocks 1000,2000,5000,10000'));
+            console.log();
+            console.log(chalk.white('# Use custom base node URL (memory only)'));
+            console.log(chalk.gray('./scanner.js --seed-phrase "your seed phrase" --base-url "http://192.168.1.100:8080"'));
+            console.log();
+            console.log(chalk.white('# Quiet mode with JSON output (script-friendly, memory only)'));
+            console.log(chalk.gray('./scanner.js --view-key "your_view_key" --quiet --format json'));
+            console.log();
+            console.log(chalk.white('# Summary output with minimal progress updates (memory only)'));
+            console.log(chalk.gray('./scanner.js --seed-phrase "your seed phrase" --format summary --progress-frequency 50'));
+            process.exit(0);
+        }
 
-// Run if executed directly
-if (require.main === module) {
-    main();
+        // Run the scan
+        await runScan(options);
+
+    } catch (error) {
+        if (error.code === 'commander.helpDisplayed') {
+            process.exit(0);
+        }
+        displayError(error);
+    }
 }
 
-// Export for use as a module
-module.exports = {
-    CLIScanner,
-    parseArgs,
-    showHelp
-};
+/**
+ * Handle process signals with graceful shutdown (matching scanner.rs behavior)
+ */
+process.on('SIGINT', () => {
+    // Don't exit immediately - let the scan complete current batch
+    if (!scanCancelled) {
+        scanCancelled = true;
+        if (currentScanOptions) {
+            handleScanInterruption(currentScanOptions);
+        } else {
+            console.log(chalk.yellow('\n⚠ Scan interrupted by user'));
+            process.exit(130);
+        }
+    }
+});
+
+process.on('SIGTERM', () => {
+    if (!scanCancelled) {
+        scanCancelled = true;
+        console.log(chalk.yellow('\n⚠ Scan terminated by system'));
+        process.exit(143);
+    }
+});
+
+// Run the CLI
+main().catch(error => {
+    console.error(chalk.red('Fatal error:'), error);
+    process.exit(1);
+});
