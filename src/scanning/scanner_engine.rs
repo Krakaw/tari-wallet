@@ -15,6 +15,22 @@ use std::time::Instant;
 #[cfg(feature = "storage")]
 use super::storage_manager::{ScannerStorageConfig, StorageManager};
 
+// HTTP-specific imports for block processing
+use crate::data_structures::{
+    encrypted_data::EncryptedData,
+    payment_id::PaymentId,
+    transaction::TransactionDirection,
+    transaction_input::TransactionInput,
+    transaction_output::LightweightTransactionOutput,
+    types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
+    wallet_output::{
+        LightweightCovenant, LightweightOutputFeatures, LightweightScript, LightweightSignature,
+    },
+};
+#[cfg(feature = "http")]
+use crate::scanning::http_scanner::{HttpBlockData, HttpBlockResponse, HttpOutputData};
+use serde::{Deserialize, Serialize};
+
 /// Get current time for timing measurements
 #[cfg(not(target_arch = "wasm32"))]
 fn get_current_time() -> Instant {
@@ -180,7 +196,7 @@ impl ErrorHandler for InteractiveErrorHandler {
 }
 
 #[cfg(feature = "grpc")]
-use crate::data_structures::{block::Block, transaction::TransactionDirection};
+use crate::data_structures::block::Block;
 
 #[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
 use super::BlockchainScanner;
@@ -192,6 +208,31 @@ use super::{
     wallet_source::{WalletContext, WalletSource},
     ScanConfig, ScanConfiguration,
 };
+
+/// HTTP block processing result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpBlockProcessingResult {
+    pub total_outputs: u64,
+    pub total_spent: u64,
+    pub total_value: u64,
+    pub current_balance: u64,
+    pub blocks_processed: u64,
+    pub transactions: Vec<HttpTransactionSummary>,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+/// Transaction summary for HTTP block processing results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpTransactionSummary {
+    pub hash: String,
+    pub block_height: u64,
+    pub value: u64,
+    pub direction: String,
+    pub status: String,
+    pub is_spent: bool,
+    pub payment_id: Option<String>,
+}
 
 /// Core scanning engine that orchestrates all scanning operations
 #[cfg(any(feature = "grpc", feature = "http", target_arch = "wasm32"))]
@@ -1303,6 +1344,316 @@ impl ScannerEngine {
         let scan_results = ScanResults::new(config_summary, wallet_state, progress, start_time);
 
         Ok(scan_results)
+    }
+
+    /// Process HTTP block response (for WASM and direct HTTP integration)
+    #[cfg(feature = "http")]
+    pub fn process_http_blocks(&mut self, http_response_json: &str) -> HttpBlockProcessingResult {
+        // Parse HTTP response
+        let http_response: HttpBlockResponse = match serde_json::from_str(http_response_json) {
+            Ok(response) => response,
+            Err(e) => {
+                return HttpBlockProcessingResult {
+                    total_outputs: 0,
+                    total_spent: 0,
+                    total_value: 0,
+                    current_balance: 0,
+                    blocks_processed: 0,
+                    transactions: Vec::new(),
+                    success: false,
+                    error: Some(format!("Failed to parse HTTP response: {}", e)),
+                };
+            }
+        };
+
+        // Ensure wallet is initialized
+        if self.wallet_context.is_none() {
+            return HttpBlockProcessingResult {
+                total_outputs: 0,
+                total_spent: 0,
+                total_value: 0,
+                current_balance: 0,
+                blocks_processed: 0,
+                transactions: Vec::new(),
+                success: false,
+                error: Some(
+                    "Wallet context not initialized. Call initialize_wallet first.".to_string(),
+                ),
+            };
+        }
+
+        let wallet_context = self.wallet_context.as_ref().unwrap();
+        let mut wallet_state = WalletState::new();
+
+        let mut _total_found_outputs = 0;
+        let mut _total_spent_outputs = 0;
+        let mut blocks_processed = 0;
+        let mut batch_transactions = Vec::new();
+
+        // Process each block and collect block-specific transactions
+        for http_block in http_response.blocks {
+            let block_start_tx_count = wallet_state.transactions.len();
+
+            match self.process_single_http_block(
+                &http_block,
+                &wallet_context.view_key,
+                &mut wallet_state,
+            ) {
+                Ok((found_outputs, spent_outputs)) => {
+                    _total_found_outputs += found_outputs;
+                    _total_spent_outputs += spent_outputs;
+                    blocks_processed += 1;
+
+                    // Get transactions added in this block
+                    let block_transactions: Vec<HttpTransactionSummary> = wallet_state
+                        .transactions
+                        .iter()
+                        .skip(block_start_tx_count)
+                        .map(|tx| HttpTransactionSummary {
+                            hash: tx.output_hash_hex().unwrap_or_else(|| tx.commitment_hex()),
+                            block_height: tx.block_height,
+                            value: tx.value,
+                            direction: match tx.transaction_direction {
+                                TransactionDirection::Inbound => "inbound".to_string(),
+                                TransactionDirection::Outbound => "outbound".to_string(),
+                                TransactionDirection::Unknown => "unknown".to_string(),
+                            },
+                            status: format!("{:?}", tx.transaction_status),
+                            is_spent: tx.is_spent,
+                            payment_id: match &tx.payment_id {
+                                PaymentId::Empty => None,
+                                _ => Some(tx.payment_id.user_data_as_string()),
+                            },
+                        })
+                        .collect();
+
+                    batch_transactions.extend(block_transactions);
+                }
+                Err(e) => {
+                    return HttpBlockProcessingResult {
+                        total_outputs: 0,
+                        total_spent: 0,
+                        total_value: 0,
+                        current_balance: 0,
+                        blocks_processed,
+                        transactions: batch_transactions,
+                        success: false,
+                        error: Some(format!(
+                            "Failed to process block {}: {}",
+                            http_block.height, e
+                        )),
+                    };
+                }
+            }
+        }
+
+        // Create result with all transactions found in this batch
+        let (total_received, _total_spent, balance, unspent_count, spent_count) =
+            wallet_state.get_summary();
+
+        HttpBlockProcessingResult {
+            total_outputs: unspent_count as u64,
+            total_spent: spent_count as u64,
+            total_value: total_received,
+            current_balance: balance as u64,
+            blocks_processed: blocks_processed as u64,
+            transactions: batch_transactions,
+            success: true,
+            error: None,
+        }
+    }
+
+    /// Process single HTTP block - internal helper method
+    #[cfg(feature = "http")]
+    fn process_single_http_block(
+        &self,
+        http_block: &HttpBlockData,
+        view_key: &PrivateKey,
+        wallet_state: &mut WalletState,
+    ) -> Result<(usize, usize), String> {
+        // Convert HTTP outputs to LightweightTransactionOutput
+        let outputs = self.convert_http_outputs_to_lightweight(&http_block.outputs)?;
+
+        // Handle simplified inputs structure
+        let inputs = self.convert_simplified_inputs_to_lightweight(&http_block.inputs)?;
+
+        // Process outputs manually to preserve output_hash from HTTP response
+        let mut found_outputs = 0;
+        for (output_index, (http_output, lightweight_output)) in
+            http_block.outputs.iter().zip(outputs.iter()).enumerate()
+        {
+            // Try to decrypt and extract wallet output
+            if let Ok((value, _mask, payment_id)) = EncryptedData::decrypt_data(
+                view_key,
+                &lightweight_output.commitment,
+                &lightweight_output.encrypted_data,
+            ) {
+                // Add to wallet state with the original output_hash from HTTP response
+                wallet_state.add_received_output(
+                    http_block.height,
+                    output_index,
+                    lightweight_output.commitment.clone(),
+                    Some(http_output.output_hash.clone()),
+                    value.as_u64(),
+                    payment_id,
+                    crate::data_structures::transaction::TransactionStatus::MinedConfirmed,
+                    TransactionDirection::Inbound,
+                    true,
+                );
+                found_outputs += 1;
+                continue;
+            }
+
+            // Try one-sided decryption if available
+            if !lightweight_output
+                .sender_offset_public_key
+                .as_bytes()
+                .iter()
+                .all(|&b| b == 0)
+            {
+                if let Ok((value, _mask, payment_id)) = EncryptedData::decrypt_one_sided_data(
+                    view_key,
+                    &lightweight_output.commitment,
+                    &lightweight_output.sender_offset_public_key,
+                    &lightweight_output.encrypted_data,
+                ) {
+                    // Add to wallet state with the original output_hash from HTTP response
+                    wallet_state.add_received_output(
+                        http_block.height,
+                        output_index,
+                        lightweight_output.commitment.clone(),
+                        Some(http_output.output_hash.clone()),
+                        value.as_u64(),
+                        payment_id,
+                        crate::data_structures::transaction::TransactionStatus::OneSidedConfirmed,
+                        TransactionDirection::Inbound,
+                        true,
+                    );
+                    found_outputs += 1;
+                }
+            }
+        }
+
+        // Process inputs for spent detection
+        let mut spent_outputs = 0;
+        for (input_index, input) in inputs.iter().enumerate() {
+            // Try to match by output hash - this is the primary method for HTTP API
+            if wallet_state.mark_output_spent_by_hash(
+                &input.output_hash,
+                http_block.height,
+                input_index,
+            ) {
+                spent_outputs += 1;
+            }
+        }
+
+        Ok((found_outputs, spent_outputs))
+    }
+
+    /// Convert HTTP output data to LightweightTransactionOutput
+    #[cfg(feature = "http")]
+    fn convert_http_outputs_to_lightweight(
+        &self,
+        http_outputs: &[HttpOutputData],
+    ) -> Result<Vec<LightweightTransactionOutput>, String> {
+        let mut outputs = Vec::new();
+
+        for http_output in http_outputs {
+            // Parse commitment
+            if http_output.commitment.len() != 32 {
+                return Err("Invalid commitment length, expected 32 bytes".to_string());
+            }
+            let commitment = CompressedCommitment::new(
+                http_output
+                    .commitment
+                    .clone()
+                    .try_into()
+                    .map_err(|_| "Failed to convert commitment")?,
+            );
+
+            // Parse sender offset public key
+            if http_output.sender_offset_public_key.len() != 32 {
+                return Err(
+                    "Invalid sender offset public key length, expected 32 bytes".to_string()
+                );
+            }
+            let sender_offset_public_key = CompressedPublicKey::new(
+                http_output
+                    .sender_offset_public_key
+                    .clone()
+                    .try_into()
+                    .map_err(|_| "Failed to convert sender offset public key")?,
+            );
+
+            // Parse encrypted data
+            let encrypted_data = EncryptedData::from_bytes(&http_output.encrypted_data)
+                .map_err(|e| format!("Invalid encrypted data: {}", e))?;
+
+            // Create LightweightTransactionOutput with minimal viable data
+            let output = LightweightTransactionOutput::new_current_version(
+                LightweightOutputFeatures::default(),
+                commitment,
+                None,
+                LightweightScript::default(),
+                sender_offset_public_key,
+                LightweightSignature::default(),
+                LightweightCovenant::default(),
+                encrypted_data,
+                MicroMinotari::from(0u64),
+            );
+
+            outputs.push(output);
+        }
+
+        Ok(outputs)
+    }
+
+    /// Convert simplified inputs structure to TransactionInput objects
+    #[cfg(feature = "http")]
+    fn convert_simplified_inputs_to_lightweight(
+        &self,
+        inputs: &Option<Vec<Vec<u8>>>,
+    ) -> Result<Vec<TransactionInput>, String> {
+        use crate::data_structures::transaction_input::{
+            LightweightExecutionStack, TransactionInput,
+        };
+
+        let mut transaction_inputs = Vec::new();
+
+        if let Some(input_hashes) = inputs {
+            for input_hash in input_hashes {
+                // Validate output hash length
+                if input_hash.len() != 32 {
+                    return Err(format!(
+                        "Invalid output hash length: expected 32 bytes, got {}",
+                        input_hash.len()
+                    ));
+                }
+
+                let mut output_hash = [0u8; 32];
+                output_hash.copy_from_slice(input_hash);
+
+                // Create minimal TransactionInput with the output hash
+                let input = TransactionInput {
+                    version: 1,
+                    features: 0,
+                    commitment: [0u8; 32], // Not provided in simplified structure
+                    script_signature: [0u8; 64],
+                    sender_offset_public_key: CompressedPublicKey::default(),
+                    covenant: Vec::new(),
+                    input_data: LightweightExecutionStack::new(),
+                    output_hash,
+                    output_features: 0,
+                    output_metadata_signature: [0u8; 64],
+                    maturity: 0,
+                    value: MicroMinotari::from(0u64),
+                };
+
+                transaction_inputs.push(input);
+            }
+        }
+
+        Ok(transaction_inputs)
     }
 
     /// Update the scanner configuration

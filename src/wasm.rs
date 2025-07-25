@@ -17,6 +17,7 @@ use crate::{
     wallet::Wallet,
 };
 use serde::{Deserialize, Serialize};
+use serde_json;
 use std::time::Duration;
 use wasm_bindgen::prelude::*;
 use web_sys::console;
@@ -1554,6 +1555,124 @@ pub fn wasm_create_wallet_from_seed_phrase(seed_phrase: &str) -> Result<JsValue,
 
     serde_wasm_bindgen::to_value(&wallet_info)
         .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+}
+
+/// Create a WASM scanner from view key or seed phrase (legacy compatibility)
+#[wasm_bindgen]
+pub fn create_wasm_scanner(scanner_data: &str) -> Result<JsValue, JsValue> {
+    let wallet_source = if scanner_data.split_whitespace().count() > 1 {
+        // Looks like a seed phrase (multiple words)
+        WalletSource::SeedPhrase {
+            phrase: scanner_data.to_string(),
+            passphrase: None,
+        }
+    } else {
+        // Assume it's a view key (single hex string)
+        WalletSource::ViewKey {
+            view_key_hex: scanner_data.to_string(),
+            birthday: None,
+        }
+    };
+
+    // Create a basic scan configuration with the wallet source
+    let scan_config = ScanConfiguration {
+        wallet_source: Some(wallet_source),
+        start_height: 0,
+        end_height: None,
+        specific_blocks: None,
+        batch_size: 10,
+        extraction_config: crate::extraction::ExtractionConfig::default(),
+        max_addresses_per_account: 1000,
+        output_format: NativeOutputFormat::Json,
+        progress_frequency: 1,
+        request_timeout: Duration::from_secs(30),
+        scan_stealth_addresses: true,
+        scan_imported_keys: true,
+        quiet: false,
+    };
+
+    let scanner_info = serde_json::json!({
+        "created": true,
+        "wallet_source_type": match scan_config.wallet_source {
+            Some(WalletSource::SeedPhrase { .. }) => "seed_phrase",
+            Some(WalletSource::ViewKey { .. }) => "view_key",
+            _ => "unknown"
+        }
+    });
+
+    serde_wasm_bindgen::to_value(&scanner_info)
+        .map_err(|e| JsValue::from_str(&format!("Failed to create scanner: {}", e)))
+}
+
+/// Process HTTP blocks using scanner engine (legacy compatibility)
+#[wasm_bindgen]
+pub fn process_http_blocks(_scanner: &JsValue, _http_response_json: &str) -> String {
+    // For now, create a temporary scanner engine to process the blocks
+    // In a real implementation, we'd maintain the scanner state
+    let _wallet_source = WalletSource::ViewKey {
+        view_key_hex: "9d84cc4795b509dadae90bd68b42f7d630a6a3d56281c0b5dd1c0ed36390e70a"
+            .to_string(),
+        birthday: None,
+    };
+
+    let _scan_config = ScanConfiguration {
+        wallet_source: Some(_wallet_source),
+        start_height: 0,
+        end_height: None,
+        specific_blocks: None,
+        batch_size: 10,
+        extraction_config: crate::extraction::ExtractionConfig::default(),
+        max_addresses_per_account: 1000,
+        output_format: NativeOutputFormat::Json,
+        progress_frequency: 1,
+        request_timeout: Duration::from_secs(30),
+        scan_stealth_addresses: true,
+        scan_imported_keys: true,
+        quiet: false,
+    };
+
+    // For now, simulate the process since we can't easily create an async HTTP scanner in WASM
+    // This is a simplified implementation for compatibility
+    let error_result = serde_json::json!({
+        "success": false,
+        "error": "WASM HTTP block processing not yet implemented - use native scanner",
+        "total_outputs": 0,
+        "total_spent": 0,
+        "total_value": 0,
+        "current_balance": 0,
+        "blocks_processed": 0,
+        "transactions": []
+    });
+    error_result.to_string()
+}
+
+/// Get scanner statistics (legacy compatibility)
+#[wasm_bindgen]
+pub fn get_scanner_stats(_scanner: &JsValue) -> String {
+    // For now, return empty stats
+    // In a real implementation, we'd maintain the scanner state and return actual stats
+    let stats = serde_json::json!({
+        "total_outputs": 0,
+        "total_spent": 0,
+        "total_value": 0,
+        "total_spent_value": 0,
+        "current_balance": 0,
+        "total_transactions": 0,
+        "inbound_transactions": 0,
+        "outbound_transactions": 0
+    });
+    stats.to_string()
+}
+
+/// Cleanup scanner transactions (legacy compatibility)
+#[wasm_bindgen]
+pub fn cleanup_scanner_transactions(_scanner: &JsValue, max_transactions: usize) {
+    // For now, this is a no-op
+    // In a real implementation, we'd clean up the scanner state
+    console_log!(
+        "Scanner transaction cleanup requested for {} max transactions",
+        max_transactions
+    );
 }
 
 /// Set panic hook for better error messages in WASM

@@ -1098,6 +1098,153 @@ impl GenericScanningLogic {
         Ok(None)
     }
 
+    /// HTTP-specific wallet output scanning that mimics the main branch's working approach
+    /// This handles HTTP block data with the specific decoding logic that was working
+    pub fn scan_with_http_decoding(
+        output: &LightweightTransactionOutput,
+        extraction_config: &ExtractionConfig,
+    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+        // Get the private key from extraction config
+        let private_key = match &extraction_config.private_key {
+            Some(key) => key,
+            None => return Ok(None), // Can't decode without private key
+        };
+
+        // Debug the specific commitment we're looking for (optional - keep for targeted debugging)
+        let commitment_hex = hex::encode(output.commitment().as_bytes());
+        let is_target_commitment =
+            commitment_hex == "dc38513b5a54b30a693479cc7018a99831249fcde21a3dcf490be936b7271a6d";
+
+        // Always log for WASM since console.log might work differently
+        #[cfg(target_arch = "wasm32")]
+        {
+            if is_target_commitment {
+                use web_sys::console;
+                console::log_1(
+                    &format!(
+                        "🎯 HTTP DECODING: Processing target commitment {}",
+                        commitment_hex
+                    )
+                    .into(),
+                );
+                console::log_1(
+                    &format!("   Private key: {}", hex::encode(private_key.as_bytes())).into(),
+                );
+                console::log_1(
+                    &format!(
+                        "   Encrypted data length: {}",
+                        output.encrypted_data().as_bytes().len()
+                    )
+                    .into(),
+                );
+                console::log_1(
+                    &format!(
+                        "   Sender offset public key: {}",
+                        hex::encode(output.sender_offset_public_key().as_bytes())
+                    )
+                    .into(),
+                );
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if is_target_commitment {
+                eprintln!(
+                    "🎯 HTTP DECODING: Processing target commitment {}",
+                    commitment_hex
+                );
+                eprintln!("   Private key: {}", hex::encode(private_key.as_bytes()));
+                eprintln!(
+                    "   Encrypted data length: {}",
+                    output.encrypted_data().as_bytes().len()
+                );
+                eprintln!(
+                    "   Sender offset public key: {}",
+                    hex::encode(output.sender_offset_public_key().as_bytes())
+                );
+            }
+        }
+
+        // HTTP-specific decoding approach that mimics main branch scanner.html logic
+        // Try direct encrypted data decryption using the private key as encryption key
+        match crate::data_structures::encrypted_data::EncryptedData::decrypt_data(
+            private_key,
+            output.commitment(),
+            output.encrypted_data(),
+        ) {
+            Ok((value, _mask, payment_id)) => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    use web_sys::console;
+                    console::log_1(
+                        &format!(
+                            "✅ HTTP DECODING: Successfully decrypted! Value: {}, Payment ID: {:?}",
+                            value.as_u64(),
+                            payment_id
+                        )
+                        .into(),
+                    );
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    eprintln!(
+                        "✅ HTTP DECODING: Successfully decrypted! Value: {}, Payment ID: {:?}",
+                        value.as_u64(),
+                        payment_id
+                    );
+                }
+
+                // Create wallet output using the decrypted data
+                let wallet_output =
+                    crate::data_structures::wallet_output::LightweightWalletOutput::new(
+                        output.version(),
+                        value,
+                        crate::data_structures::wallet_output::LightweightKeyId::Zero,
+                        output.features().clone(),
+                        output.script().clone(),
+                        crate::data_structures::wallet_output::LightweightExecutionStack::default(),
+                        crate::data_structures::wallet_output::LightweightKeyId::Zero,
+                        output.sender_offset_public_key().clone(),
+                        output.metadata_signature().clone(),
+                        0, // maturity
+                        output.covenant().clone(),
+                        output.encrypted_data().clone(),
+                        output.minimum_value_promise(),
+                        output.proof().cloned(),
+                        payment_id,
+                    );
+
+                return Ok(Some(wallet_output));
+            }
+            Err(e) => {
+                // If this is our target commitment, log the failure details
+                if is_target_commitment {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        use web_sys::console;
+                        console::log_1(
+                            &format!(
+                                "❌ HTTP DECODING: Failed to decrypt target commitment: {}",
+                                e
+                            )
+                            .into(),
+                        );
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        eprintln!(
+                            "❌ HTTP DECODING: Failed to decrypt target commitment: {}",
+                            e
+                        );
+                    }
+                }
+                // Continue to other methods - HTTP decoding failed
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Generic multi-strategy wallet output scanning
     /// This provides a unified scanning approach that both GRPC and HTTP scanners can use
     pub fn scan_output_for_wallet(
@@ -1122,6 +1269,22 @@ impl GenericScanningLogic {
                 "DEBUG: GenericScanningLogic scanning output commitment: {}",
                 hex::encode(output.commitment().as_bytes())
             );
+        }
+
+        // Strategy 0: HTTP-specific decoding (try this first for HTTP-sourced data)
+        if let Some(wallet_output) = Self::scan_with_http_decoding(output, extraction_config)? {
+            #[cfg(target_arch = "wasm32")]
+            {
+                use web_sys::console;
+                console::log_1(&format!("DEBUG: GenericScanningLogic found wallet output via HTTP decoding, value: {:?}", 
+                    wallet_output.value()).into());
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                eprintln!("DEBUG: GenericScanningLogic found wallet output via HTTP decoding, value: {:?}", 
+                    wallet_output.value());
+            }
+            return Ok(Some(wallet_output));
         }
 
         // Strategy 1: Regular recoverable outputs (encrypted data decryption)

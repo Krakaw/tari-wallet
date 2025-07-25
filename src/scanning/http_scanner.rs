@@ -2227,7 +2227,7 @@ mod http_scanner_utxo_tests {
         println!("Target commitment: {}", target_commitment);
 
         // Create extraction config
-        let extraction_config = crate::extraction::ExtractionConfig::with_private_key(view_key);
+        let _extraction_config = crate::extraction::ExtractionConfig::with_private_key(view_key);
 
         // This test will need real block data - for now, just document what we found
         println!("🔍 FINDING: HTTP scanner processes commitment {} but fails to detect it as wallet output", target_commitment);
