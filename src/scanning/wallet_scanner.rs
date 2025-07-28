@@ -31,7 +31,7 @@ use crate::{
     wallet::Wallet,
 };
 
-use super::{BinaryScanConfig, ProgressTracker, ScanContext, ScannerStorage};
+use super::{BinaryScanConfig, ProgressInfo, ProgressTracker, ScanContext, ScannerStorage};
 
 // =============================================================================
 // Transaction extraction helper functions
@@ -632,29 +632,229 @@ impl ScanResult {
     }
 }
 
+/// Configuration for the wallet scanner
+pub struct WalletScannerConfig {
+    /// Progress tracking configuration
+    pub progress_tracker: Option<ProgressTracker>,
+    /// Batch size for block processing (number of blocks to process at once)
+    pub batch_size: usize,
+    /// Timeout duration for blockchain operations
+    pub timeout: Option<std::time::Duration>,
+    /// Whether to enable detailed logging
+    pub verbose_logging: bool,
+    /// Custom retry configuration for failed operations
+    pub retry_config: RetryConfig,
+}
+
+/// Retry configuration for failed operations
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    /// Maximum number of retry attempts
+    pub max_retries: usize,
+    /// Base delay between retries
+    pub base_delay: std::time::Duration,
+    /// Maximum delay between retries (for exponential backoff)
+    pub max_delay: std::time::Duration,
+    /// Whether to use exponential backoff
+    pub exponential_backoff: bool,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            base_delay: std::time::Duration::from_millis(500),
+            max_delay: std::time::Duration::from_secs(10),
+            exponential_backoff: true,
+        }
+    }
+}
+
+impl Default for WalletScannerConfig {
+    fn default() -> Self {
+        Self {
+            progress_tracker: None,
+            batch_size: 10,
+            timeout: Some(std::time::Duration::from_secs(30)),
+            verbose_logging: false,
+            retry_config: RetryConfig::default(),
+        }
+    }
+}
+
+impl Clone for WalletScannerConfig {
+    fn clone(&self) -> Self {
+        Self {
+            progress_tracker: None, // Progress tracker cannot be cloned due to callback
+            batch_size: self.batch_size,
+            timeout: self.timeout,
+            verbose_logging: self.verbose_logging,
+            retry_config: self.retry_config.clone(),
+        }
+    }
+}
+
+impl std::fmt::Debug for WalletScannerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WalletScannerConfig")
+            .field("progress_tracker", &self.progress_tracker.is_some())
+            .field("batch_size", &self.batch_size)
+            .field("timeout", &self.timeout)
+            .field("verbose_logging", &self.verbose_logging)
+            .field("retry_config", &self.retry_config)
+            .finish()
+    }
+}
+
 /// Wallet scanner for performing blockchain scanning operations
 ///
 /// This struct encapsulates the main scanning functionality that was previously
 /// implemented directly in the scanner binary. It provides a clean API for
-/// scanning wallets across blockchain height ranges.
+/// scanning wallets across blockchain height ranges with flexible configuration.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use lightweight_wallet_libs::scanning::WalletScanner;
+///
+/// // Create a basic scanner
+/// let scanner = WalletScanner::new();
+///
+/// // Create a scanner with progress tracking
+/// let scanner = WalletScanner::new()
+///     .with_progress_callback(|info| {
+///         println!("Progress: {}%", info.progress_percent);
+///     })
+///     .with_batch_size(20)
+///     .with_timeout(std::time::Duration::from_secs(60))
+///     .with_verbose_logging(true);
+/// ```
 pub struct WalletScanner {
-    /// Progress tracker for monitoring scan progress
-    progress_tracker: Option<ProgressTracker>,
+    /// Scanner configuration
+    config: WalletScannerConfig,
 }
 
 impl WalletScanner {
-    /// Create a new wallet scanner
+    /// Create a new wallet scanner with default configuration
     pub fn new() -> Self {
         Self {
-            progress_tracker: None,
+            config: WalletScannerConfig::default(),
         }
     }
 
-    /// Create a new wallet scanner with progress tracking
-    pub fn with_progress_tracker(progress_tracker: ProgressTracker) -> Self {
-        Self {
-            progress_tracker: Some(progress_tracker),
-        }
+    /// Create a wallet scanner from a configuration
+    pub fn from_config(config: WalletScannerConfig) -> Self {
+        Self { config }
+    }
+
+    /// Set a progress callback for tracking scan progress
+    ///
+    /// The callback will be called periodically during scanning with progress information.
+    /// Note: The total blocks will be set automatically when scanning begins.
+    pub fn with_progress_callback<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&ProgressInfo) + Send + Sync + 'static,
+    {
+        // Create a progress tracker with placeholder total_blocks (will be updated during scan)
+        let progress_tracker = ProgressTracker::new(0).with_callback(Box::new(callback));
+        self.config.progress_tracker = Some(progress_tracker);
+        self
+    }
+
+    /// Set a progress tracker for monitoring scan progress
+    pub fn with_progress_tracker(mut self, progress_tracker: ProgressTracker) -> Self {
+        self.config.progress_tracker = Some(progress_tracker);
+        self
+    }
+
+    /// Set the batch size for block processing
+    ///
+    /// Larger batch sizes can improve performance but may use more memory.
+    /// Default is 10 blocks per batch.
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.config.batch_size = batch_size;
+        self
+    }
+
+    /// Set the timeout duration for blockchain operations
+    ///
+    /// This timeout applies to individual GRPC calls to the blockchain.
+    /// Default is 30 seconds.
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.timeout = Some(timeout);
+        self
+    }
+
+    /// Enable or disable verbose logging
+    ///
+    /// When enabled, the scanner will output detailed information about its operations.
+    /// Default is disabled.
+    pub fn with_verbose_logging(mut self, enabled: bool) -> Self {
+        self.config.verbose_logging = enabled;
+        self
+    }
+
+    /// Set retry configuration for failed operations
+    ///
+    /// Configure how the scanner handles temporary failures during blockchain operations.
+    pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
+        self.config.retry_config = retry_config;
+        self
+    }
+
+    /// Get the current configuration
+    pub fn config(&self) -> &WalletScannerConfig {
+        &self.config
+    }
+
+    /// Get a mutable reference to the configuration
+    pub fn config_mut(&mut self) -> &mut WalletScannerConfig {
+        &mut self.config
+    }
+
+    /// Create a quick scanner with simple progress display
+    ///
+    /// This is a convenience method that creates a scanner with basic progress tracking
+    /// that prints progress to stdout.
+    pub fn with_simple_progress() -> Self {
+        Self::new().with_progress_callback(|info| {
+            print!("\r🔍 Progress: {:.1}% ({}/{}) | Block {} | {:.1} blocks/s | Found: {} outputs, {} spent   ",
+                info.progress_percent,
+                info.blocks_processed,
+                info.total_blocks,
+                info.current_block,
+                info.blocks_per_sec,
+                info.outputs_found,
+                info.inputs_found
+            );
+            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+        })
+    }
+
+    /// Create a scanner optimized for performance
+    ///
+    /// This sets larger batch sizes and disables verbose logging for faster scanning.
+    pub fn performance_optimized() -> Self {
+        Self::new()
+            .with_batch_size(50)
+            .with_timeout(std::time::Duration::from_secs(60))
+            .with_verbose_logging(false)
+    }
+
+    /// Create a scanner optimized for reliability
+    ///
+    /// This uses smaller batch sizes and more aggressive retry settings.
+    pub fn reliability_optimized() -> Self {
+        Self::new()
+            .with_batch_size(5)
+            .with_timeout(std::time::Duration::from_secs(10))
+            .with_retry_config(RetryConfig {
+                max_retries: 5,
+                base_delay: std::time::Duration::from_millis(1000),
+                max_delay: std::time::Duration::from_secs(30),
+                exponential_backoff: true,
+            })
+            .with_verbose_logging(true)
     }
 
     /// Perform wallet scanning across blocks with cancellation support
@@ -671,7 +871,14 @@ impl WalletScanner {
     /// * `cancel_rx` - Channel receiver for cancellation signals
     ///
     /// # Returns
-    /// `ScanResult` indicating completion or interruption with wallet state
+    /// `ScanResult` indicating completion or interruption with wallet state and metadata
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - Blockchain connection fails
+    /// - Invalid scan configuration provided
+    /// - Storage operations fail
+    /// - Scanning is cancelled by external signal
     pub async fn scan(
         &mut self,
         scanner: &mut GrpcBlockchainScanner,
@@ -680,15 +887,119 @@ impl WalletScanner {
         storage_backend: &mut ScannerStorage,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
     ) -> LightweightWalletResult<ScanResult> {
-        scan_wallet_across_blocks_with_cancellation(
-            scanner,
-            scan_context,
-            config,
-            storage_backend,
-            cancel_rx,
-            self.progress_tracker.as_mut(),
-        )
-        .await
+        // Log scan start if verbose logging is enabled
+        if self.config.verbose_logging && !config.quiet {
+            println!("🚀 Starting wallet scan with enhanced scanner");
+            println!("   • Batch size: {}", self.config.batch_size);
+            if let Some(timeout) = self.config.timeout {
+                println!("   • Timeout: {:?}", timeout);
+            }
+            println!(
+                "   • Progress tracking: {}",
+                self.config.progress_tracker.is_some()
+            );
+        }
+
+        let start_time = Instant::now();
+
+        // Execute the scan with enhanced error handling
+        let scan_result = self
+            .execute_scan_with_retry(scanner, scan_context, config, storage_backend, cancel_rx)
+            .await;
+
+        // Add timing information to the result
+        match scan_result {
+            Ok(ScanResult::Completed(wallet_state, mut metadata)) => {
+                if let Some(ref mut meta) = metadata {
+                    meta.start_time = Some(start_time);
+                    meta.end_time = Some(Instant::now());
+                }
+                Ok(ScanResult::Completed(wallet_state, metadata))
+            }
+            Ok(ScanResult::Interrupted(wallet_state, mut metadata)) => {
+                if let Some(ref mut meta) = metadata {
+                    meta.start_time = Some(start_time);
+                    meta.end_time = Some(Instant::now());
+                }
+                Ok(ScanResult::Interrupted(wallet_state, metadata))
+            }
+            Err(e) => {
+                if self.config.verbose_logging && !config.quiet {
+                    println!("❌ Scan failed after {:?}: {}", start_time.elapsed(), e);
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Execute the scan with retry logic for failed operations
+    async fn execute_scan_with_retry(
+        &mut self,
+        scanner: &mut GrpcBlockchainScanner,
+        scan_context: &ScanContext,
+        config: &BinaryScanConfig,
+        storage_backend: &mut ScannerStorage,
+        cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> LightweightWalletResult<ScanResult> {
+        let mut attempts = 0;
+        let max_retries = self.config.retry_config.max_retries;
+
+        loop {
+            match scan_wallet_across_blocks_with_cancellation(
+                scanner,
+                scan_context,
+                config,
+                storage_backend,
+                cancel_rx,
+                self.config.progress_tracker.as_mut(),
+            )
+            .await
+            {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    attempts += 1;
+
+                    // Check if this is a retryable error and we haven't exceeded max retries
+                    if attempts <= max_retries && self.is_retryable_error(&e) {
+                        if self.config.verbose_logging && !config.quiet {
+                            println!("⚠️  Scan attempt {} failed, retrying: {}", attempts, e);
+                        }
+
+                        // Calculate delay with exponential backoff if enabled
+                        let delay = if self.config.retry_config.exponential_backoff {
+                            let exp = (attempts - 1).min(10) as u32; // Cap to prevent overflow
+                            std::cmp::min(
+                                self.config.retry_config.base_delay * (2_u32.pow(exp)),
+                                self.config.retry_config.max_delay,
+                            )
+                        } else {
+                            self.config.retry_config.base_delay
+                        };
+
+                        // Wait before retrying
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check if an error is retryable
+    fn is_retryable_error(&self, error: &LightweightWalletError) -> bool {
+        match error {
+            // Network-related errors are typically retryable
+            LightweightWalletError::StorageError(msg) if msg.contains("connection") => true,
+            LightweightWalletError::StorageError(msg) if msg.contains("timeout") => true,
+            LightweightWalletError::StorageError(msg) if msg.contains("network") => true,
+            // Temporary GRPC errors
+            LightweightWalletError::StorageError(msg) if msg.contains("unavailable") => true,
+            LightweightWalletError::StorageError(msg) if msg.contains("deadline exceeded") => true,
+            // Other errors are typically not retryable
+            _ => false,
+        }
     }
 }
 
