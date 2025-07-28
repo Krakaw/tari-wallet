@@ -8,7 +8,7 @@
 
 use crate::{
     data_structures::types::PrivateKey,
-    errors::{LightweightWalletResult, KeyManagementError},
+    errors::{KeyManagementError, LightweightWalletResult},
     key_management::{
         key_derivation,
         seed_phrase::{mnemonic_to_bytes, CipherSeed},

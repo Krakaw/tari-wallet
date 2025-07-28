@@ -119,7 +119,10 @@ use lightweight_wallet_libs::{
         wallet_transaction::WalletState,
     },
     errors::LightweightWalletResult,
-    scanning::{BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder, BinaryScanConfig, OutputFormat, ScanContext},
+    scanning::{
+        BinaryScanConfig, BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder,
+        OutputFormat, ScanContext,
+    },
     wallet::Wallet,
     KeyManagementError, LightweightWalletError,
 };
@@ -1032,7 +1035,10 @@ impl ScannerStorage {
     }
 
     /// Display storage information
-    pub async fn display_storage_info(&self, config: &BinaryScanConfig) -> LightweightWalletResult<()> {
+    pub async fn display_storage_info(
+        &self,
+        config: &BinaryScanConfig,
+    ) -> LightweightWalletResult<()> {
         if config.quiet {
             return Ok(());
         }

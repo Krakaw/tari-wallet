@@ -42,13 +42,13 @@ Based on the PRD requirements, this task list guides the implementation of extra
   - [x] 1.5 Analyze current scanner dependencies and create dependency mapping for library vs binary components
   - [x] 1.6 Verify feature flag compilation works with new module structure
 
-- [ ] 2.0 Extract and migrate configuration components
+- [x] 2.0 Extract and migrate configuration components
   - [x] 2.1 Move `ScanConfig` struct from `src/bin/scanner.rs` to `src/scanning/scan_config.rs`
   - [x] 2.2 Move `OutputFormat` enum and its `from_str` implementation to `src/scanning/scan_config.rs`
   - [x] 2.3 Move `ScanContext` struct (containing view key and entropy) to `src/scanning/scan_config.rs`
   - [x] 2.4 Add necessary imports and make all structures public with proper documentation
   - [x] 2.5 Update `src/scanning/mod.rs` to re-export configuration types
-  - [ ] 2.6 Update imports in `src/bin/scanner.rs` to use library configuration types
+  - [x] 2.6 Update imports in `src/bin/scanner.rs` to use library configuration types
 
 - [ ] 3.0 Extract storage management and background writer systems
   - [ ] 3.1 Move `BackgroundWriterCommand` enum to `src/scanning/background_writer.rs` with proper feature flags
