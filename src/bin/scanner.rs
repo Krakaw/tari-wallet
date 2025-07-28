@@ -374,6 +374,87 @@ fn create_scanner_configs(
     Ok((scan_config, wallet_scanner_config))
 }
 
+/// Handle interactive wallet selection when multiple wallets exist in database
+#[cfg(feature = "storage")]
+async fn handle_interactive_wallet_selection(
+    storage_backend: &ScannerStorage,
+    args: &CliArgs,
+) -> LightweightWalletResult<u32> {
+    let wallets = storage_backend.get_wallet_selection_info().await?;
+
+    if wallets.is_empty() {
+        return Err(LightweightWalletError::ResourceNotFound(
+            "No wallets found in database".to_string(),
+        ));
+    }
+
+    // Display wallet options
+    if !args.quiet {
+        println!();
+        for (index, wallet) in wallets.iter().enumerate() {
+            let wallet_type = if wallet.seed_phrase.is_some() {
+                "Full wallet"
+            } else {
+                "View-only"
+            };
+            let last_scanned = if let Some(block) = wallet.latest_scanned_block {
+                if block > 0 {
+                    format!("(last scanned: block {})", block)
+                } else {
+                    "(never scanned)".to_string()
+                }
+            } else {
+                "(never scanned)".to_string()
+            };
+
+            println!(
+                "  {}: {} [{}] {}",
+                index + 1,
+                wallet.name,
+                wallet_type,
+                last_scanned
+            );
+        }
+        println!();
+        print!("Enter wallet number (1-{}): ", wallets.len());
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+
+        // Read user input
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).map_err(|e| {
+            LightweightWalletError::StorageError(format!("Failed to read user input: {}", e))
+        })?;
+
+        let choice: usize =
+            input
+                .trim()
+                .parse()
+                .map_err(|_| LightweightWalletError::InvalidArgument {
+                    argument: "wallet_selection".to_string(),
+                    value: input.trim().to_string(),
+                    message: "Invalid wallet number".to_string(),
+                })?;
+
+        if choice == 0 || choice > wallets.len() {
+            return Err(LightweightWalletError::InvalidArgument {
+                argument: "wallet_selection".to_string(),
+                value: choice.to_string(),
+                message: format!("Wallet number must be between 1 and {}", wallets.len()),
+            });
+        }
+
+        let selected_wallet = &wallets[choice - 1];
+        if !args.quiet {
+            println!("✅ Selected wallet: {}", selected_wallet.name);
+        }
+
+        Ok(selected_wallet.id.expect("Wallet should have an ID"))
+    } else {
+        // In quiet mode, default to the first wallet
+        Ok(wallets[0].id.expect("Wallet should have an ID"))
+    }
+}
+
 // Main scanner binary implementation
 
 #[cfg(feature = "grpc")]
@@ -489,9 +570,30 @@ async fn main() -> LightweightWalletResult<()> {
         (None, None)
     } else {
         // No keys provided - use database storage
-        let loaded_context = storage_backend
+        let loaded_context = match storage_backend
             .handle_wallet_operations(&temp_config, scan_context.as_ref())
-            .await?;
+            .await
+        {
+            Ok(context) => context,
+            Err(LightweightWalletError::InvalidArgument {
+                argument, value, ..
+            }) if argument == "wallet_selection" && value == "multiple_wallets" => {
+                // Handle interactive wallet selection
+                if !args.quiet {
+                    println!("📝 Multiple wallets found in database. Please select one:");
+                }
+
+                let wallet_id =
+                    handle_interactive_wallet_selection(&storage_backend, &args).await?;
+                storage_backend.set_wallet_id(Some(wallet_id));
+
+                // Now load the scan context
+                storage_backend
+                    .load_scan_context_from_wallet(args.quiet)
+                    .await?
+            }
+            Err(e) => return Err(e),
+        };
 
         // Get wallet birthday if we have a wallet
         let wallet_birthday = if args.from_block.is_none() {

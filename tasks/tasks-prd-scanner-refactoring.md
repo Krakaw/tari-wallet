@@ -23,13 +23,14 @@ Based on the PRD requirements, this task list guides the implementation of extra
 
 ### Notes
 
-- All library components must maintain feature flag compatibility (`grpc`, `storage`, `wasm32`)
+- All library components must maintain feature flag compatibility (`grpc`, `storage`, `wasm`)
 - Use `cargo test --features grpc-storage` for comprehensive testing of scanning functionality
 - Background writer system requires async/await patterns throughout
 - Sensitive data (private keys, seed phrases) must be properly zeroized
 - Progress tracking should be optional and configurable
 - Always run `cargo fmt --all` after each step.
 - Always run `cargo check --features grpc-storage` after each step
+**Note** - There is an active grpc node running at localhost:18142 and you can use view-key 9d84cc4795b509dadae90bd68b42f7d630a6a3d56281c0b5dd1c0ed36390e70a to test
 - **NB** NEVER add TODO placeholders, either add the code, or update the task list to add the code.
 
 ## Tasks
@@ -78,7 +79,7 @@ Based on the PRD requirements, this task list guides the implementation of extra
   - [x] 5.3 Convert CLI args to `ScanConfig` and integrate with `WalletScanner::new()`
   - [x] 5.4 Replace removed functionality with library API calls, maintaining all CLI features
   - [x] 5.5 Preserve user experience: identical progress display, error messages, and output formats
-  - [ ] 5.6 Handle wallet selection prompts in binary while using library methods for data operations
+  - [x] 5.6 Handle wallet selection prompts in binary while using library methods for data operations
   - [ ] 5.7 Ensure resume functionality and all CLI arguments work identically to original implementation
   - [ ] 5.8 Verify binary is reduced to <300 lines while maintaining full functionality
 
