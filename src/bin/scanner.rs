@@ -228,6 +228,10 @@ pub struct CliArgs {
 }
 
 // CLI-focused display helpers using library components
+//
+// These functions preserve the original user experience while delegating
+// business logic to library storage methods. Critical for maintaining
+// identical progress display, error messages, and output formats.
 
 /// Display storage configuration and existing data using library storage methods
 #[cfg(feature = "storage")]
@@ -302,6 +306,9 @@ async fn display_completion_info(
 }
 
 /// CLI-focused progress display using library ProgressInfo type
+///
+/// Maintains identical user experience with real-time updates and consistent formatting.
+/// Critical for user experience: shows progress percentage, block info, and scan results.
 #[cfg(feature = "grpc")]
 #[allow(dead_code)]
 fn display_progress(progress_info: &ProgressInfo) {
