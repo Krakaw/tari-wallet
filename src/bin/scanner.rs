@@ -116,10 +116,11 @@ use lightweight_wallet_libs::{
         create_wallet_from_view_key,
         // Configuration types
         BinaryScanConfig,
-
         // Scanner types
         BlockchainScanner,
         GrpcScannerBuilder,
+        OutputFormat,
+
         // Storage and progress types
         ProgressInfo,
         ScannerStorage,
@@ -226,7 +227,9 @@ pub struct CliArgs {
     wallet_name: Option<String>,
 }
 
-// Display helper functions for the scanner binary
+// CLI-focused display helpers using library components
+
+/// Display storage configuration and existing data using library storage methods
 #[cfg(feature = "storage")]
 async fn display_storage_info(
     storage_backend: &ScannerStorage,
@@ -236,6 +239,7 @@ async fn display_storage_info(
         return Ok(());
     }
 
+    // Display storage mode
     if storage_backend.is_memory_only {
         println!("💭 Using in-memory storage (transactions will not be persisted)");
         return Ok(());
@@ -247,7 +251,7 @@ async fn display_storage_info(
         println!("💾 Using in-memory database");
     }
 
-    // Show existing data if any
+    // Use library method to get statistics and display existing data
     let stats = storage_backend.get_statistics().await?;
     if stats.total_transactions > 0 {
         println!(
@@ -262,6 +266,7 @@ async fn display_storage_info(
     Ok(())
 }
 
+/// Display completion information using library storage methods
 #[cfg(feature = "storage")]
 async fn display_completion_info(
     storage_backend: &ScannerStorage,
@@ -276,6 +281,7 @@ async fn display_completion_info(
         return Ok(());
     }
 
+    // Use library methods to get storage statistics and UTXO counts
     let stats = storage_backend.get_statistics().await?;
     println!(
         "💾 Database updated: {} total transactions stored",
@@ -286,7 +292,7 @@ async fn display_completion_info(
         format_number(stats.highest_block.unwrap_or(0) + 1)
     );
 
-    // Also show UTXO output count if available
+    // Use library method to get UTXO count
     let utxo_count = storage_backend.get_unspent_outputs_count().await?;
     if utxo_count > 0 {
         println!("🔗 UTXO outputs stored: {}", format_number(utxo_count));
@@ -295,7 +301,7 @@ async fn display_completion_info(
     Ok(())
 }
 
-// Progress display function for the scanner binary
+/// CLI-focused progress display using library ProgressInfo type
 #[cfg(feature = "grpc")]
 #[allow(dead_code)]
 fn display_progress(progress_info: &ProgressInfo) {
@@ -317,7 +323,7 @@ fn create_scan_config(
     from_block: u64,
     to_block: u64,
 ) -> LightweightWalletResult<BinaryScanConfig> {
-    let output_format = args
+    let output_format: OutputFormat = args
         .format
         .parse()
         .map_err(|e: String| KeyManagementError::key_derivation_failed(&e))?;
@@ -588,30 +594,9 @@ async fn main() -> LightweightWalletResult<()> {
                 std::process::exit(130); // Standard exit code for SIGINT
             }
 
-            // Display storage completion info and verify data integrity
+            // Display storage completion info
             if !args.quiet {
                 display_completion_info(&storage_backend, &config).await?;
-
-                // Verify that transaction flow data was persisted correctly
-                #[cfg(feature = "storage")]
-                if storage_backend.wallet_id.is_some() {
-                    let stats = storage_backend.get_statistics().await?;
-                    // Show the stored values
-                    println!(
-                        "Database total received: {}",
-                        format_number(stats.total_received)
-                    );
-                    println!("Database total spent: {}", format_number(stats.total_spent));
-                    println!("Database balance: {}", format_number(stats.current_balance));
-                    println!(
-                        "Database inbound count: {}",
-                        format_number(stats.inbound_count)
-                    );
-                    println!(
-                        "Database outbound count: {}",
-                        format_number(stats.outbound_count)
-                    );
-                }
             }
         }
         Some(Err(e)) => {
