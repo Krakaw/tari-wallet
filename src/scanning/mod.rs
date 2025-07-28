@@ -68,17 +68,20 @@ pub use grpc_scanner::{GrpcBlockchainScanner, GrpcScannerBuilder};
 pub use http_scanner::{HttpBlockchainScanner, HttpScannerBuilder};
 
 // Re-export scanner refactoring types (for binary refactoring)
-#[cfg(feature = "grpc")]
-pub use scan_config::*;
+// TODO: Uncomment these as types are moved from scanner.rs
+// #[cfg(feature = "grpc")]
+// pub use scan_config::*;
 
 #[cfg(feature = "grpc")]
 pub use wallet_scanner::{BinaryScanResult, BinaryWalletScanner};
 
-#[cfg(all(feature = "grpc", feature = "storage"))]
-pub use storage_manager::ScannerStorage;
+// TODO: Uncomment when ScannerStorage is moved from scanner.rs
+// #[cfg(all(feature = "grpc", feature = "storage"))]
+// pub use storage_manager::ScannerStorage;
 
-#[cfg(feature = "grpc")]
-pub use progress::BinaryProgressTracker;
+// TODO: Uncomment when ProgressTracker is moved from scanner.rs
+// #[cfg(feature = "grpc")]
+// pub use progress::ProgressTracker;
 
 /// Progress callback for scanning operations
 pub type ProgressCallback = Box<dyn Fn(ScanProgress) + Send + Sync>;

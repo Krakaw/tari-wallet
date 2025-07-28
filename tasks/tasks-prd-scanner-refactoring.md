@@ -12,6 +12,7 @@ Based on the PRD requirements, this task list guides the implementation of extra
 - `src/scanning/progress.rs` - Progress tracking utilities and display functions
 - `src/bin/scanner.rs` - Refactored binary containing only CLI parsing and user interaction (~200 lines)
 - `src/lib.rs` - Updated to export the new scanning module
+- `dependency_mapping_analysis.md` - Comprehensive analysis of dependency split between library and binary
 - `src/scanning/tests/mod.rs` - Test module organization for scanning components
 - `src/scanning/tests/test_scan_config.rs` - Unit tests for configuration structures
 - `src/scanning/tests/test_storage_manager.rs` - Unit tests for storage manager functionality
@@ -27,16 +28,19 @@ Based on the PRD requirements, this task list guides the implementation of extra
 - Background writer system requires async/await patterns throughout
 - Sensitive data (private keys, seed phrases) must be properly zeroized
 - Progress tracking should be optional and configurable
+- Always run `cargo fmt --all` after each step.
+- Always run `cargo check --features grpc-storage` after each step
+- **NB** NEVER add TODO placeholders, either add the code, or update the task list to add the code.
 
 ## Tasks
 
-- [ ] 1.0 Set up library module structure and dependencies
+- [x] 1.0 Set up library module structure and dependencies
   - [x] 1.1 Create `src/scanning/` directory structure with all required module files
   - [x] 1.2 Add empty module files: `mod.rs`, `scan_config.rs`, `storage_manager.rs`, `background_writer.rs`, `wallet_scanner.rs`, `progress.rs`
-  - [ ] 1.3 Add basic module declarations to `src/scanning/mod.rs`
-  - [ ] 1.4 Update `src/lib.rs` to include `pub mod scanning;`
-  - [ ] 1.5 Analyze current scanner dependencies and create dependency mapping for library vs binary components
-  - [ ] 1.6 Verify feature flag compilation works with new module structure
+  - [x] 1.3 Add basic module declarations to `src/scanning/mod.rs`
+  - [x] 1.4 Update `src/lib.rs` to include `pub mod scanning;`
+  - [x] 1.5 Analyze current scanner dependencies and create dependency mapping for library vs binary components
+  - [x] 1.6 Verify feature flag compilation works with new module structure
 
 - [ ] 2.0 Extract and migrate configuration components
   - [ ] 2.1 Move `ScanConfig` struct from `src/bin/scanner.rs` to `src/scanning/scan_config.rs`

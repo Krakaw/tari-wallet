@@ -37,5 +37,6 @@
 // - Public API methods (new, scan, with_progress_callback, etc.)
 
 // Placeholder type definitions until actual implementation
-pub struct WalletScanner;
-pub struct ScanResult;
+// TODO: Rename to WalletScanner once refactoring is complete and trait is moved
+pub struct BinaryWalletScanner;
+pub struct BinaryScanResult;
