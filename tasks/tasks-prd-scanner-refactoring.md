@@ -73,7 +73,7 @@ Based on the PRD requirements, this task list guides the implementation of extra
   - [x] 4.9 Ensure all scanning logic maintains async/await compatibility and proper zeroization
 
 - [ ] 5.0 Refactor binary to use library components
-  - [ ] 5.1 Strip `src/bin/scanner.rs` down to CLI-only concerns: clap parsing, user interaction, output formatting
+  - [x] 5.1 Strip `src/bin/scanner.rs` down to CLI-only concerns: clap parsing, user interaction, output formatting
   - [ ] 5.2 Update imports to use library components: `use lightweight_wallet_libs::scanning::*`
   - [ ] 5.3 Convert CLI args to `ScanConfig` and integrate with `WalletScanner::new()`
   - [ ] 5.4 Replace removed functionality with library API calls, maintaining all CLI features

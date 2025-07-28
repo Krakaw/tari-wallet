@@ -118,8 +118,6 @@ use lightweight_wallet_libs::{
 #[cfg(feature = "grpc")]
 use tokio::signal;
 
-// Background writer imports moved to src/scanning/background_writer.rs
-
 /// Enhanced Tari Wallet Scanner CLI
 #[cfg(feature = "grpc")]
 #[derive(Parser)]
@@ -204,15 +202,6 @@ pub struct CliArgs {
     wallet_name: Option<String>,
 }
 
-// BinaryScanConfig moved to src/scanning/scan_config.rs
-
-// OutputFormat moved to src/scanning/scan_config.rs
-
-// BackgroundWriter, BackgroundWriterCommand, and ScannerStorage moved to src/scanning/
-
-// ScannerStorage implementation moved to src/scanning/storage_manager.rs
-// The implementation methods will be moved in tasks 3.5, 3.6, and 3.7
-
 // Display helper functions for the scanner binary
 #[cfg(feature = "storage")]
 async fn display_storage_info(
@@ -282,8 +271,6 @@ async fn display_completion_info(
     Ok(())
 }
 
-// ScanContext moved to src/scanning/scan_config.rs
-
 // Progress display function for the scanner binary
 #[cfg(feature = "grpc")]
 #[allow(dead_code)]
@@ -301,138 +288,32 @@ fn display_progress(progress_info: &ProgressInfo) {
 }
 
 #[cfg(feature = "grpc")]
-pub struct BlockHeightRange {
-    pub from_block: u64,
-    pub to_block: u64,
-    pub block_heights: Option<Vec<u64>>,
-}
-
-#[cfg(feature = "grpc")]
-impl BlockHeightRange {
-    pub fn new(from_block: u64, to_block: u64, block_heights: Option<Vec<u64>>) -> Self {
-        Self {
-            from_block,
-            to_block,
-            block_heights,
-        }
-    }
-
-    pub fn into_scan_config(self, args: &CliArgs) -> LightweightWalletResult<BinaryScanConfig> {
-        let output_format = args
-            .format
-            .parse()
-            .map_err(|e: String| KeyManagementError::key_derivation_failed(&e))?;
-
-        Ok(BinaryScanConfig {
-            from_block: self.from_block,
-            to_block: self.to_block,
-            block_heights: self.block_heights,
-            progress_frequency: args.progress_frequency,
-            quiet: args.quiet,
-            output_format,
-            batch_size: args.batch_size,
-            database_path: Some(args.database.clone()),
-            wallet_name: args.wallet_name.clone(),
-            explicit_from_block: args.from_block,
-            use_database: args.seed_phrase.is_none() && args.view_key.is_none(),
-        })
-    }
-}
-
-/// Handle errors during block scanning (updated for batch processing)
-#[cfg(feature = "grpc")]
-#[allow(dead_code)]
-fn handle_scan_error(
-    error_block_height: u64,
-    remaining_blocks: &[u64],
-    has_specific_blocks: bool,
+fn create_scan_config(
+    args: &CliArgs,
+    from_block: u64,
     to_block: u64,
-) -> bool {
-    // Ask user if they want to continue
-    print!("   Continue scanning remaining blocks? (y/n/s=skip this batch/block): ");
-    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+) -> LightweightWalletResult<BinaryScanConfig> {
+    let output_format = args
+        .format
+        .parse()
+        .map_err(|e: String| KeyManagementError::key_derivation_failed(&e))?;
 
-    let mut input = String::new();
-    if std::io::stdin().read_line(&mut input).is_err() {
-        return false; // Abort on input error
-    }
-    let choice = input.trim().to_lowercase();
-
-    match choice.as_str() {
-        "y" | "yes" => {
-            println!("   ✅ Continuing scan from next batch/block...");
-            true // Continue
-        }
-        "s" | "skip" => {
-            println!("   ⏭️  Skipping problematic batch/block and continuing...");
-            true // Continue (skip this batch/block)
-        }
-        _ => {
-            println!(
-                "   🛑 Scan aborted by user at block {}",
-                format_number(error_block_height)
-            );
-            println!("\n💡 To resume from this point, run:");
-            if has_specific_blocks {
-                let remaining_blocks_str: Vec<String> =
-                    remaining_blocks.iter().map(|b| b.to_string()).collect();
-                if remaining_blocks_str.len() <= 20 {
-                    println!("   cargo run --bin scanner --features grpc-storage -- --seed-phrase \"your seed phrase\" --blocks {}", 
-                        remaining_blocks_str.join(","));
-                } else {
-                    // For large lists, show range instead
-                    let first_block = remaining_blocks.first().unwrap_or(&error_block_height);
-                    let last_block = remaining_blocks.last().unwrap_or(&to_block);
-                    println!("   cargo run --bin scanner --features grpc-storage -- --seed-phrase \"your seed phrase\" --from-block {} --to-block {}", format_number(*first_block), format_number(*last_block));
-                }
-            } else {
-                println!("   cargo run --bin scanner --features grpc-storage -- --seed-phrase \"your seed phrase\" --from-block {} --to-block {}", format_number(error_block_height), format_number(to_block));
-            }
-            false // Abort
-        }
-    }
+    Ok(BinaryScanConfig {
+        from_block,
+        to_block,
+        block_heights: args.blocks.clone(),
+        progress_frequency: args.progress_frequency,
+        quiet: args.quiet,
+        output_format,
+        batch_size: args.batch_size,
+        database_path: Some(args.database.clone()),
+        wallet_name: args.wallet_name.clone(),
+        explicit_from_block: args.from_block,
+        use_database: args.seed_phrase.is_none() && args.view_key.is_none(),
+    })
 }
 
-/// Result type that can indicate if scan was interrupted
-#[cfg(feature = "grpc")]
-
-/// Display scan configuration information
-#[cfg(feature = "grpc")]
-#[allow(dead_code)]
-fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_specific_blocks: bool) {
-    if has_specific_blocks {
-        println!(
-            "🔍 Scanning {} specific blocks: {:?}",
-            format_number(block_heights.len()),
-            if block_heights.len() <= 10 {
-                block_heights
-                    .iter()
-                    .map(|h| format_number(*h))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            } else {
-                format!(
-                    "{}..{} and {} others",
-                    format_number(block_heights[0]),
-                    format_number(block_heights.last().copied().unwrap_or(0)),
-                    format_number(block_heights.len() - 2)
-                )
-            }
-        );
-    } else {
-        let block_range = config.to_block - config.from_block + 1;
-        println!(
-            "🔍 Scanning blocks {} to {} ({} blocks total)...",
-            format_number(config.from_block),
-            format_number(config.to_block),
-            format_number(block_range)
-        );
-    }
-
-    println!();
-}
-
-// display_wallet_activity function moved to src/scanning/wallet_scanner.rs
+// Main scanner binary implementation
 
 #[cfg(feature = "grpc")]
 #[tokio::main]
@@ -524,8 +405,7 @@ async fn main() -> LightweightWalletResult<()> {
     let to_block = args.to_block.unwrap_or(tip_info.best_block_height);
 
     // Create temporary config for storage operations (will be recreated with correct from_block later)
-    let temp_block_height_range = BlockHeightRange::new(0, to_block, args.blocks.clone());
-    let temp_config = temp_block_height_range.into_scan_config(&args)?;
+    let temp_config = create_scan_config(&args, 0, to_block)?;
 
     // Create storage backend - use database when no keys provided, memory when keys provided
     let mut storage_backend = if keys_provided {
@@ -589,8 +469,7 @@ async fn main() -> LightweightWalletResult<()> {
     let from_block = args.from_block.unwrap_or(final_default_from_block);
 
     // Update the config with the correct from_block
-    let block_height_range = BlockHeightRange::new(from_block, to_block, args.blocks.clone());
-    let config = block_height_range.into_scan_config(&args)?;
+    let config = create_scan_config(&args, from_block, to_block)?;
 
     // Start background writer for non-WASM32 architectures (if using database storage)
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
@@ -617,8 +496,19 @@ async fn main() -> LightweightWalletResult<()> {
         let _ = cancel_tx.send(true);
     };
 
-    // Perform the scan with cancellation support using the library's WalletScanner
-    let mut wallet_scanner = WalletScannerStruct::new();
+    // Create wallet scanner with progress callback
+    let quiet = args.quiet;
+    let wallet_scanner = WalletScannerStruct::new()
+        .with_progress_callback(move |progress_info| {
+            if !quiet {
+                display_progress(progress_info);
+            }
+        })
+        .with_batch_size(config.batch_size)
+        .with_verbose_logging(!config.quiet);
+
+    // Perform the scan with cancellation support
+    let mut wallet_scanner = wallet_scanner; // Make it mutable for the scan call
     let scan_result = tokio::select! {
         result = wallet_scanner.scan(&mut scanner, &final_scan_context, &config, &mut storage_backend, &mut cancel_rx) => {
             Some(result)
@@ -708,8 +598,6 @@ async fn main() -> LightweightWalletResult<()> {
 
     Ok(())
 }
-
-// display_json_results and display_summary_results functions moved to src/scanning/wallet_scanner.rs
 
 #[cfg(not(feature = "grpc"))]
 fn main() {
