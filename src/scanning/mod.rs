@@ -77,7 +77,8 @@ pub use scan_config::{BinaryScanConfig, OutputFormat, ScanContext};
 pub use wallet_scanner::{
     create_wallet_from_seed_phrase, create_wallet_from_view_key,
     extract_utxo_outputs_from_wallet_state, BinaryScanResult, BinaryWalletScanner, RetryConfig,
-    ScanMetadata, ScanResult, WalletScanner as WalletScannerStruct, WalletScannerConfig,
+    ScanMetadata, ScanResult, ScannerConfigError, WalletScanner as WalletScannerStruct,
+    WalletScannerConfig,
 };
 
 // Re-export background writer types for scanner binary operations

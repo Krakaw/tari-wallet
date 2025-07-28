@@ -646,6 +646,66 @@ pub struct WalletScannerConfig {
     pub retry_config: RetryConfig,
 }
 
+/// Errors that can occur during scanner configuration
+#[derive(Debug, Clone)]
+pub enum ScannerConfigError {
+    /// Invalid batch size
+    InvalidBatchSize {
+        value: usize,
+        min: usize,
+        max: usize,
+    },
+    /// Invalid timeout duration
+    InvalidTimeout {
+        value: std::time::Duration,
+        min: std::time::Duration,
+        max: std::time::Duration,
+    },
+    /// Invalid retry configuration
+    InvalidRetryConfig { reason: String },
+    /// General validation error
+    ValidationError { field: String, reason: String },
+}
+
+impl std::fmt::Display for ScannerConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScannerConfigError::InvalidBatchSize { value, min, max } => {
+                write!(
+                    f,
+                    "Invalid batch size {}: must be between {} and {}",
+                    value, min, max
+                )
+            }
+            ScannerConfigError::InvalidTimeout { value, min, max } => {
+                write!(
+                    f,
+                    "Invalid timeout {:?}: must be between {:?} and {:?}",
+                    value, min, max
+                )
+            }
+            ScannerConfigError::InvalidRetryConfig { reason } => {
+                write!(f, "Invalid retry configuration: {}", reason)
+            }
+            ScannerConfigError::ValidationError { field, reason } => {
+                write!(f, "Validation error for {}: {}", field, reason)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ScannerConfigError {}
+
+impl From<ScannerConfigError> for LightweightWalletError {
+    fn from(error: ScannerConfigError) -> Self {
+        LightweightWalletError::InvalidArgument {
+            argument: "scanner_config".to_string(),
+            value: "validation_error".to_string(),
+            message: error.to_string(),
+        }
+    }
+}
+
 /// Retry configuration for failed operations
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
@@ -659,6 +719,61 @@ pub struct RetryConfig {
     pub exponential_backoff: bool,
 }
 
+impl RetryConfig {
+    /// Create a conservative retry configuration with more attempts and longer delays
+    pub fn conservative() -> Self {
+        Self {
+            max_retries: 5,
+            base_delay: std::time::Duration::from_secs(2),
+            max_delay: std::time::Duration::from_secs(30),
+            exponential_backoff: true,
+        }
+    }
+
+    /// Create an aggressive retry configuration with fewer attempts and shorter delays
+    pub fn aggressive() -> Self {
+        Self {
+            max_retries: 2,
+            base_delay: std::time::Duration::from_millis(100),
+            max_delay: std::time::Duration::from_secs(5),
+            exponential_backoff: true,
+        }
+    }
+
+    /// Create a configuration with no retries
+    pub fn no_retries() -> Self {
+        Self {
+            max_retries: 0,
+            base_delay: std::time::Duration::from_millis(0),
+            max_delay: std::time::Duration::from_millis(0),
+            exponential_backoff: false,
+        }
+    }
+
+    /// Validate the retry configuration
+    pub fn validate(&self) -> Result<(), ScannerConfigError> {
+        if self.max_retries > 100 {
+            return Err(ScannerConfigError::InvalidRetryConfig {
+                reason: "max_retries cannot exceed 100".to_string(),
+            });
+        }
+
+        if self.base_delay > std::time::Duration::from_secs(60) {
+            return Err(ScannerConfigError::InvalidRetryConfig {
+                reason: "base_delay cannot exceed 60 seconds".to_string(),
+            });
+        }
+
+        if self.max_delay < self.base_delay {
+            return Err(ScannerConfigError::InvalidRetryConfig {
+                reason: "max_delay must be greater than or equal to base_delay".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+}
+
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
@@ -667,6 +782,50 @@ impl Default for RetryConfig {
             max_delay: std::time::Duration::from_secs(10),
             exponential_backoff: true,
         }
+    }
+}
+
+impl WalletScannerConfig {
+    /// Validate the configuration
+    pub fn validate(&self) -> Result<(), ScannerConfigError> {
+        // Validate batch size
+        if self.batch_size == 0 {
+            return Err(ScannerConfigError::InvalidBatchSize {
+                value: self.batch_size,
+                min: 1,
+                max: 1000,
+            });
+        }
+        if self.batch_size > 1000 {
+            return Err(ScannerConfigError::InvalidBatchSize {
+                value: self.batch_size,
+                min: 1,
+                max: 1000,
+            });
+        }
+
+        // Validate timeout
+        if let Some(timeout) = self.timeout {
+            if timeout < std::time::Duration::from_millis(100) {
+                return Err(ScannerConfigError::InvalidTimeout {
+                    value: timeout,
+                    min: std::time::Duration::from_millis(100),
+                    max: std::time::Duration::from_secs(300),
+                });
+            }
+            if timeout > std::time::Duration::from_secs(300) {
+                return Err(ScannerConfigError::InvalidTimeout {
+                    value: timeout,
+                    min: std::time::Duration::from_millis(100),
+                    max: std::time::Duration::from_secs(300),
+                });
+            }
+        }
+
+        // Validate retry config
+        self.retry_config.validate()?;
+
+        Ok(())
     }
 }
 
@@ -771,18 +930,61 @@ impl WalletScanner {
     ///
     /// Larger batch sizes can improve performance but may use more memory.
     /// Default is 10 blocks per batch.
+    ///
+    /// # Panics
+    /// Panics if batch_size is invalid (0 or > 1000). Use `try_with_batch_size` for error handling.
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.config.batch_size = batch_size;
+        // Validate immediately to provide early feedback
+        if let Err(e) = self.config.validate() {
+            panic!("Invalid batch size: {}", e);
+        }
         self
+    }
+
+    /// Set the batch size for block processing (fallible version)
+    ///
+    /// Larger batch sizes can improve performance but may use more memory.
+    /// Default is 10 blocks per batch.
+    ///
+    /// # Errors
+    /// Returns an error if batch_size is invalid (0 or > 1000).
+    pub fn try_with_batch_size(mut self, batch_size: usize) -> Result<Self, ScannerConfigError> {
+        self.config.batch_size = batch_size;
+        self.config.validate()?;
+        Ok(self)
     }
 
     /// Set the timeout duration for blockchain operations
     ///
     /// This timeout applies to individual GRPC calls to the blockchain.
     /// Default is 30 seconds.
+    ///
+    /// # Panics
+    /// Panics if timeout is invalid. Use `try_with_timeout` for error handling.
     pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.config.timeout = Some(timeout);
+        // Validate immediately to provide early feedback
+        if let Err(e) = self.config.validate() {
+            panic!("Invalid timeout: {}", e);
+        }
         self
+    }
+
+    /// Set the timeout duration for blockchain operations (fallible version)
+    ///
+    /// This timeout applies to individual GRPC calls to the blockchain.
+    /// Default is 30 seconds.
+    ///
+    /// # Errors
+    /// Returns an error if timeout is invalid (< 100ms or > 300s).
+    pub fn try_with_timeout(
+        mut self,
+        timeout: std::time::Duration,
+    ) -> Result<Self, ScannerConfigError> {
+        self.config.timeout = Some(timeout);
+        self.config.validate()?;
+        Ok(self)
     }
 
     /// Enable or disable verbose logging
@@ -797,9 +999,31 @@ impl WalletScanner {
     /// Set retry configuration for failed operations
     ///
     /// Configure how the scanner handles temporary failures during blockchain operations.
+    ///
+    /// # Panics
+    /// Panics if retry_config is invalid. Use `try_with_retry_config` for error handling.
     pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
         self.config.retry_config = retry_config;
+        // Validate immediately to provide early feedback
+        if let Err(e) = self.config.validate() {
+            panic!("Invalid retry config: {}", e);
+        }
         self
+    }
+
+    /// Set retry configuration for failed operations (fallible version)
+    ///
+    /// Configure how the scanner handles temporary failures during blockchain operations.
+    ///
+    /// # Errors
+    /// Returns an error if retry configuration is invalid.
+    pub fn try_with_retry_config(
+        mut self,
+        retry_config: RetryConfig,
+    ) -> Result<Self, ScannerConfigError> {
+        self.config.retry_config = retry_config;
+        self.config.validate()?;
+        Ok(self)
     }
 
     /// Get the current configuration
@@ -810,6 +1034,41 @@ impl WalletScanner {
     /// Get a mutable reference to the configuration
     pub fn config_mut(&mut self) -> &mut WalletScannerConfig {
         &mut self.config
+    }
+
+    /// Build and validate the scanner configuration
+    ///
+    /// This method validates the entire configuration and returns a fully configured scanner.
+    /// Use this method when you want to ensure all configuration is valid before proceeding.
+    ///
+    /// # Errors
+    /// Returns an error if any configuration parameter is invalid.
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// use lightweight_wallet_libs::scanning::WalletScanner;
+    /// use std::time::Duration;
+    ///
+    /// let scanner = WalletScanner::new()
+    ///     .try_with_batch_size(50)?
+    ///     .try_with_timeout(Duration::from_secs(60))?
+    ///     .build()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn build(self) -> Result<WalletScanner, ScannerConfigError> {
+        self.config.validate()?;
+        Ok(self)
+    }
+
+    /// Validate the current configuration without consuming the scanner
+    ///
+    /// This method allows you to check if the current configuration is valid
+    /// without building the final scanner.
+    ///
+    /// # Errors
+    /// Returns an error if any configuration parameter is invalid.
+    pub fn validate(&self) -> Result<(), ScannerConfigError> {
+        self.config.validate()
     }
 
     /// Create a quick scanner with simple progress display
