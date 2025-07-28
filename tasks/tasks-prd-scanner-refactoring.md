@@ -51,7 +51,7 @@ Based on the PRD requirements, this task list guides the implementation of extra
   - [x] 2.6 Update imports in `src/bin/scanner.rs` to use library configuration types
 
 - [ ] 3.0 Extract storage management and background writer systems
-  - [ ] 3.1 Move `BackgroundWriterCommand` enum to `src/scanning/background_writer.rs` with proper feature flags
+  - [x] 3.1 Move `BackgroundWriterCommand` enum to `src/scanning/background_writer.rs` with proper feature flags
   - [ ] 3.2 Move `BackgroundWriter` struct and implementation to `src/scanning/background_writer.rs`
   - [ ] 3.3 Move background writer loop function and async operations to `src/scanning/background_writer.rs`
   - [ ] 3.4 Move `ScannerStorage` struct to `src/scanning/storage_manager.rs`

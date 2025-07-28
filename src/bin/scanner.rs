@@ -120,7 +120,7 @@ use lightweight_wallet_libs::{
     },
     errors::LightweightWalletResult,
     scanning::{
-        BinaryScanConfig, BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder,
+        BackgroundWriterCommand, BinaryScanConfig, BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder,
         OutputFormat, ScanContext,
     },
     wallet::Wallet,
@@ -225,39 +225,7 @@ pub struct CliArgs {
 
 // OutputFormat moved to src/scanning/scan_config.rs
 
-/// Background writer commands for non-WASM32 architectures
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
-#[derive(Debug)]
-pub enum BackgroundWriterCommand {
-    SaveTransactions {
-        wallet_id: u32,
-        transactions:
-            Vec<lightweight_wallet_libs::data_structures::wallet_transaction::WalletTransaction>,
-        response_tx: oneshot::Sender<LightweightWalletResult<()>>,
-    },
-    SaveOutputs {
-        outputs: Vec<StoredOutput>,
-        response_tx: oneshot::Sender<LightweightWalletResult<Vec<u32>>>,
-    },
-    UpdateWalletScannedBlock {
-        wallet_id: u32,
-        block_height: u64,
-        response_tx: oneshot::Sender<LightweightWalletResult<()>>,
-    },
-    MarkTransactionSpent {
-        commitment: CompressedCommitment,
-        block_height: u64,
-        input_index: usize,
-        response_tx: oneshot::Sender<LightweightWalletResult<bool>>,
-    },
-    MarkTransactionsSpentBatch {
-        commitments: Vec<(CompressedCommitment, u64, usize)>,
-        response_tx: oneshot::Sender<LightweightWalletResult<usize>>,
-    },
-    Shutdown {
-        response_tx: oneshot::Sender<()>,
-    },
-}
+// BackgroundWriterCommand moved to src/scanning/background_writer.rs
 
 /// Background writer service for non-WASM32 architectures
 #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
