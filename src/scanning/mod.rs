@@ -68,9 +68,10 @@ pub use grpc_scanner::{GrpcBlockchainScanner, GrpcScannerBuilder};
 pub use http_scanner::{HttpBlockchainScanner, HttpScannerBuilder};
 
 // Re-export scanner refactoring types (for binary refactoring)
-// TODO: Uncomment these as types are moved from scanner.rs
-// #[cfg(feature = "grpc")]
-// pub use scan_config::*;
+
+// Re-export configuration types for scanner binary operations
+#[cfg(feature = "grpc")]
+pub use scan_config::{BinaryScanConfig, OutputFormat, ScanContext};
 
 #[cfg(feature = "grpc")]
 pub use wallet_scanner::{BinaryScanResult, BinaryWalletScanner};

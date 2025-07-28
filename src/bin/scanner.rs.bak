@@ -119,7 +119,11 @@ use lightweight_wallet_libs::{
         wallet_transaction::WalletState,
     },
     errors::LightweightWalletResult,
-    scanning::{BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder, BinaryScanConfig, OutputFormat, ScanContext},
+    key_management::{
+        key_derivation,
+        seed_phrase::{mnemonic_to_bytes, CipherSeed},
+    },
+    scanning::{BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder, BinaryScanConfig},
     wallet::Wallet,
     KeyManagementError, LightweightWalletError,
 };
@@ -218,9 +222,32 @@ pub struct CliArgs {
     wallet_name: Option<String>,
 }
 
-// BinaryScanConfig moved to src/scanning/scan_config.rs
+// ScanConfig moved to src/scanning/scan_config.rs
 
-// OutputFormat moved to src/scanning/scan_config.rs
+/// Output format options
+#[cfg(feature = "grpc")]
+#[derive(Debug, Clone)]
+pub enum OutputFormat {
+    Detailed,
+    Summary,
+    Json,
+}
+
+#[cfg(feature = "grpc")]
+impl std::str::FromStr for OutputFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "detailed" => Ok(OutputFormat::Detailed),
+            "summary" => Ok(OutputFormat::Summary),
+            "json" => Ok(OutputFormat::Json),
+            _ => Err(format!(
+                "Invalid output format: {s}. Valid options: detailed, summary, json"
+            )),
+        }
+    }
+}
 
 /// Background writer commands for non-WASM32 architectures
 #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
@@ -439,7 +466,7 @@ impl ScannerStorage {
     #[cfg(feature = "storage")]
     pub async fn handle_wallet_operations(
         &mut self,
-        config: &BinaryScanConfig,
+        config: &ScanConfig,
         scan_context: Option<&ScanContext>,
     ) -> LightweightWalletResult<Option<ScanContext>> {
         // Only perform database operations if database is available
@@ -462,7 +489,7 @@ impl ScannerStorage {
     #[cfg(feature = "storage")]
     async fn select_or_create_wallet(
         &self,
-        config: &BinaryScanConfig,
+        config: &ScanConfig,
         scan_context: Option<&ScanContext>,
     ) -> LightweightWalletResult<Option<u32>> {
         let storage = self.database.as_ref().unwrap();
@@ -1032,7 +1059,7 @@ impl ScannerStorage {
     }
 
     /// Display storage information
-    pub async fn display_storage_info(&self, config: &BinaryScanConfig) -> LightweightWalletResult<()> {
+    pub async fn display_storage_info(&self, config: &ScanConfig) -> LightweightWalletResult<()> {
         if config.quiet {
             return Ok(());
         }
@@ -1069,7 +1096,7 @@ impl ScannerStorage {
     /// Display completion information
     pub async fn display_completion_info(
         &self,
-        config: &BinaryScanConfig,
+        config: &ScanConfig,
     ) -> LightweightWalletResult<()> {
         if config.quiet {
             return Ok(());
@@ -1103,7 +1130,69 @@ impl ScannerStorage {
     }
 }
 
-// ScanContext moved to src/scanning/scan_config.rs
+/// Wallet scanning context
+#[cfg(feature = "grpc")]
+pub struct ScanContext {
+    pub view_key: PrivateKey,
+    pub entropy: [u8; 16],
+}
+
+#[cfg(feature = "grpc")]
+impl ScanContext {
+    pub fn from_wallet(wallet: &Wallet) -> LightweightWalletResult<Self> {
+        // Setup wallet keys
+        let seed_phrase = wallet.export_seed_phrase()?;
+        let encrypted_bytes = mnemonic_to_bytes(&seed_phrase)?;
+        let cipher_seed = CipherSeed::from_enciphered_bytes(&encrypted_bytes, None)?;
+        let entropy = cipher_seed.entropy();
+
+        let entropy_array: [u8; 16] = entropy
+            .try_into()
+            .map_err(|_| KeyManagementError::key_derivation_failed("Invalid entropy length"))?;
+
+        let view_key_raw =
+            key_derivation::derive_private_key_from_entropy(&entropy_array, "data encryption", 0)?;
+        let view_key = PrivateKey::new(
+            view_key_raw
+                .as_bytes()
+                .try_into()
+                .expect("Should convert to array"),
+        );
+
+        Ok(Self {
+            view_key,
+            entropy: entropy_array,
+        })
+    }
+
+    pub fn from_view_key(view_key_hex: &str) -> LightweightWalletResult<Self> {
+        // Parse the hex view key
+        let view_key_bytes = hex::decode(view_key_hex).map_err(|_| {
+            KeyManagementError::key_derivation_failed("Invalid hex format for view key")
+        })?;
+
+        if view_key_bytes.len() != 32 {
+            return Err(KeyManagementError::key_derivation_failed(
+                "View key must be exactly 32 bytes (64 hex characters)",
+            )
+            .into());
+        }
+
+        let view_key_array: [u8; 32] = view_key_bytes.try_into().map_err(|_| {
+            KeyManagementError::key_derivation_failed("Failed to convert view key to array")
+        })?;
+
+        let view_key = PrivateKey::new(view_key_array);
+
+        let entropy = [0u8; 16];
+
+        Ok(Self { view_key, entropy })
+    }
+
+    pub fn has_entropy(&self) -> bool {
+        self.entropy != [0u8; 16]
+    }
+}
 
 /// Progress tracking for scanning
 #[cfg(feature = "grpc")]
@@ -1175,13 +1264,13 @@ impl BlockHeightRange {
         }
     }
 
-    pub fn into_scan_config(self, args: &CliArgs) -> LightweightWalletResult<BinaryScanConfig> {
+    pub fn into_scan_config(self, args: &CliArgs) -> LightweightWalletResult<ScanConfig> {
         let output_format = args
             .format
             .parse()
             .map_err(|e: String| KeyManagementError::key_derivation_failed(&e))?;
 
-        Ok(BinaryScanConfig {
+        Ok(ScanConfig {
             from_block: self.from_block,
             to_block: self.to_block,
             block_heights: self.block_heights,
@@ -1682,7 +1771,7 @@ fn compute_output_hash(output: &LightweightTransactionOutput) -> LightweightWall
 async fn scan_wallet_across_blocks_with_cancellation(
     scanner: &mut GrpcBlockchainScanner,
     scan_context: &ScanContext,
-    config: &BinaryScanConfig,
+    config: &ScanConfig,
     storage_backend: &mut ScannerStorage,
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> LightweightWalletResult<ScanResult> {
@@ -2096,7 +2185,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
 
 /// Display scan configuration information
 #[cfg(feature = "grpc")]
-fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_specific_blocks: bool) {
+fn display_scan_info(config: &ScanConfig, block_heights: &[u64], has_specific_blocks: bool) {
     if has_specific_blocks {
         println!(
             "🔍 Scanning {} specific blocks: {:?}",
@@ -2746,7 +2835,7 @@ fn display_json_results(wallet_state: &WalletState) {
 
 /// Display summary results
 #[cfg(feature = "grpc")]
-fn display_summary_results(wallet_state: &WalletState, config: &BinaryScanConfig) {
+fn display_summary_results(wallet_state: &WalletState, config: &ScanConfig) {
     let (total_received, total_spent, balance, unspent_count, spent_count) =
         wallet_state.get_summary();
     let (inbound_count, outbound_count, _) = wallet_state.get_direction_counts();
