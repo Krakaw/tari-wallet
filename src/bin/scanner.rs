@@ -107,18 +107,14 @@ use clap::Parser;
 #[cfg(feature = "grpc")]
 use lightweight_wallet_libs::{
     common::format_number,
-    data_structures::{
-        payment_id::PaymentId, transaction::TransactionDirection, wallet_transaction::WalletState,
-    },
     errors::LightweightWalletResult,
     scanning::{
-        BinaryScanConfig, BlockchainScanner, GrpcScannerBuilder, OutputFormat, ProgressInfo,
-        ScanResult, ScannerStorage, WalletScannerStruct,
+        BinaryScanConfig, BlockchainScanner, GrpcScannerBuilder, ProgressInfo, ScannerStorage,
+        WalletScannerStruct,
     },
     KeyManagementError, LightweightWalletError,
 };
-#[cfg(feature = "grpc")]
-use tari_utilities::ByteArray;
+
 #[cfg(feature = "grpc")]
 use tokio::signal;
 
@@ -436,302 +432,7 @@ fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_speci
     println!();
 }
 
-#[cfg(feature = "grpc")]
-fn display_wallet_activity(wallet_state: &WalletState, from_block: u64, to_block: u64) {
-    let (total_received, total_spent, balance, unspent_count, spent_count) =
-        wallet_state.get_summary();
-    let total_count = wallet_state.transactions.len();
-
-    if total_count == 0 {
-        println!(
-            "💡 No wallet activity found in blocks {} to {}",
-            format_number(from_block),
-            format_number(to_block)
-        );
-        if from_block > 1 {
-            println!("   ⚠️  Note: Scanning from block {} - wallet history before this block was not checked", format_number(from_block));
-            println!("   💡 For complete history, try: cargo run --bin scanner --features grpc-storage -- --seed-phrase \"your seed phrase\" --from-block 1");
-        }
-        return;
-    }
-
-    println!("🏦 WALLET ACTIVITY SUMMARY");
-    println!("========================");
-    println!(
-        "Scan range: Block {} to {} ({} blocks)",
-        format_number(from_block),
-        format_number(to_block),
-        format_number(to_block - from_block + 1)
-    );
-
-    let (inbound_count, outbound_count, _) = wallet_state.get_direction_counts();
-    println!(
-        "📥 Inbound:  {} transactions, {} μT ({:.6} T)",
-        format_number(inbound_count),
-        format_number(total_received),
-        total_received as f64 / 1_000_000.0
-    );
-    println!(
-        "📤 Outbound: {} transactions, {} μT ({:.6} T)",
-        format_number(outbound_count),
-        format_number(total_spent),
-        total_spent as f64 / 1_000_000.0
-    );
-    println!(
-        "💰 Current balance: {} μT ({:.6} T)",
-        format_number(balance),
-        balance as f64 / 1_000_000.0
-    );
-    println!(
-        "📊 Total activity: {} transactions",
-        format_number(total_count)
-    );
-    println!();
-
-    if !wallet_state.transactions.is_empty() {
-        println!("📋 DETAILED TRANSACTION HISTORY");
-        println!("===============================");
-
-        // Sort transactions by block height for chronological order
-        let mut sorted_transactions: Vec<_> =
-            wallet_state.transactions.iter().enumerate().collect();
-        sorted_transactions.sort_by_key(|(_, tx)| tx.block_height);
-
-        // Create a mapping from commitments to transactions for spent tracking
-        let mut commitment_to_inbound: std::collections::HashMap<
-            Vec<u8>,
-            &lightweight_wallet_libs::data_structures::wallet_transaction::WalletTransaction,
-        > = std::collections::HashMap::new();
-        for tx in &wallet_state.transactions {
-            if tx.transaction_direction == TransactionDirection::Inbound {
-                commitment_to_inbound.insert(tx.commitment.as_bytes().to_vec(), tx);
-            }
-        }
-
-        for (original_index, tx) in sorted_transactions {
-            let direction_symbol = match tx.transaction_direction {
-                TransactionDirection::Inbound => "📥",
-                TransactionDirection::Outbound => "📤",
-                TransactionDirection::Unknown => "❓",
-            };
-
-            let amount_display = match tx.transaction_direction {
-                TransactionDirection::Inbound => format!("+{} μT", format_number(tx.value)),
-                TransactionDirection::Outbound => format!("-{} μT", format_number(tx.value)),
-                TransactionDirection::Unknown => format!("±{} μT", format_number(tx.value)),
-            };
-
-            let maturity_indicator = if tx.transaction_status.is_coinbase() && !tx.is_mature {
-                " (IMMATURE)"
-            } else {
-                ""
-            };
-
-            // Different display format for inbound vs outbound
-            match tx.transaction_direction {
-                TransactionDirection::Inbound => {
-                    let status = if tx.is_spent {
-                        format!(
-                            "SPENT in block {}",
-                            format_number(tx.spent_in_block.unwrap_or(0))
-                        )
-                    } else {
-                        "UNSPENT".to_string()
-                    };
-
-                    println!(
-                        "{}. {} Block {}, Output #{}: {} ({:.6} T) - {} [{}{}]",
-                        format_number(original_index + 1),
-                        direction_symbol,
-                        format_number(tx.block_height),
-                        format_number(tx.output_index.unwrap_or(0)),
-                        amount_display,
-                        tx.value as f64 / 1_000_000.0,
-                        status,
-                        tx.transaction_status,
-                        maturity_indicator
-                    );
-
-                    // Show spending details if this output was spent
-                    if tx.is_spent {
-                        if let Some(spent_block) = tx.spent_in_block {
-                            if let Some(spent_input) = tx.spent_in_input {
-                                println!(
-                                    "   └─ Spent as input #{} in block {}",
-                                    format_number(spent_input),
-                                    format_number(spent_block)
-                                );
-                            }
-                        }
-                    }
-                }
-                TransactionDirection::Outbound => {
-                    println!(
-                        "{}. {} Block {}, Input #{}: {} ({:.6} T) - SPENDING [{}]",
-                        format_number(original_index + 1),
-                        direction_symbol,
-                        format_number(tx.block_height),
-                        format_number(tx.input_index.unwrap_or(0)),
-                        amount_display,
-                        tx.value as f64 / 1_000_000.0,
-                        tx.transaction_status
-                    );
-
-                    // Try to find which output this is spending
-                    let commitment_bytes = tx.commitment.as_bytes().to_vec();
-                    if let Some(original_tx) = commitment_to_inbound.get(&commitment_bytes) {
-                        println!(
-                            "   └─ Spending output from block {} (output #{})",
-                            format_number(original_tx.block_height),
-                            format_number(original_tx.output_index.unwrap_or(0))
-                        );
-                    }
-                }
-                TransactionDirection::Unknown => {
-                    println!(
-                        "{}. {} Block {}: {} ({:.6} T) - UNKNOWN [{}]",
-                        format_number(original_index + 1),
-                        direction_symbol,
-                        format_number(tx.block_height),
-                        amount_display,
-                        tx.value as f64 / 1_000_000.0,
-                        tx.transaction_status
-                    );
-                }
-            }
-
-            // Show payment ID if not empty
-            match &tx.payment_id {
-                PaymentId::Empty => {}
-                PaymentId::Open { user_data, .. } if !user_data.is_empty() => {
-                    // Try to decode as UTF-8 string
-                    if let Ok(text) = std::str::from_utf8(user_data) {
-                        if text
-                            .chars()
-                            .all(|c| c.is_ascii_graphic() || c.is_ascii_whitespace())
-                        {
-                            println!("   💬 Payment ID: \"{text}\"");
-                        } else {
-                            println!("   💬 Payment ID (hex): {}", hex::encode(user_data));
-                        }
-                    } else {
-                        println!("   💬 Payment ID (hex): {}", hex::encode(user_data));
-                    }
-                }
-                PaymentId::TransactionInfo { user_data, .. } if !user_data.is_empty() => {
-                    // Convert the binary data to utf8 string if possible otherwise print as hex
-                    if let Ok(text) = std::str::from_utf8(user_data) {
-                        println!("   💬 Payment ID: \"{text}\"");
-                    } else {
-                        println!("   💬 Payment ID (hex): {}", hex::encode(user_data));
-                    }
-                }
-                _ => {
-                    let user_data_str = tx.payment_id.user_data_as_string();
-                    if !user_data_str.is_empty() {
-                        println!("   💬 Payment ID: \"{user_data_str}\"");
-                    }
-                }
-            }
-        }
-        println!();
-    }
-
-    // Show balance breakdown
-    let unspent_value = wallet_state.get_unspent_value();
-
-    println!("💰 BALANCE BREAKDOWN");
-    println!("===================");
-    println!(
-        "Unspent outputs: {} ({:.6} T)",
-        format_number(unspent_count),
-        unspent_value as f64 / 1_000_000.0
-    );
-    println!(
-        "Spent outputs: {} ({:.6} T)",
-        format_number(spent_count),
-        total_spent as f64 / 1_000_000.0
-    );
-    println!(
-        "Total wallet activity: {} transactions",
-        format_number(total_count)
-    );
-
-    // Show detailed transaction analysis
-    let (inbound_count, outbound_count, unknown_count) = wallet_state.get_direction_counts();
-    let inbound_transactions = wallet_state.get_inbound_transactions();
-    let outbound_transactions = wallet_state.get_outbound_transactions();
-
-    // Calculate values for inbound and outbound
-    let total_inbound_value: u64 = inbound_transactions.iter().map(|tx| tx.value).sum();
-    let total_outbound_value: u64 = outbound_transactions.iter().map(|tx| tx.value).sum();
-
-    if !wallet_state.transactions.is_empty() {
-        println!();
-        println!("📊 TRANSACTION FLOW ANALYSIS");
-        println!("============================");
-        println!(
-            "📥 Inbound:  {} transactions, {:.6} T total",
-            format_number(inbound_count),
-            total_inbound_value as f64 / 1_000_000.0
-        );
-        println!(
-            "📤 Outbound: {} transactions, {:.6} T total",
-            format_number(outbound_count),
-            total_outbound_value as f64 / 1_000_000.0
-        );
-        if unknown_count > 0 {
-            println!("❓ Unknown:  {} transactions", format_number(unknown_count));
-        }
-
-        // Show transaction status breakdown
-        let mut status_counts = std::collections::HashMap::new();
-        let mut coinbase_immature = 0;
-        for tx in &wallet_state.transactions {
-            *status_counts.entry(tx.transaction_status).or_insert(0) += 1;
-            if tx.transaction_status.is_coinbase() && !tx.is_mature {
-                coinbase_immature += 1;
-            }
-        }
-
-        println!();
-        println!("📊 TRANSACTION STATUS BREAKDOWN");
-        println!("==============================");
-        for (status, count) in status_counts {
-            if status.is_coinbase() && coinbase_immature > 0 {
-                println!(
-                    "{}: {} ({} immature)",
-                    status,
-                    format_number(count),
-                    format_number(coinbase_immature)
-                );
-            } else {
-                println!("{}: {}", status, format_number(count));
-            }
-        }
-
-        // Show net flow
-        let net_flow = total_inbound_value as i64 - total_outbound_value as i64;
-        println!();
-        println!("📊 NET FLOW SUMMARY");
-        println!("==================");
-        println!(
-            "Net flow: {:.6} T ({})",
-            net_flow as f64 / 1_000_000.0,
-            if net_flow > 0 {
-                "📈 Positive"
-            } else if net_flow < 0 {
-                "📉 Negative"
-            } else {
-                "⚖️  Neutral"
-            }
-        );
-        println!(
-            "Current balance: {:.6} T",
-            wallet_state.get_balance() as f64 / 1_000_000.0
-        );
-    }
-}
+// display_wallet_activity function moved to src/scanning/wallet_scanner.rs
 
 #[cfg(feature = "grpc")]
 #[tokio::main]
@@ -934,14 +635,22 @@ async fn main() -> LightweightWalletResult<()> {
     };
 
     match scan_result {
-        Some(Ok(ScanResult::Completed(wallet_state))) => {
-            // Display results based on output format
-            match config.output_format {
-                OutputFormat::Json => display_json_results(&wallet_state),
-                OutputFormat::Summary => display_summary_results(&wallet_state, &config),
-                OutputFormat::Detailed => {
-                    display_wallet_activity(&wallet_state, config.from_block, config.to_block)
+        Some(Ok(result)) => {
+            // Display results using the library's display methods
+            result.display(&config);
+
+            // Handle interrupted scans
+            if result.is_interrupted() {
+                if !args.quiet {
+                    println!("⚠️  Scan was interrupted but collected partial data:\n");
+                    println!("\n🔄 To resume scanning from where you left off, use:");
+                    if let Some(resume_cmd) = result.resume_command(
+                        "cargo run --bin scanner --features grpc-storage -- <your-options>",
+                    ) {
+                        println!("   {}", resume_cmd);
+                    }
                 }
+                std::process::exit(130); // Standard exit code for SIGINT
             }
 
             // Display storage completion info and verify data integrity
@@ -969,32 +678,6 @@ async fn main() -> LightweightWalletResult<()> {
                     );
                 }
             }
-        }
-        Some(Ok(ScanResult::Interrupted(wallet_state))) => {
-            if !args.quiet {
-                println!("⚠️  Scan was interrupted but collected partial data:\n");
-            }
-
-            // Display partial results based on output format
-            match config.output_format {
-                OutputFormat::Json => display_json_results(&wallet_state),
-                OutputFormat::Summary => display_summary_results(&wallet_state, &config),
-                OutputFormat::Detailed => {
-                    display_wallet_activity(&wallet_state, config.from_block, config.to_block)
-                }
-            }
-
-            if !args.quiet {
-                println!("\n🔄 To resume scanning from where you left off, use:");
-                println!("   cargo run --bin scanner --features grpc-storage -- <your-options> --from-block {}", 
-                    format_number(wallet_state.transactions.iter()
-                        .map(|tx| tx.block_height)
-                        .max()
-                        .map(|h| h + 1)
-                        .unwrap_or(config.from_block))
-                );
-            }
-            std::process::exit(130); // Standard exit code for SIGINT
         }
         Some(Err(e)) => {
             if !args.quiet {
@@ -1026,63 +709,7 @@ async fn main() -> LightweightWalletResult<()> {
     Ok(())
 }
 
-/// Display results in JSON format
-#[cfg(feature = "grpc")]
-fn display_json_results(wallet_state: &WalletState) {
-    // Simple JSON-like output for now
-    let (total_received, total_spent, balance, unspent_count, spent_count) =
-        wallet_state.get_summary();
-    let (inbound_count, outbound_count, _) = wallet_state.get_direction_counts();
-
-    println!("{{");
-    println!("  \"summary\": {{");
-    println!(
-        "    \"total_transactions\": {},",
-        format_number(wallet_state.transactions.len())
-    );
-    println!("    \"inbound_count\": {},", format_number(inbound_count));
-    println!("    \"outbound_count\": {},", format_number(outbound_count));
-    println!("    \"total_received\": {},", format_number(total_received));
-    println!("    \"total_spent\": {},", format_number(total_spent));
-    println!("    \"current_balance\": {},", format_number(balance));
-    println!("    \"unspent_outputs\": {},", format_number(unspent_count));
-    println!("    \"spent_outputs\": {}", format_number(spent_count));
-    println!("  }}");
-    println!("}}");
-}
-
-/// Display summary results
-#[cfg(feature = "grpc")]
-fn display_summary_results(wallet_state: &WalletState, config: &BinaryScanConfig) {
-    let (total_received, total_spent, balance, unspent_count, spent_count) =
-        wallet_state.get_summary();
-    let (inbound_count, outbound_count, _) = wallet_state.get_direction_counts();
-
-    println!("📊 WALLET SCAN SUMMARY");
-    println!("=====================");
-    println!(
-        "Scan range: Block {} to {}",
-        format_number(config.from_block),
-        format_number(config.to_block)
-    );
-    println!(
-        "Total transactions: {}",
-        format_number(wallet_state.transactions.len())
-    );
-    println!(
-        "Inbound: {} transactions ({:.6} T)",
-        format_number(inbound_count),
-        total_received as f64 / 1_000_000.0
-    );
-    println!(
-        "Outbound: {} transactions ({:.6} T)",
-        format_number(outbound_count),
-        total_spent as f64 / 1_000_000.0
-    );
-    println!("Current balance: {:.6} T", balance as f64 / 1_000_000.0);
-    println!("Unspent outputs: {}", format_number(unspent_count));
-    println!("Spent outputs: {}", format_number(spent_count));
-}
+// display_json_results and display_summary_results functions moved to src/scanning/wallet_scanner.rs
 
 #[cfg(not(feature = "grpc"))]
 fn main() {

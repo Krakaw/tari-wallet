@@ -384,13 +384,252 @@ pub fn create_wallet_from_view_key(
 // Core scanning API and result types
 // =============================================================================
 
+/// Additional metadata about the scanning operation
+#[derive(Debug, Clone)]
+pub struct ScanMetadata {
+    /// Block range that was scanned
+    pub from_block: u64,
+    pub to_block: u64,
+    /// Total blocks that were processed
+    pub blocks_processed: usize,
+    /// Whether specific blocks were scanned vs a range
+    pub had_specific_blocks: bool,
+    /// Start time of the scan operation
+    pub start_time: Option<Instant>,
+    /// End time of the scan operation  
+    pub end_time: Option<Instant>,
+}
+
+impl ScanMetadata {
+    /// Create new scan metadata
+    pub fn new(
+        from_block: u64,
+        to_block: u64,
+        blocks_processed: usize,
+        had_specific_blocks: bool,
+    ) -> Self {
+        Self {
+            from_block,
+            to_block,
+            blocks_processed,
+            had_specific_blocks,
+            start_time: None,
+            end_time: None,
+        }
+    }
+
+    /// Calculate scan duration if times are available
+    pub fn duration(&self) -> Option<std::time::Duration> {
+        match (self.start_time, self.end_time) {
+            (Some(start), Some(end)) => Some(end.duration_since(start)),
+            _ => None,
+        }
+    }
+
+    /// Calculate blocks per second if duration is available
+    pub fn blocks_per_second(&self) -> Option<f64> {
+        self.duration().map(|duration| {
+            if duration.as_secs_f64() > 0.0 {
+                self.blocks_processed as f64 / duration.as_secs_f64()
+            } else {
+                0.0
+            }
+        })
+    }
+}
+
 /// Represents the result of a wallet scanning operation
 #[derive(Debug, Clone)]
 pub enum ScanResult {
-    /// Scan completed successfully with final wallet state
-    Completed(WalletState),
-    /// Scan was interrupted (e.g., by user) with current wallet state
-    Interrupted(WalletState),
+    /// Scan completed successfully with final wallet state and metadata
+    Completed(WalletState, Option<ScanMetadata>),
+    /// Scan was interrupted (e.g., by user) with current wallet state and metadata
+    Interrupted(WalletState, Option<ScanMetadata>),
+}
+
+impl ScanResult {
+    /// Get the wallet state from the scan result
+    pub fn wallet_state(&self) -> &WalletState {
+        match self {
+            ScanResult::Completed(state, _) => state,
+            ScanResult::Interrupted(state, _) => state,
+        }
+    }
+
+    /// Get the scan metadata from the scan result
+    pub fn metadata(&self) -> Option<&ScanMetadata> {
+        match self {
+            ScanResult::Completed(_, metadata) => metadata.as_ref(),
+            ScanResult::Interrupted(_, metadata) => metadata.as_ref(),
+        }
+    }
+
+    /// Check if the scan was completed successfully
+    pub fn is_completed(&self) -> bool {
+        matches!(self, ScanResult::Completed(_, _))
+    }
+
+    /// Check if the scan was interrupted
+    pub fn is_interrupted(&self) -> bool {
+        matches!(self, ScanResult::Interrupted(_, _))
+    }
+
+    /// Get the block range that was scanned
+    pub fn block_range(&self) -> Option<(u64, u64)> {
+        self.metadata().map(|meta| (meta.from_block, meta.to_block))
+    }
+
+    /// Get the number of blocks processed
+    pub fn blocks_processed(&self) -> Option<usize> {
+        self.metadata().map(|meta| meta.blocks_processed)
+    }
+
+    /// Get the scan duration
+    pub fn duration(&self) -> Option<std::time::Duration> {
+        self.metadata().and_then(|meta| meta.duration())
+    }
+
+    /// Get the scan speed in blocks per second
+    pub fn blocks_per_second(&self) -> Option<f64> {
+        self.metadata().and_then(|meta| meta.blocks_per_second())
+    }
+
+    /// Display result in JSON format
+    #[cfg(feature = "grpc")]
+    pub fn display_json(&self) {
+        display_json_results(self.wallet_state())
+    }
+
+    /// Display result in summary format
+    #[cfg(feature = "grpc")]
+    pub fn display_summary(&self, config: &BinaryScanConfig) {
+        display_summary_results(self.wallet_state(), config)
+    }
+
+    /// Display result in detailed format
+    #[cfg(feature = "grpc")]
+    pub fn display_detailed(&self, config: &BinaryScanConfig) {
+        display_wallet_activity(self.wallet_state(), config.from_block, config.to_block)
+    }
+
+    /// Display result in the specified format
+    #[cfg(feature = "grpc")]
+    pub fn display(&self, config: &BinaryScanConfig) {
+        match config.output_format {
+            crate::scanning::OutputFormat::Json => self.display_json(),
+            crate::scanning::OutputFormat::Summary => self.display_summary(config),
+            crate::scanning::OutputFormat::Detailed => self.display_detailed(config),
+        }
+    }
+
+    /// Create a resume command string for interrupted scans
+    pub fn resume_command(&self, original_command_args: &str) -> Option<String> {
+        if let ScanResult::Interrupted(wallet_state, _) = self {
+            let next_block = wallet_state
+                .transactions
+                .iter()
+                .map(|tx| tx.block_height)
+                .max()
+                .map(|h| h + 1)
+                .unwrap_or(0);
+
+            if next_block > 0 {
+                Some(format!(
+                    "{} --from-block {}",
+                    original_command_args, next_block
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Get wallet balance summary from the result
+    pub fn get_balance_summary(&self) -> (u64, u64, i64, usize, usize) {
+        self.wallet_state().get_summary()
+    }
+
+    /// Get transaction direction counts from the result
+    pub fn get_direction_counts(&self) -> (usize, usize, usize) {
+        self.wallet_state().get_direction_counts()
+    }
+
+    /// Check if any wallet activity was found
+    pub fn has_activity(&self) -> bool {
+        !self.wallet_state().transactions.is_empty()
+    }
+
+    /// Get the current wallet balance
+    pub fn current_balance(&self) -> i64 {
+        self.wallet_state().get_balance()
+    }
+
+    /// Get the total number of transactions found
+    pub fn transaction_count(&self) -> usize {
+        self.wallet_state().transactions.len()
+    }
+
+    /// Export scan result to JSON string
+    #[cfg(feature = "grpc")]
+    pub fn to_json_string(&self) -> String {
+        let wallet_state = self.wallet_state();
+        let (total_received, total_spent, balance, unspent_count, spent_count) =
+            wallet_state.get_summary();
+        let (inbound_count, outbound_count, _) = wallet_state.get_direction_counts();
+
+        let mut json = String::from("{\n");
+        json.push_str("  \"summary\": {\n");
+        json.push_str(&format!(
+            "    \"total_transactions\": {},\n",
+            wallet_state.transactions.len()
+        ));
+        json.push_str(&format!("    \"inbound_count\": {},\n", inbound_count));
+        json.push_str(&format!("    \"outbound_count\": {},\n", outbound_count));
+        json.push_str(&format!("    \"total_received\": {},\n", total_received));
+        json.push_str(&format!("    \"total_spent\": {},\n", total_spent));
+        json.push_str(&format!("    \"current_balance\": {},\n", balance));
+        json.push_str(&format!("    \"unspent_outputs\": {},\n", unspent_count));
+        json.push_str(&format!("    \"spent_outputs\": {}\n", spent_count));
+        json.push_str("  }");
+
+        if let Some(metadata) = self.metadata() {
+            json.push_str(",\n  \"metadata\": {\n");
+            json.push_str(&format!("    \"from_block\": {},\n", metadata.from_block));
+            json.push_str(&format!("    \"to_block\": {},\n", metadata.to_block));
+            json.push_str(&format!(
+                "    \"blocks_processed\": {},\n",
+                metadata.blocks_processed
+            ));
+            json.push_str(&format!(
+                "    \"had_specific_blocks\": {}",
+                metadata.had_specific_blocks
+            ));
+
+            if let Some(duration) = metadata.duration() {
+                json.push_str(&format!(
+                    ",\n    \"duration_seconds\": {:.3}",
+                    duration.as_secs_f64()
+                ));
+            }
+            if let Some(bps) = metadata.blocks_per_second() {
+                json.push_str(&format!(",\n    \"blocks_per_second\": {:.2}", bps));
+            }
+
+            json.push_str("\n  }");
+        }
+
+        json.push_str(",\n  \"status\": \"");
+        json.push_str(if self.is_completed() {
+            "completed"
+        } else {
+            "interrupted"
+        });
+        json.push_str("\"\n}");
+
+        json
+    }
 }
 
 /// Wallet scanner for performing blockchain scanning operations
@@ -572,7 +811,15 @@ async fn scan_wallet_across_blocks_with_cancellation(
         println!("   • Note: Full scanning implementation will be completed in subsequent tasks");
     }
 
-    Ok(ScanResult::Completed(wallet_state))
+    // Create scan metadata
+    let metadata = ScanMetadata::new(
+        from_block,
+        to_block,
+        block_heights.len(),
+        config.block_heights.is_some(),
+    );
+
+    Ok(ScanResult::Completed(wallet_state, Some(metadata)))
 }
 
 /// Display scan configuration information
@@ -722,6 +969,67 @@ fn display_wallet_activity(wallet_state: &WalletState, from_block: u64, to_block
     display_activity_header(from_block, to_block);
     display_transaction_breakdown(inbound_count, outbound_count, total_received, total_spent);
     display_balance_and_totals(balance, total_count);
+}
+
+// =============================================================================
+// Result output formatting functions
+// =============================================================================
+
+/// Display scan results in JSON format
+#[cfg(feature = "grpc")]
+fn display_json_results(wallet_state: &WalletState) {
+    let (total_received, total_spent, balance, unspent_count, spent_count) =
+        wallet_state.get_summary();
+    let (inbound_count, outbound_count, _) = wallet_state.get_direction_counts();
+
+    println!("{{");
+    println!("  \"summary\": {{");
+    println!(
+        "    \"total_transactions\": {},",
+        format_number(wallet_state.transactions.len())
+    );
+    println!("    \"inbound_count\": {},", format_number(inbound_count));
+    println!("    \"outbound_count\": {},", format_number(outbound_count));
+    println!("    \"total_received\": {},", format_number(total_received));
+    println!("    \"total_spent\": {},", format_number(total_spent));
+    println!("    \"current_balance\": {},", format_number(balance));
+    println!("    \"unspent_outputs\": {},", format_number(unspent_count));
+    println!("    \"spent_outputs\": {}", format_number(spent_count));
+    println!("  }}");
+    println!("}}");
+}
+
+/// Display scan results in summary format
+#[cfg(feature = "grpc")]
+fn display_summary_results(wallet_state: &WalletState, config: &BinaryScanConfig) {
+    let (total_received, total_spent, balance, unspent_count, spent_count) =
+        wallet_state.get_summary();
+    let (inbound_count, outbound_count, _) = wallet_state.get_direction_counts();
+
+    println!("📊 WALLET SCAN SUMMARY");
+    println!("=====================");
+    println!(
+        "Scan range: Block {} to {}",
+        format_number(config.from_block),
+        format_number(config.to_block)
+    );
+    println!(
+        "Total transactions: {}",
+        format_number(wallet_state.transactions.len())
+    );
+    println!(
+        "Inbound: {} transactions ({:.6} T)",
+        format_number(inbound_count),
+        total_received as f64 / 1_000_000.0
+    );
+    println!(
+        "Outbound: {} transactions ({:.6} T)",
+        format_number(outbound_count),
+        total_spent as f64 / 1_000_000.0
+    );
+    println!("Current balance: {:.6} T", balance as f64 / 1_000_000.0);
+    println!("Unspent outputs: {}", format_number(unspent_count));
+    println!("Spent outputs: {}", format_number(spent_count));
 }
 
 // Placeholder type definitions until actual implementation
