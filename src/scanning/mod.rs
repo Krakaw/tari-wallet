@@ -80,9 +80,9 @@ pub use wallet_scanner::{BinaryScanResult, BinaryWalletScanner};
 #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
 pub use background_writer::{BackgroundWriter, BackgroundWriterCommand};
 
-// TODO: Uncomment when ScannerStorage is moved from scanner.rs
-// #[cfg(all(feature = "grpc", feature = "storage"))]
-// pub use storage_manager::ScannerStorage;
+// Re-export storage manager types for scanner binary operations
+#[cfg(feature = "grpc")]
+pub use storage_manager::ScannerStorage;
 
 // TODO: Uncomment when ProgressTracker is moved from scanner.rs
 // #[cfg(feature = "grpc")]

@@ -50,16 +50,16 @@ Based on the PRD requirements, this task list guides the implementation of extra
   - [x] 2.5 Update `src/scanning/mod.rs` to re-export configuration types
   - [x] 2.6 Update imports in `src/bin/scanner.rs` to use library configuration types
 
-- [ ] 3.0 Extract storage management and background writer systems
+- [x] 3.0 Extract storage management and background writer systems
   - [x] 3.1 Move `BackgroundWriterCommand` enum to `src/scanning/background_writer.rs` with proper feature flags
   - [x] 3.2 Move `BackgroundWriter` struct and implementation to `src/scanning/background_writer.rs`
   - [x] 3.3 Move background writer loop function and async operations to `src/scanning/background_writer.rs`
-  - [ ] 3.4 Move `ScannerStorage` struct to `src/scanning/storage_manager.rs`
-  - [ ] 3.5 Move core storage methods: `new_memory()`, `new_with_database()`, `start_background_writer()`, `stop_background_writer()`
-  - [ ] 3.6 Move wallet management methods: `list_wallets()`, `select_or_create_wallet()`, `load_scan_context_from_wallet()`, `get_wallet_birthday()`
-  - [ ] 3.7 Move transaction storage methods: `save_transactions_incremental()`, `save_outputs()`, `update_wallet_scanned_block()`, `mark_transaction_spent()`
-  - [ ] 3.8 Ensure all storage methods maintain architecture-specific implementations (WASM32 vs non-WASM32)
-  - [ ] 3.9 Remove direct user interaction from library methods, replace with error returns for binary to handle
+  - [x] 3.4 Move `ScannerStorage` struct to `src/scanning/storage_manager.rs`
+  - [x] 3.5 Move core storage methods: `new_memory()`, `new_with_database()`, `start_background_writer()`, `stop_background_writer()`
+  - [x] 3.6 Move wallet management methods: `list_wallets()`, `select_or_create_wallet()`, `load_scan_context_from_wallet()`, `get_wallet_birthday()`
+  - [x] 3.7 Move transaction storage methods: `save_transactions_incremental()`, `save_outputs()`, `update_wallet_scanned_block()`, `mark_transaction_spent()`
+  - [x] 3.8 Ensure all storage methods maintain architecture-specific implementations (WASM32 vs non-WASM32)
+  - [x] 3.9 Remove direct user interaction from library methods, replace with error returns for binary to handle
 
 - [ ] 4.0 Extract core scanning logic and create public API
   - [ ] 4.1 Move progress display functions to `src/scanning/progress.rs` and create `ProgressTracker` struct
