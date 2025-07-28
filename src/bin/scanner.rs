@@ -124,6 +124,7 @@ use lightweight_wallet_libs::{
         ProgressInfo,
         ScannerStorage,
 
+        WalletScannerConfig,
         WalletScannerStruct,
     },
     KeyManagementError,
@@ -188,6 +189,14 @@ pub struct CliArgs {
     /// Progress update frequency
     #[arg(long, default_value = "10", help = "Update progress every N blocks")]
     progress_frequency: usize,
+
+    /// Timeout for blockchain operations in seconds
+    #[arg(
+        long,
+        default_value = "30",
+        help = "Timeout for blockchain operations in seconds"
+    )]
+    timeout: u64,
 
     /// Quiet mode - minimal output
     #[arg(short, long, help = "Quiet mode - only show essential information")]
@@ -328,6 +337,30 @@ fn create_scan_config(
     })
 }
 
+/// Create WalletScannerConfig from CLI arguments
+#[cfg(feature = "grpc")]
+fn create_wallet_scanner_config(args: &CliArgs) -> WalletScannerConfig {
+    WalletScannerConfig {
+        progress_tracker: None, // Will be set separately with callback
+        batch_size: args.batch_size,
+        timeout: Some(std::time::Duration::from_secs(args.timeout)),
+        verbose_logging: !args.quiet,
+        retry_config: Default::default(), // Use default retry config
+    }
+}
+
+/// Create both scan config and wallet scanner config from CLI arguments
+#[cfg(feature = "grpc")]
+fn create_scanner_configs(
+    args: &CliArgs,
+    from_block: u64,
+    to_block: u64,
+) -> LightweightWalletResult<(BinaryScanConfig, WalletScannerConfig)> {
+    let scan_config = create_scan_config(args, from_block, to_block)?;
+    let wallet_scanner_config = create_wallet_scanner_config(args);
+    Ok((scan_config, wallet_scanner_config))
+}
+
 // Main scanner binary implementation
 
 #[cfg(feature = "grpc")]
@@ -391,7 +424,7 @@ async fn main() -> LightweightWalletResult<()> {
     }
     let mut scanner = GrpcScannerBuilder::new()
         .with_base_url(args.base_url.clone())
-        .with_timeout(std::time::Duration::from_secs(30))
+        .with_timeout(std::time::Duration::from_secs(args.timeout))
         .build()
         .await
         .map_err(|e| {
@@ -418,7 +451,7 @@ async fn main() -> LightweightWalletResult<()> {
     let to_block = args.to_block.unwrap_or(tip_info.best_block_height);
 
     // Create temporary config for storage operations (will be recreated with correct from_block later)
-    let temp_config = create_scan_config(&args, 0, to_block)?;
+    let (temp_config, _) = create_scanner_configs(&args, 0, to_block)?;
 
     // Create storage backend - use database when no keys provided, memory when keys provided
     let mut storage_backend = if keys_provided {
@@ -481,8 +514,8 @@ async fn main() -> LightweightWalletResult<()> {
     // Now calculate the from_block using the final_default_from_block
     let from_block = args.from_block.unwrap_or(final_default_from_block);
 
-    // Update the config with the correct from_block
-    let config = create_scan_config(&args, from_block, to_block)?;
+    // Create final configs with the correct from_block
+    let (config, scanner_config) = create_scanner_configs(&args, from_block, to_block)?;
 
     // Start background writer for non-WASM32 architectures (if using database storage)
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
@@ -509,16 +542,15 @@ async fn main() -> LightweightWalletResult<()> {
         let _ = cancel_tx.send(true);
     };
 
-    // Create wallet scanner with progress callback
+    // Create wallet scanner with config and progress callback
     let quiet = args.quiet;
-    let wallet_scanner = WalletScannerStruct::new()
-        .with_progress_callback(move |progress_info| {
+    let wallet_scanner = WalletScannerStruct::from_config(scanner_config).with_progress_callback(
+        move |progress_info| {
             if !quiet {
                 display_progress(progress_info);
             }
-        })
-        .with_batch_size(config.batch_size)
-        .with_verbose_logging(!config.quiet);
+        },
+    );
 
     // Perform the scan with cancellation support
     let mut wallet_scanner = wallet_scanner; // Make it mutable for the scan call
