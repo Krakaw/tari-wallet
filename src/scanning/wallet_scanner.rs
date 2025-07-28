@@ -4,6 +4,13 @@
 //! and setup functions, and the primary public API for wallet scanning
 //! operations.
 //!
+//! # Module Organization
+//! - Transaction extraction helper functions
+//! - Wallet creation utilities
+//! - Block processing helpers
+//! - Balance calculation helpers
+//! - Core scanning logic and public API
+//!
 //! This module is part of the scanner.rs binary refactoring effort.
 
 use blake2::{Blake2b, Digest};
@@ -26,6 +33,123 @@ use crate::{
 
 use super::{BinaryScanConfig, ProgressTracker, ScanContext, ScannerStorage};
 
+// =============================================================================
+// Transaction extraction helper functions
+// =============================================================================
+
+/// Filter transactions from a specific block
+#[cfg(all(feature = "grpc", feature = "storage"))]
+fn filter_block_transactions(
+    wallet_state: &WalletState,
+    block_height: u64,
+    direction: TransactionDirection,
+) -> Vec<&crate::data_structures::wallet_transaction::WalletTransaction> {
+    wallet_state
+        .transactions
+        .iter()
+        .filter(|tx| tx.block_height == block_height && tx.transaction_direction == direction)
+        .collect()
+}
+
+/// Create stored output from blockchain output and transaction data
+#[cfg(all(feature = "grpc", feature = "storage"))]
+fn create_stored_output_from_blockchain_data(
+    transaction: &crate::data_structures::wallet_transaction::WalletTransaction,
+    blockchain_output: &LightweightTransactionOutput,
+    scan_context: &ScanContext,
+    wallet_id: u32,
+    output_index: usize,
+) -> LightweightWalletResult<StoredOutput> {
+    // Derive spending keys for this output
+    let (spending_key, script_private_key) =
+        derive_utxo_spending_keys(&scan_context.entropy, output_index as u64)?;
+
+    // Extract script input data and lock height
+    let (input_data, script_lock_height) = extract_script_data(&blockchain_output.script.bytes)?;
+
+    // Create StoredOutput from blockchain data
+    let stored_output = StoredOutput {
+        id: None, // Will be set by database
+        wallet_id,
+
+        // Core UTXO identification
+        commitment: blockchain_output.commitment.as_bytes().to_vec(),
+        hash: compute_output_hash(blockchain_output)?,
+        value: transaction.value,
+
+        // Spending keys (derived from entropy)
+        spending_key: hex::encode(spending_key.as_bytes()),
+        script_private_key: hex::encode(script_private_key.as_bytes()),
+
+        // Script and covenant data
+        script: blockchain_output.script.bytes.clone(),
+        input_data,
+        covenant: blockchain_output.covenant.bytes.clone(),
+
+        // Output features and type
+        output_type: blockchain_output.features.output_type.clone() as u32,
+        features_json: serde_json::to_string(&blockchain_output.features).map_err(|e| {
+            LightweightWalletError::StorageError(format!("Failed to serialize features: {e}"))
+        })?,
+
+        // Maturity and lock constraints
+        maturity: blockchain_output.features.maturity,
+        script_lock_height,
+
+        // Metadata signature components
+        sender_offset_public_key: blockchain_output
+            .sender_offset_public_key
+            .as_bytes()
+            .to_vec(),
+        // Note: LightweightSignature only has bytes field, so we use placeholders
+        // In a full implementation, these would be extracted from the signature structure
+        metadata_signature_ephemeral_commitment: vec![0u8; 32], // Placeholder
+        metadata_signature_ephemeral_pubkey: vec![0u8; 32],     // Placeholder
+        metadata_signature_u_a: if blockchain_output.metadata_signature.bytes.len() >= 32 {
+            blockchain_output.metadata_signature.bytes[0..32].to_vec()
+        } else {
+            vec![0u8; 32]
+        },
+        metadata_signature_u_x: if blockchain_output.metadata_signature.bytes.len() >= 64 {
+            blockchain_output.metadata_signature.bytes[32..64].to_vec()
+        } else {
+            vec![0u8; 32]
+        },
+        metadata_signature_u_y: vec![0u8; 32], // Placeholder
+
+        // Payment information
+        encrypted_data: blockchain_output.encrypted_data.as_bytes().to_vec(),
+        minimum_value_promise: blockchain_output.minimum_value_promise.as_u64(),
+
+        // Range proof
+        rangeproof: blockchain_output.proof.as_ref().map(|p| p.bytes.clone()),
+
+        // Status and spending tracking
+        status: if transaction.is_spent {
+            OutputStatus::Spent as u32
+        } else {
+            OutputStatus::Unspent as u32
+        },
+        mined_height: Some(transaction.block_height),
+        spent_in_tx_id: if transaction.is_spent {
+            // Calculate transaction ID from spent block and input index
+            transaction.spent_in_block.and_then(|spent_block| {
+                transaction
+                    .spent_in_input
+                    .map(|spent_input| generate_transaction_id(spent_block, spent_input))
+            })
+        } else {
+            None
+        },
+
+        // Timestamps (will be set by database)
+        created_at: None,
+        updated_at: None,
+    };
+
+    Ok(stored_output)
+}
+
 /// Extract UTXO data from blockchain outputs and create StoredOutput objects
 #[cfg(all(feature = "grpc", feature = "storage"))]
 pub fn extract_utxo_outputs_from_wallet_state(
@@ -38,114 +162,20 @@ pub fn extract_utxo_outputs_from_wallet_state(
     let mut utxo_outputs = Vec::new();
 
     // Get inbound transactions from this specific block
-    let block_transactions: Vec<_> = wallet_state
-        .transactions
-        .iter()
-        .filter(|tx| {
-            tx.block_height == block_height
-                && tx.transaction_direction == TransactionDirection::Inbound
-        })
-        .collect();
+    let block_transactions =
+        filter_block_transactions(wallet_state, block_height, TransactionDirection::Inbound);
 
     for transaction in block_transactions {
         // Find the corresponding blockchain output
         if let Some(output_index) = transaction.output_index {
             if let Some(blockchain_output) = block_outputs.get(output_index) {
-                // Derive spending keys for this output
-                let (spending_key, script_private_key) =
-                    derive_utxo_spending_keys(&scan_context.entropy, output_index as u64)?;
-
-                // Extract script input data and lock height
-                let (input_data, script_lock_height) =
-                    extract_script_data(&blockchain_output.script.bytes)?;
-
-                // Create StoredOutput from blockchain data
-                let stored_output = StoredOutput {
-                    id: None, // Will be set by database
+                let stored_output = create_stored_output_from_blockchain_data(
+                    transaction,
+                    blockchain_output,
+                    scan_context,
                     wallet_id,
-
-                    // Core UTXO identification
-                    commitment: blockchain_output.commitment.as_bytes().to_vec(),
-                    hash: compute_output_hash(blockchain_output)?,
-                    value: transaction.value,
-
-                    // Spending keys (derived from entropy)
-                    spending_key: hex::encode(spending_key.as_bytes()),
-                    script_private_key: hex::encode(script_private_key.as_bytes()),
-
-                    // Script and covenant data
-                    script: blockchain_output.script.bytes.clone(),
-                    input_data,
-                    covenant: blockchain_output.covenant.bytes.clone(),
-
-                    // Output features and type
-                    output_type: blockchain_output.features.output_type.clone() as u32,
-                    features_json: serde_json::to_string(&blockchain_output.features).map_err(
-                        |e| {
-                            LightweightWalletError::StorageError(format!(
-                                "Failed to serialize features: {e}"
-                            ))
-                        },
-                    )?,
-
-                    // Maturity and lock constraints
-                    maturity: blockchain_output.features.maturity,
-                    script_lock_height,
-
-                    // Metadata signature components
-                    sender_offset_public_key: blockchain_output
-                        .sender_offset_public_key
-                        .as_bytes()
-                        .to_vec(),
-                    // Note: LightweightSignature only has bytes field, so we use placeholders
-                    // In a full implementation, these would be extracted from the signature structure
-                    metadata_signature_ephemeral_commitment: vec![0u8; 32], // Placeholder
-                    metadata_signature_ephemeral_pubkey: vec![0u8; 32],     // Placeholder
-                    metadata_signature_u_a: if blockchain_output.metadata_signature.bytes.len()
-                        >= 32
-                    {
-                        blockchain_output.metadata_signature.bytes[0..32].to_vec()
-                    } else {
-                        vec![0u8; 32]
-                    },
-                    metadata_signature_u_x: if blockchain_output.metadata_signature.bytes.len()
-                        >= 64
-                    {
-                        blockchain_output.metadata_signature.bytes[32..64].to_vec()
-                    } else {
-                        vec![0u8; 32]
-                    },
-                    metadata_signature_u_y: vec![0u8; 32], // Placeholder
-
-                    // Payment information
-                    encrypted_data: blockchain_output.encrypted_data.as_bytes().to_vec(),
-                    minimum_value_promise: blockchain_output.minimum_value_promise.as_u64(),
-
-                    // Range proof
-                    rangeproof: blockchain_output.proof.as_ref().map(|p| p.bytes.clone()),
-
-                    // Status and spending tracking
-                    status: if transaction.is_spent {
-                        OutputStatus::Spent as u32
-                    } else {
-                        OutputStatus::Unspent as u32
-                    },
-                    mined_height: Some(transaction.block_height),
-                    spent_in_tx_id: if transaction.is_spent {
-                        // Calculate transaction ID from spent block and input index
-                        transaction.spent_in_block.and_then(|spent_block| {
-                            transaction.spent_in_input.map(|spent_input| {
-                                generate_transaction_id(spent_block, spent_input)
-                            })
-                        })
-                    } else {
-                        None
-                    },
-
-                    // Timestamps (will be set by database)
-                    created_at: None,
-                    updated_at: None,
-                };
+                    output_index,
+                )?;
 
                 utxo_outputs.push(stored_output);
             }
@@ -299,6 +329,10 @@ fn compute_output_hash(output: &LightweightTransactionOutput) -> LightweightWall
     Ok(hasher.finalize().to_vec())
 }
 
+// =============================================================================
+// Wallet creation utilities
+// =============================================================================
+
 /// Create a wallet from a seed phrase and return the scan context with default block
 ///
 /// This function combines wallet creation from a seed phrase with scan context creation,
@@ -345,6 +379,10 @@ pub fn create_wallet_from_view_key(
     let default_from_block = 0; // Start from genesis when using view key only
     Ok((scan_context, default_from_block))
 }
+
+// =============================================================================
+// Core scanning API and result types
+// =============================================================================
 
 /// Represents the result of a wallet scanning operation
 #[derive(Debug, Clone)]
@@ -421,22 +459,18 @@ impl Default for WalletScanner {
     }
 }
 
-/// Core scanning logic - simplified and focused with batch processing
+// =============================================================================
+// Block processing helper functions
+// =============================================================================
+
+/// Determine scanning block range with resume support
 #[cfg(feature = "grpc")]
-async fn scan_wallet_across_blocks_with_cancellation(
-    _scanner: &mut GrpcBlockchainScanner,
-    _scan_context: &ScanContext,
+async fn determine_scan_range(
     config: &BinaryScanConfig,
     storage_backend: &mut ScannerStorage,
-    _cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-    _progress_tracker: Option<&mut ProgressTracker>,
-) -> LightweightWalletResult<ScanResult> {
-    let has_specific_blocks = config.block_heights.is_some();
-
+) -> LightweightWalletResult<(u64, u64)> {
     // Handle automatic resume functionality for database storage
-    let (from_block, to_block) = if config.use_database
-        && config.explicit_from_block.is_none()
-        && config.block_heights.is_none()
+    if config.use_database && config.explicit_from_block.is_none() && config.block_heights.is_none()
     {
         #[cfg(feature = "storage")]
         if let Some(_wallet_id) = storage_backend.wallet_id {
@@ -448,36 +482,35 @@ async fn scan_wallet_across_blocks_with_cancellation(
                         format_number(wallet_birthday)
                     );
                 }
-                (wallet_birthday, config.to_block)
+                return Ok((wallet_birthday, config.to_block));
             } else {
                 if !config.quiet {
                     println!("📄 Wallet not found, starting from configuration");
                 }
-                (config.from_block, config.to_block)
+                return Ok((config.from_block, config.to_block));
             }
         } else {
             if !config.quiet {
                 println!("⚠️  Resume requires a selected wallet");
             }
-            (config.from_block, config.to_block)
+            return Ok((config.from_block, config.to_block));
         }
 
         #[cfg(not(feature = "storage"))]
         {
-            (config.from_block, config.to_block)
+            return Ok((config.from_block, config.to_block));
         }
     } else {
-        (config.from_block, config.to_block)
-    };
+        Ok((config.from_block, config.to_block))
+    }
+}
 
-    let wallet_state = WalletState::new();
-    let _total_outputs = 0;
-    let _start_time = Instant::now();
+/// Prepare block heights list for scanning
+#[cfg(feature = "grpc")]
+fn prepare_block_heights(config: &BinaryScanConfig, from_block: u64, to_block: u64) -> Vec<u64> {
+    let has_specific_blocks = config.block_heights.is_some();
 
-    // TODO: Setup progress tracking if available
-    // Progress tracking will be implemented in a future task
-
-    let block_heights = if has_specific_blocks {
+    if has_specific_blocks {
         let heights = config.block_heights.as_ref().unwrap().clone();
         if !config.quiet {
             display_scan_info(config, &heights, has_specific_blocks);
@@ -489,7 +522,38 @@ async fn scan_wallet_across_blocks_with_cancellation(
             display_scan_info(config, &heights, has_specific_blocks);
         }
         heights
-    };
+    }
+}
+
+/// Initialize scanning operation and return initial state
+#[cfg(feature = "grpc")]
+fn initialize_scan_state() -> (WalletState, Instant) {
+    let wallet_state = WalletState::new();
+    let start_time = Instant::now();
+    (wallet_state, start_time)
+}
+
+/// Core scanning logic - simplified and focused with batch processing
+#[cfg(feature = "grpc")]
+async fn scan_wallet_across_blocks_with_cancellation(
+    _scanner: &mut GrpcBlockchainScanner,
+    _scan_context: &ScanContext,
+    config: &BinaryScanConfig,
+    storage_backend: &mut ScannerStorage,
+    _cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    _progress_tracker: Option<&mut ProgressTracker>,
+) -> LightweightWalletResult<ScanResult> {
+    // Determine scanning block range with resume support
+    let (from_block, to_block) = determine_scan_range(config, storage_backend).await?;
+
+    // Initialize scanning state
+    let (wallet_state, _start_time) = initialize_scan_state();
+
+    // TODO: Setup progress tracking if available
+    // Progress tracking will be implemented in a future task
+
+    // Prepare block heights list for scanning
+    let block_heights = prepare_block_heights(config, from_block, to_block);
 
     // TODO: Implement the actual scanning logic
     // For now, this is a placeholder that will be fully implemented in future tasks
@@ -546,27 +610,55 @@ fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_speci
     println!();
 }
 
-/// Display wallet activity summary
+// =============================================================================
+// Balance calculation and summary helper functions
+// =============================================================================
+
+/// Calculate wallet balance summary
 #[cfg(feature = "grpc")]
-#[allow(dead_code)]
-fn display_wallet_activity(wallet_state: &WalletState, from_block: u64, to_block: u64) {
-    let (total_received, total_spent, balance, _unspent_count, _spent_count) =
-        wallet_state.get_summary();
-    let total_count = wallet_state.transactions.len();
+fn calculate_wallet_summary(wallet_state: &WalletState) -> (u64, u64, i64, usize, usize) {
+    wallet_state.get_summary()
+}
 
-    if total_count == 0 {
-        println!(
-            "💡 No wallet activity found in blocks {} to {}",
-            format_number(from_block),
-            format_number(to_block)
-        );
-        if from_block > 1 {
-            println!("   ⚠️  Note: Scanning from block {} - wallet history before this block was not checked", format_number(from_block));
-            println!("   💡 For complete history, try: cargo run --bin scanner --features grpc-storage -- --seed-phrase \"your seed phrase\" --from-block 1");
-        }
-        return;
+/// Calculate transaction direction counts
+#[cfg(feature = "grpc")]
+fn calculate_direction_counts(wallet_state: &WalletState) -> (usize, usize, usize) {
+    wallet_state.get_direction_counts()
+}
+
+/// Format currency amount for display
+#[cfg(feature = "grpc")]
+fn format_currency_amount(amount: u64) -> String {
+    format!(
+        "{} μT ({:.6} T)",
+        format_number(amount),
+        amount as f64 / 1_000_000.0
+    )
+}
+
+/// Check if wallet has any activity in the scanned range
+#[cfg(feature = "grpc")]
+fn has_wallet_activity(wallet_state: &WalletState) -> bool {
+    !wallet_state.transactions.is_empty()
+}
+
+/// Display no activity message
+#[cfg(feature = "grpc")]
+fn display_no_activity_message(from_block: u64, to_block: u64) {
+    println!(
+        "💡 No wallet activity found in blocks {} to {}",
+        format_number(from_block),
+        format_number(to_block)
+    );
+    if from_block > 1 {
+        println!("   ⚠️  Note: Scanning from block {} - wallet history before this block was not checked", format_number(from_block));
+        println!("   💡 For complete history, try: cargo run --bin scanner --features grpc-storage -- --seed-phrase \"your seed phrase\" --from-block 1");
     }
+}
 
+/// Display wallet activity summary header
+#[cfg(feature = "grpc")]
+fn display_activity_header(from_block: u64, to_block: u64) {
     println!("🏦 WALLET ACTIVITY SUMMARY");
     println!("========================");
     println!(
@@ -575,30 +667,61 @@ fn display_wallet_activity(wallet_state: &WalletState, from_block: u64, to_block
         format_number(to_block),
         format_number(to_block - from_block + 1)
     );
+}
 
-    let (inbound_count, outbound_count, _) = wallet_state.get_direction_counts();
+/// Display transaction breakdown by direction
+#[cfg(feature = "grpc")]
+fn display_transaction_breakdown(
+    inbound_count: usize,
+    outbound_count: usize,
+    total_received: u64,
+    total_spent: u64,
+) {
     println!(
-        "📥 Inbound:  {} transactions, {} μT ({:.6} T)",
+        "📥 Inbound:  {} transactions, {}",
         format_number(inbound_count),
-        format_number(total_received),
-        total_received as f64 / 1_000_000.0
+        format_currency_amount(total_received)
     );
     println!(
-        "📤 Outbound: {} transactions, {} μT ({:.6} T)",
+        "📤 Outbound: {} transactions, {}",
         format_number(outbound_count),
-        format_number(total_spent),
-        total_spent as f64 / 1_000_000.0
+        format_currency_amount(total_spent)
     );
+}
+
+/// Display current balance and total activity
+#[cfg(feature = "grpc")]
+fn display_balance_and_totals(balance: i64, total_count: usize) {
     println!(
-        "💰 Current balance: {} μT ({:.6} T)",
-        format_number(balance),
-        balance as f64 / 1_000_000.0
+        "💰 Current balance: {}",
+        format_currency_amount(balance.abs() as u64)
     );
     println!(
         "📊 Total activity: {} transactions",
         format_number(total_count)
     );
     println!();
+}
+
+/// Display wallet activity summary
+#[cfg(feature = "grpc")]
+#[allow(dead_code)]
+fn display_wallet_activity(wallet_state: &WalletState, from_block: u64, to_block: u64) {
+    if !has_wallet_activity(wallet_state) {
+        display_no_activity_message(from_block, to_block);
+        return;
+    }
+
+    // Calculate summary values
+    let (total_received, total_spent, balance, _unspent_count, _spent_count) =
+        calculate_wallet_summary(wallet_state);
+    let (inbound_count, outbound_count, _) = calculate_direction_counts(wallet_state);
+    let total_count = wallet_state.transactions.len();
+
+    // Display formatted summary
+    display_activity_header(from_block, to_block);
+    display_transaction_breakdown(inbound_count, outbound_count, total_received, total_spent);
+    display_balance_and_totals(balance, total_count);
 }
 
 // Placeholder type definitions until actual implementation
