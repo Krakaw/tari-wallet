@@ -119,7 +119,8 @@ use lightweight_wallet_libs::{
     errors::LightweightWalletResult,
     scanning::{
         BinaryScanConfig, BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder,
-        OutputFormat, ScanContext, ScannerStorage,
+        OutputFormat, ProgressCallback, ProgressConfig, ProgressInfo, ProgressTracker, ScanContext,
+        ScannerStorage,
     },
     wallet::Wallet,
     KeyManagementError, LightweightWalletError,
@@ -128,8 +129,6 @@ use lightweight_wallet_libs::{
 use tari_utilities::ByteArray;
 #[cfg(feature = "grpc")]
 use tokio::signal;
-#[cfg(feature = "grpc")]
-use tokio::time::Instant;
 
 // Background writer imports moved to src/scanning/background_writer.rs
 
@@ -297,57 +296,19 @@ async fn display_completion_info(
 
 // ScanContext moved to src/scanning/scan_config.rs
 
-/// Progress tracking for scanning
+// Progress display function for the scanner binary
 #[cfg(feature = "grpc")]
-pub struct ScanProgress {
-    pub current_block: u64,
-    pub total_blocks: usize,
-    pub blocks_processed: usize,
-    pub outputs_found: usize,
-    pub inputs_found: usize,
-    pub start_time: Instant,
-}
-
-#[cfg(feature = "grpc")]
-impl ScanProgress {
-    pub fn new(total_blocks: usize) -> Self {
-        Self {
-            current_block: 0,
-            total_blocks,
-            blocks_processed: 0,
-            outputs_found: 0,
-            inputs_found: 0,
-            start_time: Instant::now(),
-        }
-    }
-
-    pub fn update(&mut self, block_height: u64, found_outputs: usize, spent_outputs: usize) {
-        self.current_block = block_height;
-        self.blocks_processed += 1;
-        self.outputs_found += found_outputs;
-        self.inputs_found += spent_outputs;
-    }
-
-    pub fn display_progress(&self, quiet: bool, frequency: usize) {
-        if quiet || self.blocks_processed % frequency != 0 {
-            return;
-        }
-
-        let progress_percent = (self.blocks_processed as f64 / self.total_blocks as f64) * 100.0;
-        let elapsed = self.start_time.elapsed();
-        let blocks_per_sec = self.blocks_processed as f64 / elapsed.as_secs_f64();
-
-        print!("\r🔍 Progress: {:.1}% ({}/{}) | Block {} | {:.1} blocks/s | Found: {} outputs, {} spent   ",
-            progress_percent,
-            format_number(self.blocks_processed),
-            format_number(self.total_blocks),
-            format_number(self.current_block),
-            blocks_per_sec,
-            format_number(self.outputs_found),
-            format_number(self.inputs_found)
-        );
-        std::io::Write::flush(&mut std::io::stdout()).unwrap();
-    }
+fn display_progress(progress_info: &ProgressInfo) {
+    print!("\r🔍 Progress: {:.1}% ({}/{}) | Block {} | {:.1} blocks/s | Found: {} outputs, {} spent   ",
+        progress_info.progress_percent,
+        format_number(progress_info.blocks_processed),
+        format_number(progress_info.total_blocks),
+        format_number(progress_info.current_block),
+        progress_info.blocks_per_sec,
+        format_number(progress_info.outputs_found),
+        format_number(progress_info.inputs_found)
+    );
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
 }
 
 #[cfg(feature = "grpc")]
@@ -917,7 +878,17 @@ async fn scan_wallet_across_blocks_with_cancellation(
     // Reset transaction counter for this scan session (only count new transactions found)
     storage_backend.last_saved_transaction_count = 0;
 
-    let _progress = ScanProgress::new(block_heights.len());
+    // Set up progress tracking
+    let progress_config = ProgressConfig {
+        frequency: config.progress_frequency,
+        quiet: config.quiet,
+        calculate_eta: true,
+    };
+
+    let progress_callback: ProgressCallback = Box::new(display_progress);
+    let mut progress_tracker = ProgressTracker::with_config(block_heights.len(), progress_config)
+        .with_callback(progress_callback);
+
     let batch_size = config.batch_size;
 
     // Process blocks in batches
@@ -1160,6 +1131,9 @@ async fn scan_wallet_across_blocks_with_cancellation(
                             }
                         }
                     }
+
+                    // Update progress tracker with results
+                    progress_tracker.update(*block_height, result.0, result.1);
 
                     result
                 }

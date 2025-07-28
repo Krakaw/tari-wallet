@@ -34,8 +34,9 @@ use crate::{
     errors::{DataStructureError, LightweightWalletError, LightweightWalletResult},
     extraction::{extract_wallet_output, ExtractionConfig},
     scanning::{
-        BlockInfo, BlockScanResult, BlockchainScanner, DefaultScanningLogic, ProgressCallback,
-        ScanConfig, TipInfo, WalletScanConfig, WalletScanResult, WalletScanner,
+        BlockInfo, BlockScanResult, BlockchainScanner, DefaultScanningLogic,
+        LegacyProgressCallback, ScanConfig, TipInfo, WalletScanConfig, WalletScanResult,
+        WalletScanner,
     },
     wallet::Wallet,
 };
@@ -1157,7 +1158,7 @@ impl WalletScanner for GrpcBlockchainScanner {
     async fn scan_wallet_with_progress(
         &mut self,
         config: WalletScanConfig,
-        progress_callback: Option<&ProgressCallback>,
+        progress_callback: Option<&LegacyProgressCallback>,
     ) -> LightweightWalletResult<WalletScanResult> {
         // Validate that we have key management set up
         if config.key_manager.is_none() && config.key_store.is_none() {

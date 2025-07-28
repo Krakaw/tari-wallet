@@ -84,12 +84,12 @@ pub use background_writer::{BackgroundWriter, BackgroundWriterCommand};
 #[cfg(feature = "grpc")]
 pub use storage_manager::ScannerStorage;
 
-// TODO: Uncomment when ProgressTracker is moved from scanner.rs
-// #[cfg(feature = "grpc")]
-// pub use progress::ProgressTracker;
+// Re-export progress tracking types for scanner binary operations
+#[cfg(feature = "grpc")]
+pub use progress::{ProgressCallback, ProgressConfig, ProgressInfo, ProgressTracker};
 
-/// Progress callback for scanning operations
-pub type ProgressCallback = Box<dyn Fn(ScanProgress) + Send + Sync>;
+/// Legacy progress callback for scanning operations (for compatibility)
+pub type LegacyProgressCallback = Box<dyn Fn(ScanProgress) + Send + Sync>;
 
 /// Scanning progress information
 #[derive(Debug, Clone)]
@@ -146,7 +146,10 @@ mod duration_serde {
 
 impl ScanConfig {
     /// Create a new scan config with a progress callback
-    pub fn with_progress_callback(self, callback: ProgressCallback) -> ScanConfigWithCallback {
+    pub fn with_progress_callback(
+        self,
+        callback: LegacyProgressCallback,
+    ) -> ScanConfigWithCallback {
         ScanConfigWithCallback {
             config: self,
             progress_callback: Some(callback),
@@ -157,7 +160,7 @@ impl ScanConfig {
 /// Scan config with progress callback (not Debug/Clone)
 pub struct ScanConfigWithCallback {
     pub config: ScanConfig,
-    pub progress_callback: Option<ProgressCallback>,
+    pub progress_callback: Option<LegacyProgressCallback>,
 }
 
 impl Default for ScanConfig {
@@ -377,7 +380,7 @@ pub trait WalletScanner: Send + Sync {
     async fn scan_wallet_with_progress(
         &mut self,
         config: WalletScanConfig,
-        progress_callback: Option<&ProgressCallback>,
+        progress_callback: Option<&LegacyProgressCallback>,
     ) -> LightweightWalletResult<WalletScanResult>;
 
     /// Get the underlying blockchain scanner
@@ -713,7 +716,7 @@ impl DefaultScanningLogic {
     pub async fn scan_blocks_with_progress<S>(
         scanner: &mut S,
         config: ScanConfig,
-        progress_callback: Option<&ProgressCallback>,
+        progress_callback: Option<&LegacyProgressCallback>,
     ) -> LightweightWalletResult<Vec<BlockScanResult>>
     where
         S: BlockchainScanner,
@@ -769,7 +772,7 @@ impl DefaultScanningLogic {
     pub async fn scan_wallet_with_progress<S>(
         scanner: &mut S,
         config: WalletScanConfig,
-        progress_callback: Option<&ProgressCallback>,
+        progress_callback: Option<&LegacyProgressCallback>,
     ) -> LightweightWalletResult<WalletScanResult>
     where
         S: BlockchainScanner,
