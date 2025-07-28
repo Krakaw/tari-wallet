@@ -3,6 +3,15 @@
 //! This module provides a lightweight interface for scanning the Tari blockchain
 //! for wallet outputs. It uses a trait-based approach that allows different
 //! backend implementations (gRPC, HTTP, etc.) to be plugged in.
+//!
+//! ## Scanner Refactoring Components
+//!
+//! The following modules support the refactored scanner.rs binary:
+//! - `scan_config`: Configuration structures for scanner binary operations
+//! - `storage_manager`: Storage abstraction for scanner binary
+//! - `background_writer`: Async database operations for scanner binary
+//! - `wallet_scanner`: Main scanning implementation for scanner binary
+//! - `progress`: Progress tracking utilities for scanner binary
 
 use std::time::{Duration, Instant};
 
@@ -35,12 +44,41 @@ pub mod grpc_scanner;
 // Include HTTP scanner
 pub mod http_scanner;
 
+// Scanner refactoring modules (for binary refactoring)
+#[cfg(feature = "grpc")]
+pub mod scan_config;
+
+#[cfg(all(feature = "grpc", feature = "storage"))]
+pub mod storage_manager;
+
+#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+pub mod background_writer;
+
+#[cfg(feature = "grpc")]
+pub mod wallet_scanner;
+
+#[cfg(feature = "grpc")]
+pub mod progress;
+
 // Re-export GRPC scanner types
 #[cfg(feature = "grpc")]
 pub use grpc_scanner::{GrpcBlockchainScanner, GrpcScannerBuilder};
 
 // Re-export HTTP scanner types
 pub use http_scanner::{HttpBlockchainScanner, HttpScannerBuilder};
+
+// Re-export scanner refactoring types (for binary refactoring)
+#[cfg(feature = "grpc")]
+pub use scan_config::*;
+
+#[cfg(feature = "grpc")]
+pub use wallet_scanner::{BinaryScanResult, BinaryWalletScanner};
+
+#[cfg(all(feature = "grpc", feature = "storage"))]
+pub use storage_manager::ScannerStorage;
+
+#[cfg(feature = "grpc")]
+pub use progress::BinaryProgressTracker;
 
 /// Progress callback for scanning operations
 pub type ProgressCallback = Box<dyn Fn(ScanProgress) + Send + Sync>;
