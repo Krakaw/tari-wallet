@@ -78,7 +78,7 @@ pub use wallet_scanner::{BinaryScanResult, BinaryWalletScanner};
 
 // Re-export background writer types for scanner binary operations
 #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
-pub use background_writer::BackgroundWriterCommand;
+pub use background_writer::{BackgroundWriter, BackgroundWriterCommand};
 
 // TODO: Uncomment when ScannerStorage is moved from scanner.rs
 // #[cfg(all(feature = "grpc", feature = "storage"))]

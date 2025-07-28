@@ -52,8 +52,8 @@ Based on the PRD requirements, this task list guides the implementation of extra
 
 - [ ] 3.0 Extract storage management and background writer systems
   - [x] 3.1 Move `BackgroundWriterCommand` enum to `src/scanning/background_writer.rs` with proper feature flags
-  - [ ] 3.2 Move `BackgroundWriter` struct and implementation to `src/scanning/background_writer.rs`
-  - [ ] 3.3 Move background writer loop function and async operations to `src/scanning/background_writer.rs`
+  - [x] 3.2 Move `BackgroundWriter` struct and implementation to `src/scanning/background_writer.rs`
+  - [x] 3.3 Move background writer loop function and async operations to `src/scanning/background_writer.rs`
   - [ ] 3.4 Move `ScannerStorage` struct to `src/scanning/storage_manager.rs`
   - [ ] 3.5 Move core storage methods: `new_memory()`, `new_with_database()`, `start_background_writer()`, `stop_background_writer()`
   - [ ] 3.6 Move wallet management methods: `list_wallets()`, `select_or_create_wallet()`, `load_scan_context_from_wallet()`, `get_wallet_birthday()`

@@ -7,16 +7,13 @@
 //! This module is part of the scanner.rs binary refactoring effort.
 
 #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
-use tokio::sync::oneshot;
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
 use crate::{
-    data_structures::{
-        types::CompressedCommitment,
-        wallet_transaction::WalletTransaction,
-    },
+    data_structures::{types::CompressedCommitment, wallet_transaction::WalletTransaction},
     errors::LightweightWalletResult,
-    storage::StoredOutput,
+    storage::{StoredOutput, WalletStorage},
 };
+#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+use tokio::sync::{mpsc, oneshot};
 
 /// Background writer commands for non-WASM32 architectures
 ///
@@ -76,4 +73,86 @@ pub enum BackgroundWriterCommand {
     },
 }
 
-// TODO: Move BackgroundWriter struct and implementation from scanner.rs
+/// Background writer service for non-WASM32 architectures
+///
+/// This struct manages a background thread for performing database operations
+/// asynchronously, improving scanning performance by decoupling writes from
+/// the main scanning loop.
+#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+pub struct BackgroundWriter {
+    /// Command sender for communicating with the background writer thread
+    pub command_tx: mpsc::UnboundedSender<BackgroundWriterCommand>,
+    /// Join handle for the background writer task
+    pub join_handle: tokio::task::JoinHandle<()>,
+}
+
+#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+impl BackgroundWriter {
+    /// Background writer main loop (non-WASM32 only)
+    ///
+    /// This function runs in a background task and processes commands from the
+    /// command receiver. It handles all database operations asynchronously,
+    /// including saving transactions, outputs, updating scan progress, and
+    /// marking transactions as spent.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage` - Database storage interface for performing operations
+    /// * `command_rx` - Receiver for background writer commands
+    pub async fn background_writer_loop(
+        storage: Box<dyn WalletStorage>,
+        command_rx: &mut mpsc::UnboundedReceiver<BackgroundWriterCommand>,
+    ) {
+        while let Some(command) = command_rx.recv().await {
+            match command {
+                BackgroundWriterCommand::SaveTransactions {
+                    wallet_id,
+                    transactions,
+                    response_tx,
+                } => {
+                    let result = storage.save_transactions(wallet_id, &transactions).await;
+                    let _ = response_tx.send(result);
+                }
+                BackgroundWriterCommand::SaveOutputs {
+                    outputs,
+                    response_tx,
+                } => {
+                    let result = storage.save_outputs(&outputs).await;
+                    let _ = response_tx.send(result);
+                }
+                BackgroundWriterCommand::UpdateWalletScannedBlock {
+                    wallet_id,
+                    block_height,
+                    response_tx,
+                } => {
+                    let result = storage
+                        .update_wallet_scanned_block(wallet_id, block_height)
+                        .await;
+                    let _ = response_tx.send(result);
+                }
+                BackgroundWriterCommand::MarkTransactionSpent {
+                    commitment,
+                    block_height,
+                    input_index,
+                    response_tx,
+                } => {
+                    let result = storage
+                        .mark_transaction_spent(&commitment, block_height, input_index)
+                        .await;
+                    let _ = response_tx.send(result);
+                }
+                BackgroundWriterCommand::MarkTransactionsSpentBatch {
+                    commitments,
+                    response_tx,
+                } => {
+                    let result = storage.mark_transactions_spent_batch(&commitments).await;
+                    let _ = response_tx.send(result);
+                }
+                BackgroundWriterCommand::Shutdown { response_tx } => {
+                    let _ = response_tx.send(());
+                    break;
+                }
+            }
+        }
+    }
+}

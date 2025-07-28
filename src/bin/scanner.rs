@@ -120,8 +120,8 @@ use lightweight_wallet_libs::{
     },
     errors::LightweightWalletResult,
     scanning::{
-        BackgroundWriterCommand, BinaryScanConfig, BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder,
-        OutputFormat, ScanContext,
+        BackgroundWriter, BackgroundWriterCommand, BinaryScanConfig, BlockchainScanner,
+        GrpcBlockchainScanner, GrpcScannerBuilder, OutputFormat, ScanContext,
     },
     wallet::Wallet,
     KeyManagementError, LightweightWalletError,
@@ -225,14 +225,7 @@ pub struct CliArgs {
 
 // OutputFormat moved to src/scanning/scan_config.rs
 
-// BackgroundWriterCommand moved to src/scanning/background_writer.rs
-
-/// Background writer service for non-WASM32 architectures
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
-pub struct BackgroundWriter {
-    pub command_tx: mpsc::UnboundedSender<BackgroundWriterCommand>,
-    pub join_handle: tokio::task::JoinHandle<()>,
-}
+// BackgroundWriter and BackgroundWriterCommand moved to src/scanning/background_writer.rs
 
 /// Unified storage handler for the scanner
 #[cfg(feature = "grpc")]
@@ -309,7 +302,7 @@ impl ScannerStorage {
 
         // Spawn the background writer task
         let join_handle = tokio::spawn(async move {
-            Self::background_writer_loop(background_database, &mut command_rx).await;
+            BackgroundWriter::background_writer_loop(background_database, &mut command_rx).await;
         });
 
         self.background_writer = Some(BackgroundWriter {
@@ -318,65 +311,6 @@ impl ScannerStorage {
         });
 
         Ok(())
-    }
-
-    /// Background writer main loop (non-WASM32 only)
-    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
-    async fn background_writer_loop(
-        storage: Box<dyn WalletStorage>,
-        command_rx: &mut mpsc::UnboundedReceiver<BackgroundWriterCommand>,
-    ) {
-        while let Some(command) = command_rx.recv().await {
-            match command {
-                BackgroundWriterCommand::SaveTransactions {
-                    wallet_id,
-                    transactions,
-                    response_tx,
-                } => {
-                    let result = storage.save_transactions(wallet_id, &transactions).await;
-                    let _ = response_tx.send(result);
-                }
-                BackgroundWriterCommand::SaveOutputs {
-                    outputs,
-                    response_tx,
-                } => {
-                    let result = storage.save_outputs(&outputs).await;
-                    let _ = response_tx.send(result);
-                }
-                BackgroundWriterCommand::UpdateWalletScannedBlock {
-                    wallet_id,
-                    block_height,
-                    response_tx,
-                } => {
-                    let result = storage
-                        .update_wallet_scanned_block(wallet_id, block_height)
-                        .await;
-                    let _ = response_tx.send(result);
-                }
-                BackgroundWriterCommand::MarkTransactionSpent {
-                    commitment,
-                    block_height,
-                    input_index,
-                    response_tx,
-                } => {
-                    let result = storage
-                        .mark_transaction_spent(&commitment, block_height, input_index)
-                        .await;
-                    let _ = response_tx.send(result);
-                }
-                BackgroundWriterCommand::MarkTransactionsSpentBatch {
-                    commitments,
-                    response_tx,
-                } => {
-                    let result = storage.mark_transactions_spent_batch(&commitments).await;
-                    let _ = response_tx.send(result);
-                }
-                BackgroundWriterCommand::Shutdown { response_tx } => {
-                    let _ = response_tx.send(());
-                    break;
-                }
-            }
-        }
     }
 
     /// Stop the background writer service (non-WASM32 only)
