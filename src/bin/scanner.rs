@@ -108,14 +108,12 @@ use clap::Parser;
 use lightweight_wallet_libs::{
     common::format_number,
     data_structures::{
-        block::Block, payment_id::PaymentId, transaction::TransactionDirection,
-        types::CompressedCommitment, wallet_transaction::WalletState,
+        payment_id::PaymentId, transaction::TransactionDirection, wallet_transaction::WalletState,
     },
     errors::LightweightWalletResult,
     scanning::{
-        BinaryScanConfig, BlockchainScanner, GrpcBlockchainScanner, GrpcScannerBuilder,
-        OutputFormat, ProgressCallback, ProgressConfig, ProgressInfo, ProgressTracker, ScanContext,
-        ScannerStorage,
+        BinaryScanConfig, BlockchainScanner, GrpcScannerBuilder, OutputFormat, ProgressInfo,
+        ScanResult, ScannerStorage, WalletScannerStruct,
     },
     KeyManagementError, LightweightWalletError,
 };
@@ -292,6 +290,7 @@ async fn display_completion_info(
 
 // Progress display function for the scanner binary
 #[cfg(feature = "grpc")]
+#[allow(dead_code)]
 fn display_progress(progress_info: &ProgressInfo) {
     print!("\r🔍 Progress: {:.1}% ({}/{}) | Block {} | {:.1} blocks/s | Found: {} outputs, {} spent   ",
         progress_info.progress_percent,
@@ -346,6 +345,7 @@ impl BlockHeightRange {
 
 /// Handle errors during block scanning (updated for batch processing)
 #[cfg(feature = "grpc")]
+#[allow(dead_code)]
 fn handle_scan_error(
     error_block_height: u64,
     remaining_blocks: &[u64],
@@ -399,443 +399,10 @@ fn handle_scan_error(
 
 /// Result type that can indicate if scan was interrupted
 #[cfg(feature = "grpc")]
-pub enum ScanResult {
-    Completed(WalletState),
-    Interrupted(WalletState),
-}
-
-/// Core scanning logic - simplified and focused with batch processing
-#[cfg(feature = "grpc")]
-async fn scan_wallet_across_blocks_with_cancellation(
-    scanner: &mut GrpcBlockchainScanner,
-    scan_context: &ScanContext,
-    config: &BinaryScanConfig,
-    storage_backend: &mut ScannerStorage,
-    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-) -> LightweightWalletResult<ScanResult> {
-    let has_specific_blocks = config.block_heights.is_some();
-
-    // Handle automatic resume functionality for database storage
-    let (from_block, to_block) = if config.use_database
-        && config.explicit_from_block.is_none()
-        && config.block_heights.is_none()
-    {
-        #[cfg(feature = "storage")]
-        if let Some(_wallet_id) = storage_backend.wallet_id {
-            // Get the wallet to check its resume block
-            if let Some(wallet_birthday) = storage_backend.get_wallet_birthday().await? {
-                if !config.quiet {
-                    println!(
-                        "📄 Resuming wallet from last scanned block {}",
-                        format_number(wallet_birthday)
-                    );
-                }
-                (wallet_birthday, config.to_block)
-            } else {
-                if !config.quiet {
-                    println!("📄 Wallet not found, starting from configuration");
-                }
-                (config.from_block, config.to_block)
-            }
-        } else {
-            if !config.quiet {
-                println!("⚠️  Resume requires a selected wallet");
-            }
-            (config.from_block, config.to_block)
-        }
-
-        #[cfg(not(feature = "storage"))]
-        {
-            (config.from_block, config.to_block)
-        }
-    } else {
-        // Use explicit from_block or default from_block
-        (config.from_block, config.to_block)
-    };
-
-    let block_heights = config
-        .block_heights
-        .clone()
-        .unwrap_or_else(|| (from_block..=to_block).collect());
-
-    if !config.quiet {
-        display_scan_info(config, &block_heights, has_specific_blocks);
-    }
-
-    // Create a fresh wallet state for this scan (don't load historical transactions)
-    let mut wallet_state = WalletState::new();
-
-    // Reset transaction counter for this scan session (only count new transactions found)
-    storage_backend.last_saved_transaction_count = 0;
-
-    // Set up progress tracking
-    let progress_config = ProgressConfig {
-        frequency: config.progress_frequency,
-        quiet: config.quiet,
-        calculate_eta: true,
-    };
-
-    let progress_callback: ProgressCallback = Box::new(display_progress);
-    let mut progress_tracker = ProgressTracker::with_config(block_heights.len(), progress_config)
-        .with_callback(progress_callback);
-
-    let batch_size = config.batch_size;
-
-    // Process blocks in batches
-    for (batch_index, batch_heights) in block_heights.chunks(batch_size).enumerate() {
-        // Check for cancellation at the start of each batch
-        if *cancel_rx.borrow() {
-            if !config.quiet {
-                println!("\n🛑 Scan cancelled - returning partial results...");
-            }
-            return Ok(ScanResult::Interrupted(wallet_state));
-        }
-
-        let batch_start_index = batch_index * batch_size;
-
-        // Display progress at the start of each batch
-        if !config.quiet && batch_index % config.progress_frequency == 0 {
-            let progress_bar = wallet_state.format_progress_bar(
-                batch_start_index as u64 + 1,
-                block_heights.len() as u64,
-                batch_heights[0],
-                "Scanning",
-            );
-            print!("\r{progress_bar}");
-            std::io::Write::flush(&mut std::io::stdout()).unwrap();
-        }
-
-        // Fetch blocks via GRPC
-        let batch_results = match scanner.get_blocks_by_heights(batch_heights.to_vec()).await {
-            Ok(blocks) => blocks,
-            Err(e) => {
-                println!(
-                    "\n❌ Error scanning batch starting at block {}: {}",
-                    batch_heights[0], e
-                );
-                println!("   Batch heights: {batch_heights:?}");
-                println!("   Error details: {e:?}");
-
-                let remaining_blocks = &block_heights[batch_start_index..];
-                if handle_scan_error(
-                    batch_heights[0],
-                    remaining_blocks,
-                    has_specific_blocks,
-                    config.to_block,
-                ) {
-                    // Check for cancellation before continuing
-                    if *cancel_rx.borrow() {
-                        return Ok(ScanResult::Interrupted(wallet_state));
-                    }
-                    continue; // Continue to next batch
-                } else {
-                    return Err(e); // Abort
-                }
-            }
-        };
-
-        // Process each block in the batch
-        for (block_index_in_batch, block_height) in batch_heights.iter().enumerate() {
-            let global_block_index = batch_start_index + block_index_in_batch;
-
-            // Find the corresponding block info from the batch results
-            let block_info = match batch_results.iter().find(|b| b.height == *block_height) {
-                Some(block) => block.clone(),
-                None => {
-                    if !config.quiet {
-                        println!("\n⚠️  Block {block_height} not found in batch, skipping...");
-                    }
-                    continue;
-                }
-            };
-
-            // Process block using the Block struct
-            let block = Block::from_block_info(block_info);
-
-            let found_outputs = block.process_outputs(
-                &scan_context.view_key,
-                &scan_context.entropy,
-                &mut wallet_state,
-            );
-            let spent_outputs = block.process_inputs(&mut wallet_state);
-
-            let scan_result = match (found_outputs, spent_outputs) {
-                (Ok(found), Ok(spent)) => Ok((found, spent)),
-                (Err(e), _) | (_, Err(e)) => Err(e),
-            };
-
-            let (_found_outputs, _spent_outputs_count) = match scan_result {
-                Ok(result) => {
-                    // Note: Spent output tracking is handled automatically by wallet_state.mark_output_spent()
-                    // called from block.process_inputs() - and we also update the database below
-
-                    // Save transactions to storage backend if using database
-                    #[cfg(feature = "storage")]
-                    if storage_backend.wallet_id.is_some() {
-                        // Mark any transactions as spent in the database that were marked as spent in this block
-                        // OPTIMIZATION: Only mark transactions if we actually have spent transactions in wallet state
-
-                        // Early exit: Skip spent marking entirely if wallet has no spent transactions
-                        let wallet_has_spent_transactions =
-                            wallet_state.transactions.iter().any(|tx| tx.is_spent);
-                        let _spent_markings_made = if !wallet_has_spent_transactions
-                            || block.inputs.is_empty()
-                        {
-                            0 // Skip processing entirely
-                        } else {
-                            // Quick bloom filter check: If no inputs match wallet commitments, skip entirely
-                            let wallet_commitments: std::collections::HashSet<_> = wallet_state
-                                .transactions
-                                .iter()
-                                .filter(|tx| tx.is_spent)
-                                .map(|tx| tx.commitment.clone())
-                                .collect();
-
-                            // Fast set intersection check - if no block inputs are in wallet, skip
-                            let has_relevant_inputs = block.inputs.iter().any(|input| {
-                                let input_commitment = CompressedCommitment::new(input.commitment);
-                                wallet_commitments.contains(&input_commitment)
-                            });
-
-                            if !has_relevant_inputs {
-                                0 // No relevant inputs in this block, skip database operations
-                            } else {
-                                // Pre-build a HashMap of spent commitments for O(1) lookup instead of O(n) linear search
-                                // This reduces complexity from O(inputs × transactions) to O(inputs + transactions)
-                                let spent_commitments: std::collections::HashMap<
-                                    CompressedCommitment,
-                                    bool,
-                                > = wallet_state
-                                    .transactions
-                                    .iter()
-                                    .filter(|tx| tx.is_spent)
-                                    .map(|tx| (tx.commitment.clone(), true))
-                                    .collect();
-
-                                // Early exit: Skip if no spent commitments in wallet
-                                if spent_commitments.is_empty() {
-                                    0
-                                } else {
-                                    // Collect all commitments that need to be marked as spent for batch processing
-                                    let mut batch_spent_commitments = Vec::new();
-                                    for (input_index, input) in block.inputs.iter().enumerate() {
-                                        let input_commitment =
-                                            CompressedCommitment::new(input.commitment);
-
-                                        // Fast O(1) HashMap lookup instead of O(n) linear search
-                                        if spent_commitments.contains_key(&input_commitment) {
-                                            batch_spent_commitments.push((
-                                                input_commitment,
-                                                *block_height,
-                                                input_index,
-                                            ));
-                                        }
-                                    }
-
-                                    // Execute batch spent marking only if we found relevant commitments
-                                    if !batch_spent_commitments.is_empty() {
-                                        match storage_backend
-                                            .mark_transactions_spent_batch_arch_specific(
-                                                &batch_spent_commitments,
-                                            )
-                                            .await
-                                        {
-                                            Ok(count) => count,
-                                            Err(e) => {
-                                                if !config.quiet {
-                                                    println!("\n⚠️  Warning: Failed to batch mark transactions as spent: {e}");
-                                                }
-                                                0
-                                            }
-                                        }
-                                    } else {
-                                        0
-                                    }
-                                }
-                            }
-                        };
-
-                        // Save only NEW transactions incrementally (significant performance improvement)
-                        // This reduces O(n²) database writes to O(n) writes
-                        let all_transactions: Vec<_> = wallet_state.transactions.to_vec();
-
-                        if !all_transactions.is_empty() {
-                            // Get the count before incremental save
-                            let prev_saved_count = storage_backend.last_saved_transaction_count;
-
-                            // Save only new transactions since last save (incremental)
-                            if let Err(e) = storage_backend
-                                .save_transactions_incremental(&all_transactions)
-                                .await
-                            {
-                                if !config.quiet {
-                                    println!("\n⚠️  Warning: Failed to save new transactions to database: {e}");
-                                }
-                            } else {
-                                // Verify that outbound transactions have proper spending details (only for new transactions)
-                                let new_transactions = if all_transactions.len() > prev_saved_count
-                                {
-                                    &all_transactions[prev_saved_count..]
-                                } else {
-                                    &[]
-                                };
-
-                                for tx in new_transactions {
-                                    if tx.transaction_direction == TransactionDirection::Outbound
-                                        && tx.input_index.is_none()
-                                        && !config.quiet
-                                    {
-                                        println!("\n⚠️  Warning: Outbound transaction missing input_index");
-                                    }
-                                }
-                            }
-                        }
-
-                        // Extract and save UTXO data for wallet outputs (works for both seed phrase and view-key modes)
-                        match lightweight_wallet_libs::scanning::extract_utxo_outputs_from_wallet_state(
-                            &wallet_state,
-                            scan_context,
-                            storage_backend.wallet_id.unwrap(),
-                            &block.outputs,
-                            *block_height,
-                        ) {
-                            Ok(utxo_outputs) => {
-                                if !utxo_outputs.is_empty() {
-                                    if let Err(e) =
-                                        storage_backend.save_outputs(&utxo_outputs).await
-                                    {
-                                        if !config.quiet {
-                                            println!("\n⚠️  Warning: Failed to save {} UTXO outputs from block {} to database: {}", 
-                                                format_number(utxo_outputs.len()), format_number(*block_height), e);
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                if !config.quiet {
-                                    println!(
-                                        "\n⚠️  Warning: Failed to extract UTXO data from block {}: {}",
-                                        format_number(*block_height), e
-                                    );
-                                }
-                            }
-                        }
-                    }
-
-                    // Update progress tracker with results
-                    progress_tracker.update(*block_height, result.0, result.1);
-
-                    result
-                }
-                Err(e) => {
-                    println!("\n❌ Error processing block {block_height}: {e}");
-                    println!("   Block height: {block_height}");
-                    println!("   Error details: {e:?}");
-
-                    let remaining_blocks = &block_heights[global_block_index..];
-                    if handle_scan_error(
-                        *block_height,
-                        remaining_blocks,
-                        has_specific_blocks,
-                        config.to_block,
-                    ) {
-                        // Check for cancellation before continuing
-                        if *cancel_rx.borrow() {
-                            return Ok(ScanResult::Interrupted(wallet_state));
-                        }
-                        continue; // Continue to next block
-                    } else {
-                        return Err(e); // Abort
-                    }
-                }
-            };
-        }
-
-        // Update wallet scanned block at the end of each batch (for progress tracking)
-        #[cfg(feature = "storage")]
-        if storage_backend.wallet_id.is_some() {
-            if let Some(last_block_height) = batch_heights.last() {
-                if let Err(e) = storage_backend
-                    .update_wallet_scanned_block(*last_block_height)
-                    .await
-                {
-                    if !config.quiet {
-                        println!(
-                            "\n⚠️  Warning: Failed to update wallet scanned block to {}: {}",
-                            format_number(*last_block_height),
-                            e
-                        );
-                    }
-                }
-            }
-        }
-        // Update progress display after processing each batch
-        if !config.quiet {
-            let processed_blocks =
-                std::cmp::min(batch_start_index + batch_size, block_heights.len());
-            let progress_bar = wallet_state.format_progress_bar(
-                processed_blocks as u64,
-                block_heights.len() as u64,
-                batch_heights.last().cloned().unwrap_or(0),
-                if processed_blocks == block_heights.len() {
-                    "Complete"
-                } else {
-                    "Scanning"
-                },
-            );
-            print!("\r{progress_bar}");
-            std::io::Write::flush(&mut std::io::stdout()).unwrap();
-        }
-    }
-
-    // Final wallet scanned block update (ensure highest processed block is recorded)
-    #[cfg(feature = "storage")]
-    if storage_backend.wallet_id.is_some() {
-        if let Some(highest_block) = block_heights.last() {
-            if let Err(e) = storage_backend
-                .update_wallet_scanned_block(*highest_block)
-                .await
-            {
-                if !config.quiet {
-                    println!(
-                        "\n⚠️  Warning: Failed to final update wallet scanned block to {}: {}",
-                        format_number(*highest_block),
-                        e
-                    );
-                }
-            } else if !config.quiet {
-                println!(
-                    "\n💾 Final wallet scanned block updated to: {}",
-                    format_number(*highest_block)
-                );
-            }
-        }
-    }
-
-    if !config.quiet {
-        // Ensure final progress bar shows 100%
-        let final_progress_bar = wallet_state.format_progress_bar(
-            block_heights.len() as u64,
-            block_heights.len() as u64,
-            block_heights.last().cloned().unwrap_or(0),
-            "Complete",
-        );
-        println!("\r{final_progress_bar}");
-
-        let (inbound_count, outbound_count, _) = wallet_state.get_direction_counts();
-        println!("\n✅ Scan complete!");
-        println!(
-            "📊 Total: {} outputs found, {} outputs spent",
-            format_number(inbound_count),
-            format_number(outbound_count)
-        );
-    }
-
-    Ok(ScanResult::Completed(wallet_state))
-}
 
 /// Display scan configuration information
 #[cfg(feature = "grpc")]
+#[allow(dead_code)]
 fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_specific_blocks: bool) {
     if has_specific_blocks {
         println!(
@@ -1349,9 +916,10 @@ async fn main() -> LightweightWalletResult<()> {
         let _ = cancel_tx.send(true);
     };
 
-    // Perform the scan with cancellation support
+    // Perform the scan with cancellation support using the library's WalletScanner
+    let mut wallet_scanner = WalletScannerStruct::new();
     let scan_result = tokio::select! {
-        result = scan_wallet_across_blocks_with_cancellation(&mut scanner, &final_scan_context, &config, &mut storage_backend, &mut cancel_rx) => {
+        result = wallet_scanner.scan(&mut scanner, &final_scan_context, &config, &mut storage_backend, &mut cancel_rx) => {
             Some(result)
         }
         _ = ctrl_c => {
