@@ -74,7 +74,9 @@ pub use http_scanner::{HttpBlockchainScanner, HttpScannerBuilder};
 pub use scan_config::{BinaryScanConfig, OutputFormat, ScanContext};
 
 #[cfg(feature = "grpc")]
-pub use wallet_scanner::{BinaryScanResult, BinaryWalletScanner};
+pub use wallet_scanner::{
+    extract_utxo_outputs_from_wallet_state, BinaryScanResult, BinaryWalletScanner,
+};
 
 // Re-export background writer types for scanner binary operations
 #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
