@@ -64,7 +64,7 @@ Based on the PRD requirements, this task list guides the implementation of extra
 - [ ] 4.0 Extract core scanning logic and create public API
   - [x] 4.1 Move progress display functions to `src/scanning/progress.rs` and create `ProgressTracker` struct
   - [x] 4.2 Move `extract_utxo_outputs_from_wallet_state` which uses the `StoredOutput` in `src/storage/storage_trait.rs` put it in the most logical place
-  - [ ] 4.3 Move wallet creation functions (`create_wallet_from_seed_phrase`, `create_wallet_from_view_key`) to `src/scanning/wallet_scanner.rs`
+  - [x] 4.3 Move wallet creation functions (`create_wallet_from_seed_phrase`, `create_wallet_from_view_key`) to `src/scanning/wallet_scanner.rs`
   - [ ] 4.4 Move main scanning loop function to `src/scanning/wallet_scanner.rs` as `WalletScanner::scan()` method
   - [ ] 4.5 Extract helper functions for block processing, transaction extraction, and balance calculation
   - [ ] 4.6 Move result processing and output functions, creating `ScanResult` struct for scan outcomes

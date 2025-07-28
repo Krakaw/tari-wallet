@@ -117,7 +117,6 @@ use lightweight_wallet_libs::{
         OutputFormat, ProgressCallback, ProgressConfig, ProgressInfo, ProgressTracker, ScanContext,
         ScannerStorage,
     },
-    wallet::Wallet,
     KeyManagementError, LightweightWalletError,
 };
 #[cfg(feature = "grpc")]
@@ -1203,16 +1202,15 @@ async fn main() -> LightweightWalletResult<()> {
             if !args.quiet {
                 println!("🔨 Creating wallet from seed phrase...");
             }
-            let wallet = Wallet::new_from_seed_phrase(seed_phrase, None)?;
-            let scan_context = ScanContext::from_wallet(&wallet)?;
-            let default_from_block = wallet.birthday();
+            let (scan_context, default_from_block) =
+                lightweight_wallet_libs::scanning::create_wallet_from_seed_phrase(seed_phrase)?;
             (Some(scan_context), default_from_block)
         } else if let Some(view_key_hex) = &args.view_key {
             if !args.quiet {
                 println!("🔑 Creating scan context from view key...");
             }
-            let scan_context = ScanContext::from_view_key(view_key_hex)?;
-            let default_from_block = 0; // Start from genesis when using view key only
+            let (scan_context, default_from_block) =
+                lightweight_wallet_libs::scanning::create_wallet_from_view_key(view_key_hex)?;
             (Some(scan_context), default_from_block)
         } else {
             unreachable!("Keys provided but neither seed phrase nor view key found");

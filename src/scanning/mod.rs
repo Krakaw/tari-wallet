@@ -75,6 +75,7 @@ pub use scan_config::{BinaryScanConfig, OutputFormat, ScanContext};
 
 #[cfg(feature = "grpc")]
 pub use wallet_scanner::{
+    create_wallet_from_seed_phrase, create_wallet_from_view_key,
     extract_utxo_outputs_from_wallet_state, BinaryScanResult, BinaryWalletScanner,
 };
 

@@ -21,6 +21,7 @@ use crate::{
 };
 
 use super::ScanContext;
+use crate::wallet::Wallet;
 
 /// Extract UTXO data from blockchain outputs and create StoredOutput objects
 #[cfg(all(feature = "grpc", feature = "storage"))]
@@ -293,6 +294,53 @@ fn compute_output_hash(output: &LightweightTransactionOutput) -> LightweightWall
     hasher.update(output.minimum_value_promise.as_u64().to_le_bytes());
 
     Ok(hasher.finalize().to_vec())
+}
+
+/// Create a wallet from a seed phrase and return the scan context with default block
+///
+/// This function combines wallet creation from a seed phrase with scan context creation,
+/// providing a convenient wrapper for the scanner binary.
+///
+/// # Arguments
+/// * `seed_phrase` - The mnemonic seed phrase to create the wallet from
+///
+/// # Returns
+/// A tuple containing:
+/// - `ScanContext` with view key and entropy from the wallet
+/// - `u64` representing the wallet's birthday (default from block)
+///
+/// # Errors
+/// Returns an error if the wallet creation or scan context creation fails
+pub fn create_wallet_from_seed_phrase(
+    seed_phrase: &str,
+) -> LightweightWalletResult<(ScanContext, u64)> {
+    let wallet = Wallet::new_from_seed_phrase(seed_phrase, None)?;
+    let scan_context = ScanContext::from_wallet(&wallet)?;
+    let default_from_block = wallet.birthday();
+    Ok((scan_context, default_from_block))
+}
+
+/// Create a scan context from a view key with default block set to genesis
+///
+/// This function creates a view-only scan context from a hex view key,
+/// providing a convenient wrapper for the scanner binary.
+///
+/// # Arguments
+/// * `view_key_hex` - 64-character hexadecimal string representing the view key
+///
+/// # Returns
+/// A tuple containing:
+/// - `ScanContext` with view key populated and entropy set to zeros
+/// - `u64` set to 0 (genesis block) since no wallet birthday is available
+///
+/// # Errors
+/// Returns an error if the view key is invalid or cannot be parsed
+pub fn create_wallet_from_view_key(
+    view_key_hex: &str,
+) -> LightweightWalletResult<(ScanContext, u64)> {
+    let scan_context = ScanContext::from_view_key(view_key_hex)?;
+    let default_from_block = 0; // Start from genesis when using view key only
+    Ok((scan_context, default_from_block))
 }
 
 // Placeholder type definitions until actual implementation
