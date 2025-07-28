@@ -61,7 +61,7 @@ Based on the PRD requirements, this task list guides the implementation of extra
   - [x] 3.8 Ensure all storage methods maintain architecture-specific implementations (WASM32 vs non-WASM32)
   - [x] 3.9 Remove direct user interaction from library methods, replace with error returns for binary to handle
 
-- [ ] 4.0 Extract core scanning logic and create public API
+- [x] 4.0 Extract core scanning logic and create public API
   - [x] 4.1 Move progress display functions to `src/scanning/progress.rs` and create `ProgressTracker` struct
   - [x] 4.2 Move `extract_utxo_outputs_from_wallet_state` which uses the `StoredOutput` in `src/storage/storage_trait.rs` put it in the most logical place
   - [x] 4.3 Move wallet creation functions (`create_wallet_from_seed_phrase`, `create_wallet_from_view_key`) to `src/scanning/wallet_scanner.rs`
@@ -70,7 +70,7 @@ Based on the PRD requirements, this task list guides the implementation of extra
   - [x] 4.6 Move result processing and output functions, creating `ScanResult` struct for scan outcomes
   - [x] 4.7 Design and implement `WalletScanner` struct with methods: `new()`, `scan()`, `with_progress_callback()`
   - [x] 4.8 Create clean public API with builder pattern support and comprehensive error handling
-  - [ ] 4.9 Ensure all scanning logic maintains async/await compatibility and proper zeroization
+  - [x] 4.9 Ensure all scanning logic maintains async/await compatibility and proper zeroization
 
 - [ ] 5.0 Refactor binary to use library components
   - [ ] 5.1 Strip `src/bin/scanner.rs` down to CLI-only concerns: clap parsing, user interaction, output formatting

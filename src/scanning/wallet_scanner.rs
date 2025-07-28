@@ -17,6 +17,7 @@ use blake2::{Blake2b, Digest};
 use digest::consts::U32;
 use tari_utilities::ByteArray;
 use tokio::time::Instant;
+use zeroize::Zeroize;
 
 use crate::{
     common::format_number,
@@ -282,28 +283,33 @@ fn derive_utxo_spending_keys(
 
     if has_real_entropy {
         // Derive real spending keys using wallet entropy
-        let spending_key_raw = key_derivation::derive_private_key_from_entropy(
+        let mut spending_key_raw = key_derivation::derive_private_key_from_entropy(
             entropy,
             "wallet_spending", // Branch for spending keys
             output_index,
         )?;
 
-        let script_private_key_raw = key_derivation::derive_private_key_from_entropy(
+        let mut script_private_key_raw = key_derivation::derive_private_key_from_entropy(
             entropy,
             "script_keys", // Branch for script keys
             output_index,
         )?;
 
         // Convert to PrivateKey type
-        let spending_key =
-            PrivateKey::new(spending_key_raw.as_bytes().try_into().map_err(|_| {
-                KeyManagementError::key_derivation_failed("Failed to convert spending key")
-            })?);
+        let spending_key_bytes = spending_key_raw.as_bytes().try_into().map_err(|_| {
+            KeyManagementError::key_derivation_failed("Failed to convert spending key")
+        })?;
+        let spending_key = PrivateKey::new(spending_key_bytes);
 
-        let script_private_key =
-            PrivateKey::new(script_private_key_raw.as_bytes().try_into().map_err(|_| {
+        let script_private_key_bytes =
+            script_private_key_raw.as_bytes().try_into().map_err(|_| {
                 KeyManagementError::key_derivation_failed("Failed to convert script private key")
-            })?);
+            })?;
+        let script_private_key = PrivateKey::new(script_private_key_bytes);
+
+        // Zeroize the intermediate key material
+        spending_key_raw.zeroize();
+        script_private_key_raw.zeroize();
 
         Ok((spending_key, script_private_key))
     } else {

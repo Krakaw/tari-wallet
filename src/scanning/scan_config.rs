@@ -17,6 +17,7 @@ use crate::{
 };
 use hex;
 use tari_utilities::ByteArray;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Output format options for scanner results
 ///
@@ -169,6 +170,10 @@ impl BinaryScanConfig {
 /// This structure holds the cryptographic context needed for wallet scanning,
 /// including the private view key and entropy derived from the wallet seed.
 ///
+/// # Security
+/// This structure contains sensitive cryptographic material and implements
+/// zeroization to securely clear memory when dropped.
+///
 /// # Examples
 /// ```no_run
 /// use lightweight_wallet_libs::scanning::ScanContext;
@@ -183,7 +188,7 @@ impl BinaryScanConfig {
 /// let context = ScanContext::from_view_key(view_key_hex)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct ScanContext {
     /// Private view key for wallet scanning
     pub view_key: PrivateKey,
@@ -207,7 +212,7 @@ impl ScanContext {
     /// Returns an error if the wallet seed phrase cannot be exported or processed
     pub fn from_wallet(wallet: &Wallet) -> LightweightWalletResult<Self> {
         // Setup wallet keys
-        let seed_phrase = wallet.export_seed_phrase()?;
+        let mut seed_phrase = wallet.export_seed_phrase()?;
         let encrypted_bytes = mnemonic_to_bytes(&seed_phrase)?;
         let cipher_seed = CipherSeed::from_enciphered_bytes(&encrypted_bytes, None)?;
         let entropy = cipher_seed.entropy();
@@ -216,14 +221,17 @@ impl ScanContext {
             .try_into()
             .map_err(|_| KeyManagementError::key_derivation_failed("Invalid entropy length"))?;
 
-        let view_key_raw =
+        let mut view_key_raw =
             key_derivation::derive_private_key_from_entropy(&entropy_array, "data encryption", 0)?;
-        let view_key = PrivateKey::new(
-            view_key_raw
-                .as_bytes()
-                .try_into()
-                .expect("Should convert to array"),
-        );
+        let view_key_bytes = view_key_raw
+            .as_bytes()
+            .try_into()
+            .expect("Should convert to array");
+        let view_key = PrivateKey::new(view_key_bytes);
+
+        // Zeroize intermediate sensitive data
+        seed_phrase.zeroize();
+        view_key_raw.zeroize();
 
         Ok(Self {
             view_key,
@@ -246,11 +254,12 @@ impl ScanContext {
     /// Returns an error if the hex string is invalid or not exactly 32 bytes
     pub fn from_view_key(view_key_hex: &str) -> LightweightWalletResult<Self> {
         // Parse the hex view key
-        let view_key_bytes = hex::decode(view_key_hex).map_err(|_| {
+        let mut view_key_bytes = hex::decode(view_key_hex).map_err(|_| {
             KeyManagementError::key_derivation_failed("Invalid hex format for view key")
         })?;
 
         if view_key_bytes.len() != 32 {
+            view_key_bytes.zeroize(); // Clear the invalid data
             return Err(KeyManagementError::key_derivation_failed(
                 "View key must be exactly 32 bytes (64 hex characters)",
             )
