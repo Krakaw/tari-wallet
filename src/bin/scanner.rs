@@ -106,13 +106,28 @@ use clap::Parser;
 
 #[cfg(feature = "grpc")]
 use lightweight_wallet_libs::{
+    // Core library utilities
     common::format_number,
     errors::LightweightWalletResult,
+    // Scanning library components (main business logic)
     scanning::{
-        BinaryScanConfig, BlockchainScanner, GrpcScannerBuilder, ProgressInfo, ScannerStorage,
+        // Wallet creation functions
+        create_wallet_from_seed_phrase,
+        create_wallet_from_view_key,
+        // Configuration types
+        BinaryScanConfig,
+
+        // Scanner types
+        BlockchainScanner,
+        GrpcScannerBuilder,
+        // Storage and progress types
+        ProgressInfo,
+        ScannerStorage,
+
         WalletScannerStruct,
     },
-    KeyManagementError, LightweightWalletError,
+    KeyManagementError,
+    LightweightWalletError,
 };
 
 #[cfg(feature = "grpc")]
@@ -351,15 +366,13 @@ async fn main() -> LightweightWalletResult<()> {
             if !args.quiet {
                 println!("🔨 Creating wallet from seed phrase...");
             }
-            let (scan_context, default_from_block) =
-                lightweight_wallet_libs::scanning::create_wallet_from_seed_phrase(seed_phrase)?;
+            let (scan_context, default_from_block) = create_wallet_from_seed_phrase(seed_phrase)?;
             (Some(scan_context), default_from_block)
         } else if let Some(view_key_hex) = &args.view_key {
             if !args.quiet {
                 println!("🔑 Creating scan context from view key...");
             }
-            let (scan_context, default_from_block) =
-                lightweight_wallet_libs::scanning::create_wallet_from_view_key(view_key_hex)?;
+            let (scan_context, default_from_block) = create_wallet_from_view_key(view_key_hex)?;
             (Some(scan_context), default_from_block)
         } else {
             unreachable!("Keys provided but neither seed phrase nor view key found");
