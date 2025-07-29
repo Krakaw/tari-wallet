@@ -99,7 +99,7 @@ Based on the PRD requirements, this task list guides the implementation of extra
 - [ ] 7.0 Documentation and final validation
   - [x] 7.1 Add comprehensive API documentation to all public structs and methods
   - [x] 7.2 Update `AGENT.md` with new module structure and scanning library usage examples
-  - [ ] 7.3 Update `README.md` examples to show both CLI and library usage
+  - [x] 7.3 Update `README.md` examples to show both CLI and library usage
   - [ ] 7.4 Run performance validation comparing old vs new implementation (scan times, memory usage)
   - [ ] 7.5 Run `cargo clippy --all-features` and fix all warnings to achieve zero clippy warnings
   - [ ] 7.6 Run `cargo fmt` on all files and verify code formatting standards
