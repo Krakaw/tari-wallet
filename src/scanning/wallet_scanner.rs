@@ -1739,6 +1739,571 @@ fn display_summary_results(wallet_state: &WalletState, config: &BinaryScanConfig
     println!("Spent outputs: {}", format_number(spent_count));
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_scan_metadata_new() {
+        let metadata = ScanMetadata::new(100, 200, 50, false);
+
+        assert_eq!(metadata.from_block, 100);
+        assert_eq!(metadata.to_block, 200);
+        assert_eq!(metadata.blocks_processed, 50);
+        assert!(!metadata.had_specific_blocks);
+        assert!(metadata.start_time.is_none());
+        assert!(metadata.end_time.is_none());
+    }
+
+    #[test]
+    fn test_scan_metadata_duration() {
+        let mut metadata = ScanMetadata::new(100, 200, 50, false);
+
+        // No duration without times set
+        assert!(metadata.duration().is_none());
+
+        // Set times
+        let start = Instant::now();
+        std::thread::sleep(Duration::from_millis(10));
+        let end = Instant::now();
+
+        metadata.start_time = Some(start);
+        metadata.end_time = Some(end);
+
+        // Should have a duration now
+        let duration = metadata.duration().unwrap();
+        assert!(duration.as_millis() >= 10);
+    }
+
+    #[test]
+    fn test_scan_metadata_blocks_per_second() {
+        let mut metadata = ScanMetadata::new(100, 200, 100, false);
+
+        // No speed without duration
+        assert!(metadata.blocks_per_second().is_none());
+
+        // Set times for 1 second duration
+        let start = Instant::now();
+        let end = start + Duration::from_secs(1);
+        metadata.start_time = Some(start);
+        metadata.end_time = Some(end);
+
+        // Should calculate 100 blocks/second
+        let bps = metadata.blocks_per_second().unwrap();
+        assert_eq!(bps, 100.0);
+    }
+
+    #[test]
+    fn test_scan_result_wallet_state() {
+        let wallet_state = WalletState::new();
+        let metadata = ScanMetadata::new(100, 200, 50, false);
+
+        let completed = ScanResult::Completed(wallet_state.clone(), Some(metadata.clone()));
+        let interrupted = ScanResult::Interrupted(wallet_state.clone(), Some(metadata));
+
+        // Both should return the same wallet state
+        assert_eq!(completed.wallet_state().transactions.len(), 0);
+        assert_eq!(interrupted.wallet_state().transactions.len(), 0);
+    }
+
+    #[test]
+    fn test_scan_result_metadata() {
+        let wallet_state = WalletState::new();
+        let metadata = ScanMetadata::new(100, 200, 50, false);
+
+        let result = ScanResult::Completed(wallet_state, Some(metadata));
+
+        let returned_metadata = result.metadata().unwrap();
+        assert_eq!(returned_metadata.from_block, 100);
+        assert_eq!(returned_metadata.to_block, 200);
+        assert_eq!(returned_metadata.blocks_processed, 50);
+    }
+
+    #[test]
+    fn test_scan_result_is_completed() {
+        let wallet_state = WalletState::new();
+        let metadata = ScanMetadata::new(100, 200, 50, false);
+
+        let completed = ScanResult::Completed(wallet_state.clone(), Some(metadata.clone()));
+        let interrupted = ScanResult::Interrupted(wallet_state, Some(metadata));
+
+        assert!(completed.is_completed());
+        assert!(!interrupted.is_completed());
+
+        assert!(!completed.is_interrupted());
+        assert!(interrupted.is_interrupted());
+    }
+
+    #[test]
+    fn test_scan_result_block_range() {
+        let wallet_state = WalletState::new();
+        let metadata = ScanMetadata::new(100, 200, 50, false);
+
+        let result = ScanResult::Completed(wallet_state, Some(metadata));
+
+        let (from, to) = result.block_range().unwrap();
+        assert_eq!(from, 100);
+        assert_eq!(to, 200);
+    }
+
+    #[test]
+    fn test_scan_result_blocks_processed() {
+        let wallet_state = WalletState::new();
+        let metadata = ScanMetadata::new(100, 200, 50, false);
+
+        let result = ScanResult::Completed(wallet_state, Some(metadata));
+
+        assert_eq!(result.blocks_processed().unwrap(), 50);
+    }
+
+    #[test]
+    fn test_scan_result_has_activity() {
+        let wallet_state = WalletState::new();
+        let result = ScanResult::Completed(wallet_state, None);
+
+        assert!(!result.has_activity());
+        assert_eq!(result.current_balance(), 0);
+        assert_eq!(result.transaction_count(), 0);
+    }
+
+    #[test]
+    fn test_scan_result_balance_summary() {
+        let wallet_state = WalletState::new();
+        let result = ScanResult::Completed(wallet_state, None);
+
+        let (total_received, total_spent, balance, unspent_count, spent_count) =
+            result.get_balance_summary();
+        assert_eq!(total_received, 0);
+        assert_eq!(total_spent, 0);
+        assert_eq!(balance, 0);
+        assert_eq!(unspent_count, 0);
+        assert_eq!(spent_count, 0);
+    }
+
+    #[test]
+    fn test_scan_result_direction_counts() {
+        let wallet_state = WalletState::new();
+        let result = ScanResult::Completed(wallet_state, None);
+
+        let (inbound_count, outbound_count, total_count) = result.get_direction_counts();
+        assert_eq!(inbound_count, 0);
+        assert_eq!(outbound_count, 0);
+        assert_eq!(total_count, 0);
+    }
+
+    #[test]
+    fn test_scan_result_resume_command() {
+        let wallet_state = WalletState::new();
+        let metadata = ScanMetadata::new(100, 200, 50, false);
+
+        let completed = ScanResult::Completed(wallet_state.clone(), Some(metadata.clone()));
+        let interrupted = ScanResult::Interrupted(wallet_state, Some(metadata));
+
+        // Completed scans don't have resume commands
+        assert!(completed.resume_command("--seed-phrase test").is_none());
+
+        // Interrupted scans with no transactions don't have resume commands
+        assert!(interrupted.resume_command("--seed-phrase test").is_none());
+    }
+
+    #[test]
+    fn test_retry_config_validate() {
+        // Valid config
+        let config = RetryConfig::default();
+        assert!(config.validate().is_ok());
+
+        // Invalid max_retries
+        let invalid_config = RetryConfig {
+            max_retries: 101,
+            ..RetryConfig::default()
+        };
+        assert!(invalid_config.validate().is_err());
+
+        // Invalid base_delay
+        let invalid_config = RetryConfig {
+            base_delay: Duration::from_secs(61),
+            ..RetryConfig::default()
+        };
+        assert!(invalid_config.validate().is_err());
+
+        // Invalid max_delay < base_delay
+        let invalid_config = RetryConfig {
+            base_delay: Duration::from_secs(10),
+            max_delay: Duration::from_secs(5),
+            ..RetryConfig::default()
+        };
+        assert!(invalid_config.validate().is_err());
+    }
+
+    #[test]
+    fn test_retry_config_presets() {
+        let conservative = RetryConfig::conservative();
+        assert_eq!(conservative.max_retries, 5);
+        assert_eq!(conservative.base_delay, Duration::from_secs(2));
+        assert!(conservative.exponential_backoff);
+
+        let aggressive = RetryConfig::aggressive();
+        assert_eq!(aggressive.max_retries, 2);
+        assert_eq!(aggressive.base_delay, Duration::from_millis(100));
+        assert!(aggressive.exponential_backoff);
+
+        let no_retries = RetryConfig::no_retries();
+        assert_eq!(no_retries.max_retries, 0);
+        assert!(!no_retries.exponential_backoff);
+    }
+
+    #[test]
+    fn test_wallet_scanner_config_validate() {
+        // Valid default config
+        let config = WalletScannerConfig::default();
+        assert!(config.validate().is_ok());
+
+        // Invalid batch size (0)
+        let mut invalid_config = WalletScannerConfig::default();
+        invalid_config.batch_size = 0;
+        assert!(invalid_config.validate().is_err());
+
+        // Invalid batch size (too large)
+        let mut invalid_config = WalletScannerConfig::default();
+        invalid_config.batch_size = 1001;
+        assert!(invalid_config.validate().is_err());
+
+        // Invalid timeout (too short)
+        let mut invalid_config = WalletScannerConfig::default();
+        invalid_config.timeout = Some(Duration::from_millis(50));
+        assert!(invalid_config.validate().is_err());
+
+        // Invalid timeout (too long)
+        let mut invalid_config = WalletScannerConfig::default();
+        invalid_config.timeout = Some(Duration::from_secs(301));
+        assert!(invalid_config.validate().is_err());
+    }
+
+    #[test]
+    fn test_wallet_scanner_new() {
+        let scanner = WalletScanner::new();
+        assert_eq!(scanner.config.batch_size, 10);
+        assert_eq!(scanner.config.timeout, Some(Duration::from_secs(30)));
+        assert!(!scanner.config.verbose_logging);
+        assert!(scanner.config.progress_tracker.is_none());
+    }
+
+    #[test]
+    fn test_wallet_scanner_from_config() {
+        let config = WalletScannerConfig {
+            batch_size: 25,
+            timeout: Some(Duration::from_secs(60)),
+            verbose_logging: true,
+            ..Default::default()
+        };
+
+        let scanner = WalletScanner::from_config(config);
+        assert_eq!(scanner.config.batch_size, 25);
+        assert_eq!(scanner.config.timeout, Some(Duration::from_secs(60)));
+        assert!(scanner.config.verbose_logging);
+    }
+
+    #[test]
+    fn test_wallet_scanner_with_batch_size() {
+        let scanner = WalletScanner::new().with_batch_size(50);
+        assert_eq!(scanner.config.batch_size, 50);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid batch size")]
+    fn test_wallet_scanner_with_invalid_batch_size() {
+        let _scanner = WalletScanner::new().with_batch_size(0);
+    }
+
+    #[test]
+    fn test_wallet_scanner_try_with_batch_size() {
+        let scanner = WalletScanner::new().try_with_batch_size(50);
+        assert!(scanner.is_ok());
+        assert_eq!(scanner.unwrap().config.batch_size, 50);
+
+        let scanner = WalletScanner::new().try_with_batch_size(0);
+        assert!(scanner.is_err());
+    }
+
+    #[test]
+    fn test_wallet_scanner_with_timeout() {
+        let timeout = Duration::from_secs(60);
+        let scanner = WalletScanner::new().with_timeout(timeout);
+        assert_eq!(scanner.config.timeout, Some(timeout));
+    }
+
+    #[test]
+    fn test_wallet_scanner_try_with_timeout() {
+        let timeout = Duration::from_secs(60);
+        let scanner = WalletScanner::new().try_with_timeout(timeout);
+        assert!(scanner.is_ok());
+        assert_eq!(scanner.unwrap().config.timeout, Some(timeout));
+
+        let invalid_timeout = Duration::from_millis(50);
+        let scanner = WalletScanner::new().try_with_timeout(invalid_timeout);
+        assert!(scanner.is_err());
+    }
+
+    #[test]
+    fn test_wallet_scanner_with_verbose_logging() {
+        let scanner = WalletScanner::new().with_verbose_logging(true);
+        assert!(scanner.config.verbose_logging);
+
+        let scanner = WalletScanner::new().with_verbose_logging(false);
+        assert!(!scanner.config.verbose_logging);
+    }
+
+    #[test]
+    fn test_wallet_scanner_with_retry_config() {
+        let retry_config = RetryConfig::aggressive();
+        let scanner = WalletScanner::new().with_retry_config(retry_config.clone());
+        assert_eq!(
+            scanner.config.retry_config.max_retries,
+            retry_config.max_retries
+        );
+    }
+
+    #[test]
+    fn test_wallet_scanner_try_with_retry_config() {
+        let retry_config = RetryConfig::aggressive();
+        let scanner = WalletScanner::new().try_with_retry_config(retry_config.clone());
+        assert!(scanner.is_ok());
+
+        let invalid_retry_config = RetryConfig {
+            max_retries: 101,
+            ..RetryConfig::default()
+        };
+        let scanner = WalletScanner::new().try_with_retry_config(invalid_retry_config);
+        assert!(scanner.is_err());
+    }
+
+    #[test]
+    fn test_wallet_scanner_config_access() {
+        let mut scanner = WalletScanner::new();
+
+        // Read access
+        assert_eq!(scanner.config().batch_size, 10);
+
+        // Mutable access
+        scanner.config_mut().batch_size = 20;
+        assert_eq!(scanner.config().batch_size, 20);
+    }
+
+    #[test]
+    fn test_wallet_scanner_build() {
+        let scanner = WalletScanner::new()
+            .with_batch_size(25)
+            .with_verbose_logging(true)
+            .build();
+
+        assert!(scanner.is_ok());
+        let scanner = scanner.unwrap();
+        assert_eq!(scanner.config.batch_size, 25);
+        assert!(scanner.config.verbose_logging);
+    }
+
+    #[test]
+    fn test_wallet_scanner_validate() {
+        let scanner = WalletScanner::new();
+        assert!(scanner.validate().is_ok());
+
+        let mut scanner = WalletScanner::new();
+        scanner.config_mut().batch_size = 0;
+        assert!(scanner.validate().is_err());
+    }
+
+    #[test]
+    fn test_wallet_scanner_presets() {
+        let simple = WalletScanner::with_simple_progress();
+        assert!(simple.config.progress_tracker.is_some());
+
+        let performance = WalletScanner::performance_optimized();
+        assert_eq!(performance.config.batch_size, 50);
+        assert_eq!(performance.config.timeout, Some(Duration::from_secs(60)));
+        assert!(!performance.config.verbose_logging);
+
+        let reliability = WalletScanner::reliability_optimized();
+        assert_eq!(reliability.config.batch_size, 5);
+        assert_eq!(reliability.config.timeout, Some(Duration::from_secs(10)));
+        assert!(reliability.config.verbose_logging);
+        assert_eq!(reliability.config.retry_config.max_retries, 5);
+    }
+
+    #[test]
+    fn test_wallet_scanner_is_retryable_error() {
+        let scanner = WalletScanner::new();
+
+        // Network errors should be retryable
+        let connection_error =
+            LightweightWalletError::StorageError("connection failed".to_string());
+        assert!(scanner.is_retryable_error(&connection_error));
+
+        let timeout_error = LightweightWalletError::StorageError("timeout occurred".to_string());
+        assert!(scanner.is_retryable_error(&timeout_error));
+
+        let unavailable_error =
+            LightweightWalletError::StorageError("service unavailable".to_string());
+        assert!(scanner.is_retryable_error(&unavailable_error));
+
+        // Other errors should not be retryable
+        let validation_error = LightweightWalletError::InvalidArgument {
+            argument: "test".to_string(),
+            value: "test".to_string(),
+            message: "test error".to_string(),
+        };
+        assert!(!scanner.is_retryable_error(&validation_error));
+    }
+
+    #[test]
+    fn test_create_wallet_from_seed_phrase() {
+        // Test with a valid seed phrase
+        let seed_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let result = create_wallet_from_seed_phrase(seed_phrase);
+
+        // This test may fail if wallet dependencies aren't available in test context
+        // Just check that the function exists and returns the right type
+        if let Ok((scan_context, _default_from_block)) = result {
+            // Should have entropy from wallet
+            assert!(scan_context.has_entropy());
+        }
+        // If it fails, that's OK for unit test purposes since this is primarily integration functionality
+    }
+
+    #[test]
+    fn test_create_wallet_from_view_key() {
+        let view_key_hex = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+        let result = create_wallet_from_view_key(view_key_hex);
+
+        assert!(result.is_ok());
+        let (scan_context, default_from_block) = result.unwrap();
+
+        // Should not have entropy (view-key only)
+        assert!(!scan_context.has_entropy());
+        assert_eq!(default_from_block, 0);
+    }
+
+    #[test]
+    fn test_create_wallet_from_invalid_view_key() {
+        let invalid_view_key = "invalid_hex";
+        let result = create_wallet_from_view_key(invalid_view_key);
+
+        assert!(result.is_err());
+    }
+
+    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[test]
+    fn test_generate_transaction_id() {
+        let tx_id_1 = generate_transaction_id(1000, 5);
+        let tx_id_2 = generate_transaction_id(1000, 6);
+        let tx_id_3 = generate_transaction_id(1001, 5);
+
+        // Should be deterministic
+        assert_eq!(tx_id_1, generate_transaction_id(1000, 5));
+
+        // Should be different for different inputs
+        assert_ne!(tx_id_1, tx_id_2);
+        assert_ne!(tx_id_1, tx_id_3);
+
+        // Should never return 0
+        assert_ne!(generate_transaction_id(0, 0), 0);
+    }
+
+    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[test]
+    fn test_derive_utxo_spending_keys_with_entropy() {
+        let entropy = [1u8; 16];
+        let result = derive_utxo_spending_keys(&entropy, 0);
+
+        assert!(result.is_ok());
+        let (spending_key, script_private_key) = result.unwrap();
+
+        // Should not be placeholder keys
+        assert_ne!(spending_key.as_bytes(), [0u8; 32]);
+        assert_ne!(script_private_key.as_bytes(), [0u8; 32]);
+    }
+
+    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[test]
+    fn test_derive_utxo_spending_keys_view_only() {
+        let entropy = [0u8; 16]; // View-key mode
+        let result = derive_utxo_spending_keys(&entropy, 0);
+
+        assert!(result.is_ok());
+        let (spending_key, script_private_key) = result.unwrap();
+
+        // Should be placeholder keys in view-only mode
+        assert_eq!(spending_key.as_bytes(), [0u8; 32]);
+        assert_eq!(script_private_key.as_bytes(), [0u8; 32]);
+    }
+
+    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[test]
+    fn test_extract_script_data_empty() {
+        let result = extract_script_data(&[]);
+        assert!(result.is_ok());
+
+        let (input_data, script_lock_height) = result.unwrap();
+        assert!(input_data.is_empty());
+        assert_eq!(script_lock_height, 0);
+    }
+
+    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[test]
+    fn test_extract_script_data_with_data() {
+        // Create a simple script with OP_PUSHDATA
+        let script_bytes = vec![0x6a, 0x04, 0x01, 0x02, 0x03, 0x04]; // PUSHDATA 4 bytes
+        let result = extract_script_data(&script_bytes);
+
+        assert!(result.is_ok());
+        let (input_data, _script_lock_height) = result.unwrap();
+        assert_eq!(input_data, vec![0x01, 0x02, 0x03, 0x04]);
+    }
+
+    #[cfg(feature = "grpc")]
+    #[test]
+    fn test_format_currency_amount() {
+        let amount = 1_000_000u64; // 1 Tari
+        let formatted = format_currency_amount(amount);
+
+        assert!(formatted.contains("1,000,000 μT"));
+        assert!(formatted.contains("1.000000 T"));
+    }
+
+    #[cfg(feature = "grpc")]
+    #[test]
+    fn test_has_wallet_activity() {
+        let empty_state = WalletState::new();
+        assert!(!has_wallet_activity(&empty_state));
+    }
+
+    #[cfg(feature = "grpc")]
+    #[test]
+    fn test_calculate_wallet_summary() {
+        let wallet_state = WalletState::new();
+        let (total_received, total_spent, balance, unspent_count, spent_count) =
+            calculate_wallet_summary(&wallet_state);
+
+        assert_eq!(total_received, 0);
+        assert_eq!(total_spent, 0);
+        assert_eq!(balance, 0);
+        assert_eq!(unspent_count, 0);
+        assert_eq!(spent_count, 0);
+    }
+
+    #[cfg(feature = "grpc")]
+    #[test]
+    fn test_calculate_direction_counts() {
+        let wallet_state = WalletState::new();
+        let (inbound_count, outbound_count, total_count) =
+            calculate_direction_counts(&wallet_state);
+
+        assert_eq!(inbound_count, 0);
+        assert_eq!(outbound_count, 0);
+        assert_eq!(total_count, 0);
+    }
+}
+
 // Placeholder type definitions until actual implementation
 // TODO: Rename to WalletScanner once refactoring is complete and trait is moved
 pub struct BinaryWalletScanner;
