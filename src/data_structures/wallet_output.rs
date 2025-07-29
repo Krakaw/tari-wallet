@@ -178,6 +178,7 @@ impl LightweightExecutionStack {
     }
 }
 
+// TODO: Replace with tari_crypto::ristretto::CompressedRistrettoComAndPubSig
 /// Simplified signature for lightweight wallet operations
 #[derive(
     Debug,

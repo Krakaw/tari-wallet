@@ -197,7 +197,7 @@ impl GrpcBlockchainScanner {
         } else {
             // Invalid sender offset public key size - return error instead of fallback
             return Err(LightweightWalletError::DataStructureError(
-                DataStructureError::InvalidCommitment(format!(
+                DataStructureError::InvalidPublicKey(format!(
                     "Invalid sender offset public key size in GRPC output: expected 32, got {}",
                     grpc_output.sender_offset_public_key.len()
                 )),

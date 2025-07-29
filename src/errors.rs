@@ -113,6 +113,9 @@ pub enum DataStructureError {
     #[error("Invalid private key: {0}")]
     InvalidPrivateKey(String),
 
+    #[error("Invalid public key: {0}")]
+    InvalidPublicKey(String),
+
     #[error("Data too large: expected max {max}, got {actual}")]
     DataTooLarge { max: usize, actual: usize },
 
