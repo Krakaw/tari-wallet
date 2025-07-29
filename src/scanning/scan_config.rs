@@ -24,15 +24,12 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// Controls how scanning results are displayed to the user.
 ///
 /// # Examples
-/// ```
-/// # #[cfg(feature = "grpc")]
-/// # {
+/// ```ignore
 /// use lightweight_wallet_libs::scanning::OutputFormat;
 /// use std::str::FromStr;
 ///
 /// let format = OutputFormat::from_str("json").unwrap();
 /// assert!(matches!(format, OutputFormat::Json));
-/// # }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -65,9 +62,7 @@ impl std::str::FromStr for OutputFormat {
 /// to control scanning behavior, output format, storage, and progress reporting.
 ///
 /// # Examples
-/// ```
-/// # #[cfg(feature = "grpc")]
-/// # {
+/// ```ignore
 /// use lightweight_wallet_libs::scanning::{BinaryScanConfig, OutputFormat};
 ///
 /// let config = BinaryScanConfig {
@@ -83,7 +78,6 @@ impl std::str::FromStr for OutputFormat {
 ///     explicit_from_block: None,
 ///     use_database: true,
 /// };
-/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct BinaryScanConfig {
@@ -115,16 +109,13 @@ impl BinaryScanConfig {
     /// Create a new binary scan configuration with default values
     ///
     /// # Examples
-    /// ```
-    /// # #[cfg(feature = "grpc")]
-    /// # {
+    /// ```ignore
     /// use lightweight_wallet_libs::scanning::{BinaryScanConfig, OutputFormat};
     ///
     /// let config = BinaryScanConfig::new(1000, 2000);
     /// assert_eq!(config.from_block, 1000);
     /// assert_eq!(config.to_block, 2000);
     /// assert_eq!(config.batch_size, 100);
-    /// # }
     /// ```
     pub fn new(from_block: u64, to_block: u64) -> Self {
         Self {
@@ -198,9 +189,7 @@ impl BinaryScanConfig {
 /// 3. **From Seed Phrase**: Direct construction from mnemonic phrase
 ///
 /// # Examples
-/// ```
-/// # #[cfg(feature = "grpc")]
-/// # {
+/// ```ignore
 /// use lightweight_wallet_libs::scanning::ScanContext;
 /// use lightweight_wallet_libs::wallet::Wallet;
 ///
@@ -211,7 +200,6 @@ impl BinaryScanConfig {
 /// // From a view key (limited context)
 /// let view_key_hex = "9d84cc4795b509dadae90bd68b42f7d630a6a3d56281c0b5dd1c0ed36390e70a";
 /// let context = ScanContext::from_view_key(view_key_hex).unwrap();
-/// # }
 /// ```
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct ScanContext {

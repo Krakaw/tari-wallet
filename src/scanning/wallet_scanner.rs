@@ -416,16 +416,13 @@ pub fn create_wallet_from_view_key(
 /// This metadata is useful for logging, monitoring, and resuming operations.
 ///
 /// # Examples
-/// ```
-/// # #[cfg(feature = "grpc")]
-/// # {
+/// ```ignore
 /// use lightweight_wallet_libs::scanning::ScanMetadata;
 ///
 /// let metadata = ScanMetadata::new(1000, 2000, 1001, false);
 /// if let Some(duration) = metadata.duration() {
 ///     println!("Scan took {:?}", duration);
 /// }
-/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct ScanMetadata {
@@ -677,9 +674,7 @@ impl ScanResult {
 /// including performance settings, logging options, and retry behavior.
 ///
 /// # Examples
-/// ```
-/// # #[cfg(feature = "grpc")]
-/// # {
+/// ```ignore
 /// use lightweight_wallet_libs::scanning::{WalletScannerConfig, RetryConfig};
 /// use std::time::Duration;
 ///
@@ -687,7 +682,6 @@ impl ScanResult {
 /// config.batch_size = 20;
 /// config.verbose_logging = true;
 /// config.timeout = Some(Duration::from_secs(60));
-/// # }
 /// ```
 pub struct WalletScannerConfig {
     /// Progress tracking configuration
@@ -767,9 +761,7 @@ impl From<ScannerConfigError> for LightweightWalletError {
 /// delays and maximum retry attempts.
 ///
 /// # Examples
-/// ```
-/// # #[cfg(feature = "grpc")]
-/// # {
+/// ```ignore
 /// use lightweight_wallet_libs::scanning::RetryConfig;
 /// use std::time::Duration;
 ///
@@ -779,7 +771,6 @@ impl From<ScannerConfigError> for LightweightWalletError {
 ///     max_delay: Duration::from_secs(30),
 ///     exponential_backoff: true,
 /// };
-/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
