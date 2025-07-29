@@ -289,4 +289,160 @@ impl ScanContext {
     }
 }
 
-// OutputFormat and ScanContext moved from scanner.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_output_format_from_str_valid() {
+        assert_eq!(
+            OutputFormat::from_str("detailed").unwrap(),
+            OutputFormat::Detailed
+        );
+        assert_eq!(
+            OutputFormat::from_str("summary").unwrap(),
+            OutputFormat::Summary
+        );
+        assert_eq!(OutputFormat::from_str("json").unwrap(), OutputFormat::Json);
+
+        // Case insensitive
+        assert_eq!(
+            OutputFormat::from_str("DETAILED").unwrap(),
+            OutputFormat::Detailed
+        );
+        assert_eq!(
+            OutputFormat::from_str("Summary").unwrap(),
+            OutputFormat::Summary
+        );
+        assert_eq!(OutputFormat::from_str("JSON").unwrap(), OutputFormat::Json);
+    }
+
+    #[test]
+    fn test_output_format_from_str_invalid() {
+        let result = OutputFormat::from_str("invalid");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Invalid output format: invalid"));
+
+        let result = OutputFormat::from_str("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_binary_scan_config_new() {
+        let config = BinaryScanConfig::new(100, 200);
+
+        assert_eq!(config.from_block, 100);
+        assert_eq!(config.to_block, 200);
+        assert_eq!(config.block_heights, None);
+        assert_eq!(config.progress_frequency, 10);
+        assert!(!config.quiet);
+        assert_eq!(config.output_format, OutputFormat::Detailed);
+        assert_eq!(config.batch_size, 100);
+        assert_eq!(config.database_path, None);
+        assert_eq!(config.wallet_name, None);
+        assert_eq!(config.explicit_from_block, None);
+        assert!(!config.use_database);
+    }
+
+    #[test]
+    fn test_binary_scan_config_with_database() {
+        let config = BinaryScanConfig::new(100, 200).with_database("test.db".to_string());
+
+        assert_eq!(config.database_path, Some("test.db".to_string()));
+        assert!(config.use_database);
+    }
+
+    #[test]
+    fn test_binary_scan_config_with_wallet_name() {
+        let config = BinaryScanConfig::new(100, 200).with_wallet_name("test-wallet".to_string());
+
+        assert_eq!(config.wallet_name, Some("test-wallet".to_string()));
+    }
+
+    #[test]
+    fn test_binary_scan_config_with_output_format() {
+        let config = BinaryScanConfig::new(100, 200).with_output_format(OutputFormat::Json);
+
+        assert_eq!(config.output_format, OutputFormat::Json);
+    }
+
+    #[test]
+    fn test_binary_scan_config_with_quiet_mode() {
+        let config = BinaryScanConfig::new(100, 200).with_quiet_mode(true);
+
+        assert!(config.quiet);
+    }
+
+    #[test]
+    fn test_binary_scan_config_with_specific_blocks() {
+        let blocks = vec![100, 150, 200];
+        let config = BinaryScanConfig::new(100, 200).with_specific_blocks(blocks.clone());
+
+        assert_eq!(config.block_heights, Some(blocks));
+    }
+
+    #[test]
+    fn test_binary_scan_config_builder_chain() {
+        let config = BinaryScanConfig::new(100, 200)
+            .with_database("test.db".to_string())
+            .with_wallet_name("test-wallet".to_string())
+            .with_output_format(OutputFormat::Json)
+            .with_quiet_mode(true)
+            .with_specific_blocks(vec![150]);
+
+        assert_eq!(config.from_block, 100);
+        assert_eq!(config.to_block, 200);
+        assert_eq!(config.database_path, Some("test.db".to_string()));
+        assert!(config.use_database);
+        assert_eq!(config.wallet_name, Some("test-wallet".to_string()));
+        assert_eq!(config.output_format, OutputFormat::Json);
+        assert!(config.quiet);
+        assert_eq!(config.block_heights, Some(vec![150]));
+    }
+
+    #[test]
+    fn test_scan_context_from_view_key_valid() {
+        let view_key_hex = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+        let context = ScanContext::from_view_key(view_key_hex).unwrap();
+
+        assert_eq!(context.view_key.as_bytes().len(), 32);
+        assert_eq!(context.entropy, [0u8; 16]);
+        assert!(!context.has_entropy());
+    }
+
+    #[test]
+    fn test_scan_context_from_view_key_invalid_hex() {
+        let invalid_hex = "not_hex_string";
+        let result = ScanContext::from_view_key(invalid_hex);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scan_context_from_view_key_wrong_length() {
+        let short_hex = "1234567890abcdef";
+        let result = ScanContext::from_view_key(short_hex);
+        assert!(result.is_err());
+
+        let long_hex = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234";
+        let result = ScanContext::from_view_key(long_hex);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scan_context_has_entropy() {
+        // View key only context
+        let view_key_hex = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+        let context = ScanContext::from_view_key(view_key_hex).unwrap();
+        assert!(!context.has_entropy());
+
+        // Context with entropy
+        let context_with_entropy = ScanContext {
+            view_key: PrivateKey::new([1u8; 32]),
+            entropy: [1u8; 16],
+        };
+        assert!(context_with_entropy.has_entropy());
+    }
+}
