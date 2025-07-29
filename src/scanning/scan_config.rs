@@ -25,11 +25,14 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 ///
 /// # Examples
 /// ```
+/// # #[cfg(feature = "grpc")]
+/// # {
 /// use lightweight_wallet_libs::scanning::OutputFormat;
 /// use std::str::FromStr;
 ///
 /// let format = OutputFormat::from_str("json").unwrap();
 /// assert!(matches!(format, OutputFormat::Json));
+/// # }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -63,6 +66,8 @@ impl std::str::FromStr for OutputFormat {
 ///
 /// # Examples
 /// ```
+/// # #[cfg(feature = "grpc")]
+/// # {
 /// use lightweight_wallet_libs::scanning::{BinaryScanConfig, OutputFormat};
 ///
 /// let config = BinaryScanConfig {
@@ -78,6 +83,7 @@ impl std::str::FromStr for OutputFormat {
 ///     explicit_from_block: None,
 ///     use_database: true,
 /// };
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct BinaryScanConfig {
@@ -110,12 +116,15 @@ impl BinaryScanConfig {
     ///
     /// # Examples
     /// ```
+    /// # #[cfg(feature = "grpc")]
+    /// # {
     /// use lightweight_wallet_libs::scanning::{BinaryScanConfig, OutputFormat};
     ///
     /// let config = BinaryScanConfig::new(1000, 2000);
     /// assert_eq!(config.from_block, 1000);
     /// assert_eq!(config.to_block, 2000);
     /// assert_eq!(config.batch_size, 100);
+    /// # }
     /// ```
     pub fn new(from_block: u64, to_block: u64) -> Self {
         Self {
@@ -189,18 +198,20 @@ impl BinaryScanConfig {
 /// 3. **From Seed Phrase**: Direct construction from mnemonic phrase
 ///
 /// # Examples
-/// ```no_run
+/// ```
+/// # #[cfg(feature = "grpc")]
+/// # {
 /// use lightweight_wallet_libs::scanning::ScanContext;
 /// use lightweight_wallet_libs::wallet::Wallet;
 ///
 /// // From a wallet (provides full context)
-/// let wallet = Wallet::generate_new_with_seed_phrase(None)?;
-/// let context = ScanContext::from_wallet(&wallet)?;
+/// let wallet = Wallet::generate_new_with_seed_phrase(None).unwrap();
+/// let context = ScanContext::from_wallet(&wallet).unwrap();
 ///
 /// // From a view key (limited context)
 /// let view_key_hex = "9d84cc4795b509dadae90bd68b42f7d630a6a3d56281c0b5dd1c0ed36390e70a";
-/// let context = ScanContext::from_view_key_hex(view_key_hex)?;
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// let context = ScanContext::from_view_key(view_key_hex).unwrap();
+/// # }
 /// ```
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct ScanContext {

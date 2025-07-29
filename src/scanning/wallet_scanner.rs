@@ -417,12 +417,15 @@ pub fn create_wallet_from_view_key(
 ///
 /// # Examples
 /// ```
+/// # #[cfg(feature = "grpc")]
+/// # {
 /// use lightweight_wallet_libs::scanning::ScanMetadata;
 ///
 /// let metadata = ScanMetadata::new(1000, 2000, 1001, false);
 /// if let Some(duration) = metadata.duration() {
 ///     println!("Scan took {:?}", duration);
 /// }
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct ScanMetadata {
@@ -675,11 +678,16 @@ impl ScanResult {
 ///
 /// # Examples
 /// ```
-/// use lightweight_wallet_libs::scanning::WalletScannerConfig;
+/// # #[cfg(feature = "grpc")]
+/// # {
+/// use lightweight_wallet_libs::scanning::{WalletScannerConfig, RetryConfig};
+/// use std::time::Duration;
 ///
-/// let config = WalletScannerConfig::default()
-///     .with_batch_size(20)
-///     .with_verbose_logging(true);
+/// let mut config = WalletScannerConfig::default();
+/// config.batch_size = 20;
+/// config.verbose_logging = true;
+/// config.timeout = Some(Duration::from_secs(60));
+/// # }
 /// ```
 pub struct WalletScannerConfig {
     /// Progress tracking configuration
@@ -760,13 +768,18 @@ impl From<ScannerConfigError> for LightweightWalletError {
 ///
 /// # Examples
 /// ```
+/// # #[cfg(feature = "grpc")]
+/// # {
 /// use lightweight_wallet_libs::scanning::RetryConfig;
 /// use std::time::Duration;
 ///
-/// let retry_config = RetryConfig::default()
-///     .with_max_retries(5)
-///     .with_base_delay(Duration::from_secs(1))
-///     .with_exponential_backoff(true);
+/// let retry_config = RetryConfig {
+///     max_retries: 5,
+///     base_delay: Duration::from_secs(1),
+///     max_delay: Duration::from_secs(30),
+///     exponential_backoff: true,
+/// };
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
@@ -951,15 +964,20 @@ impl std::fmt::Debug for WalletScannerConfig {
 ///
 /// Basic scanner setup:
 /// ```rust,no_run
-/// use lightweight_wallet_libs::scanning::WalletScanner;
+/// # #[cfg(all(feature = "grpc", feature = "storage"))]
+/// # {
+/// use lightweight_wallet_libs::scanning::WalletScannerStruct as WalletScanner;
 ///
 /// // Create a basic scanner
 /// let scanner = WalletScanner::new();
+/// # }
 /// ```
 ///
 /// Advanced configuration with progress tracking:
 /// ```rust,no_run
-/// use lightweight_wallet_libs::scanning::WalletScanner;
+/// # #[cfg(all(feature = "grpc", feature = "storage"))]
+/// # {
+/// use lightweight_wallet_libs::scanning::WalletScannerStruct as WalletScanner;
 /// use std::time::Duration;
 ///
 /// let scanner = WalletScanner::new()
@@ -973,6 +991,7 @@ impl std::fmt::Debug for WalletScannerConfig {
 ///     .with_batch_size(20)
 ///     .with_timeout(Duration::from_secs(60))
 ///     .with_verbose_logging(true);
+/// # }
 /// ```
 pub struct WalletScanner {
     /// Scanner configuration
@@ -1074,7 +1093,9 @@ impl WalletScanner {
     ///
     /// # Examples
     /// ```rust,no_run
-    /// use lightweight_wallet_libs::scanning::WalletScanner;
+    /// # #[cfg(all(feature = "grpc", feature = "storage"))]
+    /// # {
+    /// use lightweight_wallet_libs::scanning::WalletScannerStruct as WalletScanner;
     /// use std::time::Duration;
     ///
     /// let scanner = WalletScanner::new()
@@ -1082,6 +1103,7 @@ impl WalletScanner {
     ///     .with_timeout(Duration::from_secs(60))
     ///     .build()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # }
     /// ```
     pub fn build(self) -> Result<WalletScanner, ScannerConfigError> {
         self.config.validate()?;
