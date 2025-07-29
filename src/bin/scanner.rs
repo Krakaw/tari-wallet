@@ -629,6 +629,18 @@ async fn main() -> LightweightWalletResult<()> {
     // Now calculate the from_block using the final_default_from_block
     let from_block = args.from_block.unwrap_or(final_default_from_block);
 
+    // Validate block range
+    if from_block > to_block {
+        return Err(LightweightWalletError::InvalidArgument {
+            argument: "block_range".to_string(),
+            value: format!("{}-{}", from_block, to_block),
+            message: format!(
+                "Starting block ({}) cannot be greater than ending block ({})",
+                from_block, to_block
+            ),
+        });
+    }
+
     // Create final configs with the correct from_block
     let (config, scanner_config) = create_scanner_configs(&args, from_block, to_block)?;
 

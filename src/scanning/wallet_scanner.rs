@@ -1351,40 +1351,174 @@ fn initialize_scan_state() -> (WalletState, Instant) {
 /// Core scanning logic - simplified and focused with batch processing
 #[cfg(feature = "grpc")]
 async fn scan_wallet_across_blocks_with_cancellation(
-    _scanner: &mut GrpcBlockchainScanner,
-    _scan_context: &ScanContext,
+    scanner: &mut GrpcBlockchainScanner,
+    scan_context: &ScanContext,
     config: &BinaryScanConfig,
     storage_backend: &mut ScannerStorage,
-    _cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-    _progress_tracker: Option<&mut ProgressTracker>,
+    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    mut progress_tracker: Option<&mut ProgressTracker>,
 ) -> LightweightWalletResult<ScanResult> {
     // Determine scanning block range with resume support
     let (from_block, to_block) = determine_scan_range(config, storage_backend).await?;
 
     // Initialize scanning state
-    let (wallet_state, _start_time) = initialize_scan_state();
+    let (mut wallet_state, _start_time) = initialize_scan_state();
 
-    // TODO: Setup progress tracking if available
-    // Progress tracking will be implemented in a future task
+    // Progress tracking is already set up by the caller
 
     // Prepare block heights list for scanning
     let block_heights = prepare_block_heights(config, from_block, to_block);
 
-    // TODO: Implement the actual scanning logic
-    // For now, this is a placeholder that will be fully implemented in future tasks
-
     if !config.quiet {
-        println!("🔄 Wallet scanning functionality moved to library (placeholder implementation)");
         println!(
-            "   • Scan range: {} to {}",
+            "🔍 Scanning blocks {} to {} ({} blocks total)...",
             format_number(from_block),
-            format_number(to_block)
-        );
-        println!(
-            "   • Blocks to scan: {}",
+            format_number(to_block),
             format_number(block_heights.len())
         );
-        println!("   • Note: Full scanning implementation will be completed in subsequent tasks");
+    }
+
+    // Create extraction config from scan context
+    let extraction_config = crate::extraction::ExtractionConfig {
+        enable_key_derivation: true,
+        validate_range_proofs: true,
+        validate_signatures: true,
+        handle_special_outputs: true,
+        detect_corruption: true,
+        private_key: Some(scan_context.view_key.clone()),
+        public_key: None,
+    };
+
+    // Create scan config for the blockchain scanner
+    let _scan_config = super::ScanConfig {
+        start_height: from_block,
+        end_height: Some(to_block),
+        batch_size: config.batch_size as u64,
+        request_timeout: std::time::Duration::from_secs(30),
+        extraction_config: extraction_config.clone(),
+    };
+
+    // Perform the actual blockchain scan
+    let mut current_block = from_block;
+    let mut blocks_processed = 0u64;
+    let mut last_progress_update = Instant::now();
+
+    // Process blocks in batches with cancellation support
+    while current_block <= to_block {
+        // Check for cancellation
+        if *cancel_rx.borrow() {
+            if !config.quiet {
+                println!("\n🛑 Scan cancelled by user");
+            }
+            let metadata = ScanMetadata::new(
+                from_block,
+                current_block.saturating_sub(1),
+                blocks_processed as usize,
+                config.block_heights.is_some(),
+            );
+            return Ok(ScanResult::Interrupted(wallet_state, Some(metadata)));
+        }
+
+        let batch_end = std::cmp::min(current_block + config.batch_size as u64 - 1, to_block);
+
+        // Create batch config (currently unused as we manually process blocks)
+        let _batch_config = super::ScanConfig {
+            start_height: current_block,
+            end_height: Some(batch_end),
+            batch_size: config.batch_size as u64,
+            request_timeout: std::time::Duration::from_secs(30),
+            extraction_config: extraction_config.clone(),
+        };
+
+        // Get blocks and process them using the proper block scanning logic
+        let block_heights: Vec<u64> = (current_block..=batch_end).collect();
+        match scanner.get_blocks_by_heights(block_heights.clone()).await {
+            Ok(blocks) => {
+                for block_info in blocks {
+                    // Convert BlockInfo to Block for processing
+                    let block = crate::data_structures::block::Block::new(
+                        block_info.height,
+                        block_info.hash.clone(),
+                        block_info.timestamp,
+                        block_info.outputs.clone(),
+                        block_info.inputs.clone(),
+                    );
+
+                    // Use the real block scanning logic that actually works!
+                    let (found_outputs, spent_outputs) = block.scan_for_wallet_activity(
+                        &scan_context.view_key,
+                        &scan_context.entropy,
+                        &mut wallet_state,
+                    )?;
+
+                    if !config.quiet && (found_outputs > 0 || spent_outputs > 0) {
+                        println!(
+                            "Block {}: found {} outputs, {} spent",
+                            block.height, found_outputs, spent_outputs
+                        );
+                    }
+
+                    // Update progress with actual wallet activity found
+                    if let Some(tracker) = progress_tracker.as_mut() {
+                        tracker.update(block.height, found_outputs, spent_outputs);
+                    }
+                }
+
+                let batch_size = batch_end - current_block + 1;
+                blocks_processed += batch_size;
+
+                // Update progress display
+                if !config.quiet
+                    && (blocks_processed % config.progress_frequency as u64 == 0
+                        || last_progress_update.elapsed().as_secs() >= 1)
+                {
+                    if let Some(tracker) = progress_tracker.as_ref() {
+                        let _progress_info = tracker.get_progress_info();
+                        // Progress callbacks are handled internally by ProgressTracker
+                    }
+                    last_progress_update = Instant::now();
+                }
+
+                current_block = batch_end + 1;
+            }
+            Err(e) => {
+                if !config.quiet {
+                    eprintln!(
+                        "❌ Error getting blocks {}-{}: {}",
+                        current_block, batch_end, e
+                    );
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    // Wallet state has been updated directly by the block scanning logic
+    let total_blocks_scanned = to_block - from_block + 1;
+    if !config.quiet {
+        println!("✅ Completed scanning {} blocks", total_blocks_scanned);
+        if !wallet_state.transactions.is_empty() {
+            println!(
+                "   Found {} total transactions",
+                wallet_state.transactions.len()
+            );
+        }
+    }
+
+    // Save results to storage if using database
+    if !storage_backend.is_memory_only {
+        storage_backend
+            .save_transactions_incremental(&wallet_state.transactions)
+            .await?;
+
+        // Update the wallet's latest scanned block
+        storage_backend
+            .update_wallet_scanned_block(to_block)
+            .await?;
+    }
+
+    if !config.quiet {
+        println!(); // Clear progress line
     }
 
     // Create scan metadata
