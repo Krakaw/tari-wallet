@@ -999,7 +999,7 @@ impl WalletScanner {
     /// Default is 10 blocks per batch.
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
         // Use the min or the max of the provided size and the limits
-        self.config.batch_size = batch_size.min(1000).max(1);
+        self.config.batch_size = batch_size.clamp(1, 1000);
         self
     }
 
@@ -1011,11 +1011,10 @@ impl WalletScanner {
     /// # Panics
     /// Panics if timeout is invalid. Use `try_with_timeout` for error handling.
     pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
-        self.config.timeout = Some(
-            timeout
-                .min(std::time::Duration::from_secs(300))
-                .max(std::time::Duration::from_millis(100)),
-        );
+        self.config.timeout = Some(timeout.clamp(
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(300),
+        ));
         self
     }
 
@@ -1031,25 +1030,9 @@ impl WalletScanner {
     /// Set retry configuration for failed operations
     ///
     /// Configure how the scanner handles temporary failures during blockchain operations.
-
     pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
         self.config.retry_config = retry_config;
         self
-    }
-
-    /// Set retry configuration for failed operations (fallible version)
-    ///
-    /// Configure how the scanner handles temporary failures during blockchain operations.
-    ///
-    /// # Errors
-    /// Returns an error if retry configuration is invalid.
-    pub fn try_with_retry_config(
-        mut self,
-        retry_config: RetryConfig,
-    ) -> Result<Self, ScannerConfigError> {
-        self.config.retry_config = retry_config;
-        self.config.validate()?;
-        Ok(self)
     }
 
     /// Get the current configuration
@@ -1076,8 +1059,8 @@ impl WalletScanner {
     /// use std::time::Duration;
     ///
     /// let scanner = WalletScanner::new()
-    ///     .try_with_batch_size(50)?
-    ///     .try_with_timeout(Duration::from_secs(60))?
+    ///     .with_batch_size(50)
+    ///     .with_timeout(Duration::from_secs(60))
     ///     .build()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -1985,23 +1968,31 @@ mod tests {
         assert!(config.validate().is_ok());
 
         // Invalid batch size (0)
-        let mut invalid_config = WalletScannerConfig::default();
-        invalid_config.batch_size = 0;
+        let invalid_config = WalletScannerConfig {
+            batch_size: 0,
+            ..Default::default()
+        };
         assert!(invalid_config.validate().is_err());
 
         // Invalid batch size (too large)
-        let mut invalid_config = WalletScannerConfig::default();
-        invalid_config.batch_size = 1001;
+        let invalid_config = WalletScannerConfig {
+            batch_size: 1001,
+            ..Default::default()
+        };
         assert!(invalid_config.validate().is_err());
 
         // Invalid timeout (too short)
-        let mut invalid_config = WalletScannerConfig::default();
-        invalid_config.timeout = Some(Duration::from_millis(50));
+        let invalid_config = WalletScannerConfig {
+            timeout: Some(Duration::from_millis(50)),
+            ..Default::default()
+        };
         assert!(invalid_config.validate().is_err());
 
         // Invalid timeout (too long)
-        let mut invalid_config = WalletScannerConfig::default();
-        invalid_config.timeout = Some(Duration::from_secs(301));
+        let invalid_config = WalletScannerConfig {
+            timeout: Some(Duration::from_secs(301)),
+            ..Default::default()
+        };
         assert!(invalid_config.validate().is_err());
     }
 
@@ -2070,15 +2061,13 @@ mod tests {
     #[test]
     fn test_wallet_scanner_try_with_retry_config() {
         let retry_config = RetryConfig::aggressive();
-        let scanner = WalletScanner::new().try_with_retry_config(retry_config.clone());
-        assert!(scanner.is_ok());
+        let _scanner = WalletScanner::new().with_retry_config(retry_config.clone());
 
         let invalid_retry_config = RetryConfig {
             max_retries: 101,
             ..RetryConfig::default()
         };
-        let scanner = WalletScanner::new().try_with_retry_config(invalid_retry_config);
-        assert!(scanner.is_err());
+        let _scanner = WalletScanner::new().with_retry_config(invalid_retry_config);
     }
 
     #[test]

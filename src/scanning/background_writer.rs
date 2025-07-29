@@ -183,6 +183,12 @@ impl BackgroundWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    type TransactionsSaved = Arc<Mutex<Vec<(u32, Vec<WalletTransaction>)>>>;
+    type OutputsSaved = Arc<Mutex<Vec<Vec<StoredOutput>>>>;
+    type WalletsUpdated = Arc<Mutex<Vec<(u32, u64)>>>;
+    type TransactionsMarked = Arc<Mutex<Vec<(CompressedCommitment, u64, usize)>>>;
+    type BatchMarked = Arc<Mutex<Vec<Vec<(CompressedCommitment, u64, usize)>>>>;
+    type ShouldFail = Arc<Mutex<bool>>;
 
     #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
     use crate::data_structures::WalletState;
@@ -196,12 +202,12 @@ mod tests {
     #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
     #[derive(Debug, Clone)]
     struct MockStorage {
-        transactions_saved: Arc<Mutex<Vec<(u32, Vec<WalletTransaction>)>>>,
-        outputs_saved: Arc<Mutex<Vec<Vec<StoredOutput>>>>,
-        wallets_updated: Arc<Mutex<Vec<(u32, u64)>>>,
-        transactions_marked: Arc<Mutex<Vec<(CompressedCommitment, u64, usize)>>>,
-        batch_marked: Arc<Mutex<Vec<Vec<(CompressedCommitment, u64, usize)>>>>,
-        should_fail: Arc<Mutex<bool>>,
+        transactions_saved: TransactionsSaved,
+        outputs_saved: OutputsSaved,
+        wallets_updated: WalletsUpdated,
+        transactions_marked: TransactionsMarked,
+        batch_marked: BatchMarked,
+        should_fail: ShouldFail,
     }
 
     #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
