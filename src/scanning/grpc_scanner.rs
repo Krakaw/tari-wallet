@@ -31,11 +31,12 @@ use crate::{
         },
         LightweightOutputType, LightweightRangeProofType,
     },
-    errors::{LightweightWalletError, LightweightWalletResult},
+    errors::{DataStructureError, LightweightWalletError, LightweightWalletResult},
     extraction::{extract_wallet_output, ExtractionConfig},
     scanning::{
-        BlockInfo, BlockScanResult, BlockchainScanner, DefaultScanningLogic, ProgressCallback,
-        ScanConfig, TipInfo, WalletScanConfig, WalletScanResult, WalletScanner,
+        BlockInfo, BlockScanResult, BlockchainScanner, DefaultScanningLogic,
+        LegacyProgressCallback, ScanConfig, TipInfo, WalletScanConfig, WalletScanResult,
+        WalletScanner,
     },
     wallet::Wallet,
 };
@@ -129,7 +130,7 @@ impl GrpcBlockchainScanner {
     /// Convert GRPC transaction output to lightweight transaction output
     fn convert_transaction_output(
         grpc_output: &tari_rpc::TransactionOutput,
-    ) -> LightweightTransactionOutput {
+    ) -> LightweightWalletResult<LightweightTransactionOutput> {
         // Convert OutputFeatures
         let features = grpc_output
             .features
@@ -157,19 +158,22 @@ impl GrpcBlockchainScanner {
             match grpc_output.commitment.as_bytes()[..32].try_into() {
                 Ok(bytes) => CompressedCommitment::new(bytes),
                 Err(_) => {
-                    println!("ERROR: Invalid commitment bytes format, using zero commitment");
-                    CompressedCommitment::new([0u8; 32])
+                    // Invalid commitment bytes format - return error instead of fallback
+                    return Err(LightweightWalletError::DataStructureError(
+                        DataStructureError::InvalidCommitment(
+                            "Invalid commitment bytes format in GRPC output".to_string(),
+                        ),
+                    ));
                 }
             }
         } else {
-            // Debug: Log unexpected sizes
-            println!(
-                "DEBUG: Unexpected commitment size. Expected 32 or 33, got {}. Data: {}",
-                grpc_output.commitment.len(),
-                hex::encode(&grpc_output.commitment)
-            );
-            // Fallback to default if wrong size
-            CompressedCommitment::new([0u8; 32])
+            // Unexpected commitment size - return error instead of fallback
+            return Err(LightweightWalletError::DataStructureError(
+                DataStructureError::InvalidCommitment(format!(
+                    "Invalid commitment size in GRPC output: expected 32, got {}",
+                    grpc_output.commitment.len()
+                )),
+            ));
         };
 
         // Convert RangeProof
@@ -191,14 +195,13 @@ impl GrpcBlockchainScanner {
             bytes.copy_from_slice(&grpc_output.sender_offset_public_key);
             CompressedPublicKey::new(bytes)
         } else {
-            // Debug: Log what we actually received
-            println!(
-                "DEBUG: Sender offset public key size mismatch. Expected 32, got {}. Data: {}",
-                grpc_output.sender_offset_public_key.len(),
-                hex::encode(&grpc_output.sender_offset_public_key)
-            );
-            // Fallback to default if wrong size
-            CompressedPublicKey::new([0u8; 32])
+            // Invalid sender offset public key size - return error instead of fallback
+            return Err(LightweightWalletError::DataStructureError(
+                DataStructureError::InvalidPublicKey(format!(
+                    "Invalid sender offset public key size in GRPC output: expected 32, got {}",
+                    grpc_output.sender_offset_public_key.len()
+                )),
+            ));
         };
 
         // Convert Metadata Signature
@@ -222,7 +225,7 @@ impl GrpcBlockchainScanner {
         // Convert Minimum Value Promise
         let minimum_value_promise = MicroMinotari::new(grpc_output.minimum_value_promise);
 
-        LightweightTransactionOutput {
+        Ok(LightweightTransactionOutput {
             version: grpc_output.version as u8,
             features,
             commitment: commitment_bytes,
@@ -233,19 +236,31 @@ impl GrpcBlockchainScanner {
             covenant,
             encrypted_data,
             minimum_value_promise,
-        }
+        })
     }
 
     /// Convert GRPC block to lightweight block info
-    fn convert_block(grpc_block: &tari_rpc::HistoricalBlock) -> Option<BlockInfo> {
-        let block = grpc_block.block.as_ref()?;
-        let header = block.header.as_ref()?;
-        let body = block.body.as_ref()?;
-        let outputs = body
+    fn convert_block(
+        grpc_block: &tari_rpc::HistoricalBlock,
+    ) -> LightweightWalletResult<Option<BlockInfo>> {
+        let block = match grpc_block.block.as_ref() {
+            Some(block) => block,
+            None => return Ok(None),
+        };
+        let header = match block.header.as_ref() {
+            Some(header) => header,
+            None => return Ok(None),
+        };
+        let body = match block.body.as_ref() {
+            Some(body) => body,
+            None => return Ok(None),
+        };
+        let outputs: LightweightWalletResult<Vec<_>> = body
             .outputs
             .iter()
             .map(Self::convert_transaction_output)
             .collect();
+        let outputs = outputs?;
 
         // Extract inputs and kernels too
         let inputs = body
@@ -259,14 +274,14 @@ impl GrpcBlockchainScanner {
             .map(Self::convert_transaction_kernel)
             .collect();
 
-        Some(BlockInfo {
+        Ok(Some(BlockInfo {
             height: header.height,
             hash: header.hash.clone(),
             timestamp: header.timestamp,
             outputs,
             inputs,
             kernels,
-        })
+        }))
     }
 
     /// Convert GRPC transaction input to lightweight transaction input
@@ -285,7 +300,7 @@ impl GrpcBlockchainScanner {
             script_signature.copy_from_slice(&grpc_input.script[..64]);
         }
 
-        // Convert sender offset public key (use features field as placeholder since the exact field name may vary)
+        // Note: Sender offset public key not available in GRPC input data structure
         let sender_offset_public_key = CompressedPublicKey::new([0u8; 32]);
 
         // Convert input data to execution stack
@@ -316,10 +331,10 @@ impl GrpcBlockchainScanner {
             grpc_input.covenant.clone(),
             input_data,
             output_hash,
-            0, // output_features placeholder
+            0, // output_features not available in GRPC input data
             output_metadata_signature,
-            0,                     // maturity placeholder
-            MicroMinotari::new(0), // value placeholder
+            0,                     // maturity not available in GRPC input data
+            MicroMinotari::new(0), // value not available in GRPC input data
         )
     }
 
@@ -351,7 +366,7 @@ impl GrpcBlockchainScanner {
             lock_height: grpc_kernel.lock_height,
             excess: CompressedPublicKey::new(excess),
             excess_sig,
-            hash_type: 0, // placeholder since hash_type field doesn't exist
+            hash_type: 0, // hash_type field not available in GRPC kernel data
             burn_commitment: if !grpc_kernel.burn_commitment.is_empty() {
                 let mut commitment = [0u8; 32];
                 if grpc_kernel.burn_commitment.len() >= 32 {
@@ -547,7 +562,7 @@ impl GrpcBlockchainScanner {
                 )),
             )
         })? {
-            if let Some(block_info) = Self::convert_block(&grpc_block) {
+            if let Some(block_info) = Self::convert_block(&grpc_block)? {
                 return Ok(block_info.outputs);
             }
         }
@@ -587,7 +602,7 @@ impl GrpcBlockchainScanner {
                 )),
             )
         })? {
-            if let Some(block_info) = Self::convert_block(&grpc_block) {
+            if let Some(block_info) = Self::convert_block(&grpc_block)? {
                 return Ok(block_info.inputs);
             }
         }
@@ -626,7 +641,7 @@ impl GrpcBlockchainScanner {
                 )),
             )
         })? {
-            if let Some(block_info) = Self::convert_block(&grpc_block) {
+            if let Some(block_info) = Self::convert_block(&grpc_block)? {
                 return Ok(block_info.kernels);
             }
         }
@@ -665,7 +680,7 @@ impl GrpcBlockchainScanner {
                 )),
             )
         })? {
-            return Ok(Self::convert_block(&grpc_block));
+            return Self::convert_block(&grpc_block);
         }
 
         Ok(None)
@@ -745,7 +760,7 @@ impl GrpcBlockchainScanner {
                 )),
             )
         })? {
-            if let Some(block_info) = Self::convert_block(&grpc_block) {
+            if let Some(block_info) = Self::convert_block(&grpc_block)? {
                 blocks.push(block_info);
             }
         }
@@ -805,10 +820,10 @@ impl BlockchainScanner for GrpcBlockchainScanner {
                     )),
                 )
             })? {
-                if let Some(block_info) = Self::convert_block(&grpc_block) {
+                if let Some(block_info) = Self::convert_block(&grpc_block)? {
                     let mut wallet_outputs = Vec::new();
 
-                    println!("Outputs: {:?}", block_info.outputs.len());
+                    // Process outputs without debug output - let caller decide what to log
                     for output in &block_info.outputs {
                         // Use enhanced multi-strategy scanning instead of basic extraction
                         let mut found_output = false;
@@ -915,7 +930,7 @@ impl BlockchainScanner for GrpcBlockchainScanner {
                 )),
             )
         })? {
-            if let Some(block_info) = Self::convert_block(&grpc_block) {
+            if let Some(block_info) = Self::convert_block(&grpc_block)? {
                 let mut wallet_outputs = Vec::new();
                 for output in &block_info.outputs {
                     // Use default extraction config with no keys for commitment search
@@ -973,7 +988,7 @@ impl BlockchainScanner for GrpcBlockchainScanner {
             )
         })? {
             if let Some(output) = response.output {
-                results.push(Self::convert_transaction_output(&output));
+                results.push(Self::convert_transaction_output(&output)?);
             }
         }
 
@@ -1012,7 +1027,7 @@ impl BlockchainScanner for GrpcBlockchainScanner {
                 )),
             )
         })? {
-            if let Some(block_info) = Self::convert_block(&grpc_block) {
+            if let Some(block_info) = Self::convert_block(&grpc_block)? {
                 blocks.push(block_info);
             }
         }
@@ -1097,7 +1112,7 @@ impl Default for GrpcScannerBuilder {
     }
 }
 
-// Placeholder module for when GRPC feature is not enabled
+// Empty module when GRPC feature is not enabled
 #[cfg(not(feature = "grpc"))]
 pub struct GrpcBlockchainScanner;
 
@@ -1143,7 +1158,7 @@ impl WalletScanner for GrpcBlockchainScanner {
     async fn scan_wallet_with_progress(
         &mut self,
         config: WalletScanConfig,
-        progress_callback: Option<&ProgressCallback>,
+        progress_callback: Option<&LegacyProgressCallback>,
     ) -> LightweightWalletResult<WalletScanResult> {
         // Validate that we have key management set up
         if config.key_manager.is_none() && config.key_store.is_none() {

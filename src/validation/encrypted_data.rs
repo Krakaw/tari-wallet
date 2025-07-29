@@ -162,15 +162,18 @@ impl LightweightEncryptedDataValidator {
         encrypted_data_items: &[EncryptedData],
     ) -> Result<(), ValidationError> {
         let mut failed_count = 0;
+        let mut error_messages = Vec::new();
+
         for (index, encrypted_data) in encrypted_data_items.iter().enumerate() {
             if let Err(e) = self.validate_integrity(encrypted_data) {
                 failed_count += 1;
-                println!("Item {index}: {e}");
+                error_messages.push(format!("Item {index}: {e}"));
             }
         }
         if failed_count > 0 {
             return Err(ValidationError::IntegrityCheckFailed(format!(
-                "Batch validation failed: {failed_count} items failed"
+                "Batch validation failed: {failed_count} items failed. Errors: [{}]",
+                error_messages.join(", ")
             )));
         }
         Ok(())

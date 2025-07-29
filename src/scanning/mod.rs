@@ -3,6 +3,15 @@
 //! This module provides a lightweight interface for scanning the Tari blockchain
 //! for wallet outputs. It uses a trait-based approach that allows different
 //! backend implementations (gRPC, HTTP, etc.) to be plugged in.
+//!
+//! ## Scanner Refactoring Components
+//!
+//! The following modules support the refactored scanner.rs binary:
+//! - `scan_config`: Configuration structures for scanner binary operations
+//! - `storage_manager`: Storage abstraction for scanner binary
+//! - `background_writer`: Async database operations for scanner binary
+//! - `wallet_scanner`: Main scanning implementation for scanner binary
+//! - `progress`: Progress tracking utilities for scanner binary
 
 use std::time::{Duration, Instant};
 
@@ -35,6 +44,22 @@ pub mod grpc_scanner;
 // Include HTTP scanner
 pub mod http_scanner;
 
+// Scanner refactoring modules (for binary refactoring)
+#[cfg(feature = "grpc")]
+pub mod scan_config;
+
+#[cfg(all(feature = "grpc", feature = "storage"))]
+pub mod storage_manager;
+
+#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+pub mod background_writer;
+
+#[cfg(feature = "grpc")]
+pub mod wallet_scanner;
+
+#[cfg(feature = "grpc")]
+pub mod progress;
+
 // Re-export GRPC scanner types
 #[cfg(feature = "grpc")]
 pub use grpc_scanner::{GrpcBlockchainScanner, GrpcScannerBuilder};
@@ -42,8 +67,38 @@ pub use grpc_scanner::{GrpcBlockchainScanner, GrpcScannerBuilder};
 // Re-export HTTP scanner types
 pub use http_scanner::{HttpBlockchainScanner, HttpScannerBuilder};
 
-/// Progress callback for scanning operations
-pub type ProgressCallback = Box<dyn Fn(ScanProgress) + Send + Sync>;
+// Re-export scanner refactoring types (for binary refactoring)
+
+// Re-export configuration types for scanner binary operations
+#[cfg(feature = "grpc")]
+pub use scan_config::{BinaryScanConfig, OutputFormat, ScanContext};
+
+#[cfg(feature = "grpc")]
+pub use wallet_scanner::{
+    create_wallet_from_seed_phrase, create_wallet_from_view_key, RetryConfig, ScanMetadata,
+    ScanResult, ScannerConfigError, WalletScannerConfig,
+};
+
+#[cfg(all(feature = "grpc", feature = "storage"))]
+pub use wallet_scanner::WalletScanner as WalletScannerStruct;
+
+#[cfg(feature = "storage")]
+pub use wallet_scanner::extract_utxo_outputs_from_wallet_state;
+
+// Re-export background writer types for scanner binary operations
+#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+pub use background_writer::{BackgroundWriter, BackgroundWriterCommand};
+
+// Re-export storage manager types for scanner binary operations
+#[cfg(feature = "storage")]
+pub use storage_manager::ScannerStorage;
+
+// Re-export progress tracking types for scanner binary operations
+#[cfg(feature = "grpc")]
+pub use progress::{ProgressCallback, ProgressConfig, ProgressInfo, ProgressTracker};
+
+/// Legacy progress callback for scanning operations (for compatibility)
+pub type LegacyProgressCallback = Box<dyn Fn(ScanProgress) + Send + Sync>;
 
 /// Scanning progress information
 #[derive(Debug, Clone)]
@@ -100,7 +155,10 @@ mod duration_serde {
 
 impl ScanConfig {
     /// Create a new scan config with a progress callback
-    pub fn with_progress_callback(self, callback: ProgressCallback) -> ScanConfigWithCallback {
+    pub fn with_progress_callback(
+        self,
+        callback: LegacyProgressCallback,
+    ) -> ScanConfigWithCallback {
         ScanConfigWithCallback {
             config: self,
             progress_callback: Some(callback),
@@ -111,7 +169,7 @@ impl ScanConfig {
 /// Scan config with progress callback (not Debug/Clone)
 pub struct ScanConfigWithCallback {
     pub config: ScanConfig,
-    pub progress_callback: Option<ProgressCallback>,
+    pub progress_callback: Option<LegacyProgressCallback>,
 }
 
 impl Default for ScanConfig {
@@ -331,7 +389,7 @@ pub trait WalletScanner: Send + Sync {
     async fn scan_wallet_with_progress(
         &mut self,
         config: WalletScanConfig,
-        progress_callback: Option<&ProgressCallback>,
+        progress_callback: Option<&LegacyProgressCallback>,
     ) -> LightweightWalletResult<WalletScanResult>;
 
     /// Get the underlying blockchain scanner
@@ -667,7 +725,7 @@ impl DefaultScanningLogic {
     pub async fn scan_blocks_with_progress<S>(
         scanner: &mut S,
         config: ScanConfig,
-        progress_callback: Option<&ProgressCallback>,
+        progress_callback: Option<&LegacyProgressCallback>,
     ) -> LightweightWalletResult<Vec<BlockScanResult>>
     where
         S: BlockchainScanner,
@@ -723,7 +781,7 @@ impl DefaultScanningLogic {
     pub async fn scan_wallet_with_progress<S>(
         scanner: &mut S,
         config: WalletScanConfig,
-        progress_callback: Option<&ProgressCallback>,
+        progress_callback: Option<&LegacyProgressCallback>,
     ) -> LightweightWalletResult<WalletScanResult>
     where
         S: BlockchainScanner,

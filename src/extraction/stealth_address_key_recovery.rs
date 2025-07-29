@@ -266,9 +266,9 @@ impl StealthKeyRecoveryManager {
         for (_transaction_output, ephemeral_public_key) in transaction_outputs {
             match self.recover_stealth_private_key(ephemeral_public_key) {
                 Ok(result) => results.push(result),
-                Err(e) => {
-                    // Log the error but continue with other outputs
-                    eprintln!("Failed to recover stealth key: {:?}", e);
+                Err(_) => {
+                    // Skip recovery failures - continue with other outputs
+                    // Caller can decide how to handle recovery failures
                     continue;
                 }
             }
