@@ -378,4 +378,136 @@ mod tests {
         assert!(!config.quiet);
         assert!(config.calculate_eta);
     }
+
+    #[test]
+    fn test_progress_tracker_set_methods() {
+        let mut tracker = ProgressTracker::new(100);
+
+        // Test setting new total blocks
+        tracker.set_total_blocks(200);
+        assert_eq!(tracker.total_blocks(), 200);
+
+        // Test setting new config
+        let new_config = ProgressConfig {
+            frequency: 5,
+            quiet: true,
+            calculate_eta: false,
+        };
+        tracker.set_config(new_config);
+        assert_eq!(tracker.config().frequency, 5);
+        assert!(tracker.config().quiet);
+        assert!(!tracker.config().calculate_eta);
+    }
+
+    #[test]
+    fn test_progress_info_eta_calculation() {
+        let mut tracker = ProgressTracker::new(100);
+
+        // Process some blocks to have meaningful data for ETA
+        for i in 0..10 {
+            tracker.update(i, 1, 0);
+            // Small delay to ensure time passes
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        let progress_info = tracker.get_progress_info();
+        assert!(progress_info.blocks_per_sec > 0.0);
+        assert!(progress_info.eta.is_some());
+
+        // Test with ETA disabled
+        let config = ProgressConfig {
+            frequency: 1,
+            quiet: false,
+            calculate_eta: false,
+        };
+        tracker.set_config(config);
+
+        let progress_info = tracker.get_progress_info();
+        assert!(progress_info.eta.is_none());
+    }
+
+    #[test]
+    fn test_progress_info_edge_cases() {
+        // Test with zero total blocks
+        let tracker = ProgressTracker::new(0);
+        let progress_info = tracker.get_progress_info();
+        assert_eq!(progress_info.progress_percent, 0.0);
+
+        // Test progress calculation with normal values
+        let mut tracker = ProgressTracker::new(50);
+        tracker.update(100, 1, 0);
+        tracker.update(101, 1, 0);
+        let progress_info = tracker.get_progress_info();
+        assert_eq!(progress_info.progress_percent, 4.0); // 2/50 * 100
+
+        // Test when all blocks are processed
+        let mut tracker = ProgressTracker::new(2);
+        tracker.update(100, 1, 0);
+        tracker.update(101, 1, 0);
+        let progress_info = tracker.get_progress_info();
+        assert_eq!(progress_info.progress_percent, 100.0);
+        assert!(tracker.is_complete());
+    }
+
+    #[test]
+    fn test_progress_callback_frequency() {
+        let callback_count = Arc::new(Mutex::new(0));
+        let callback_count_clone = callback_count.clone();
+
+        let callback: ProgressCallback = Box::new(move |_info| {
+            *callback_count_clone.lock().unwrap() += 1;
+        });
+
+        let config = ProgressConfig {
+            frequency: 3, // Every 3 blocks
+            quiet: false,
+            calculate_eta: true,
+        };
+
+        let mut tracker = ProgressTracker::with_config(10, config).with_callback(callback);
+
+        // Update 5 times - should only trigger callback twice (at blocks 3 and 6)
+        for i in 1..=5 {
+            tracker.update(i, 1, 0);
+        }
+
+        assert_eq!(*callback_count.lock().unwrap(), 1); // Only block 3 triggers (blocks_processed=3)
+
+        // One more update to reach block 6
+        tracker.update(6, 1, 0);
+        assert_eq!(*callback_count.lock().unwrap(), 2); // blocks_processed=6 triggers
+    }
+
+    #[test]
+    fn test_progress_info_format_validation() {
+        let start_time = Instant::now();
+        let progress_info = ProgressInfo {
+            current_block: 12345,
+            total_blocks: 50000,
+            blocks_processed: 10000,
+            outputs_found: 25,
+            inputs_found: 15,
+            start_time,
+            progress_percent: 20.0,
+            blocks_per_sec: 10.5,
+            elapsed: Duration::from_secs(120),
+            eta: Some(Duration::from_secs(3600)),
+        };
+
+        // Verify all fields are accessible and have expected values
+        assert_eq!(progress_info.current_block, 12345);
+        assert_eq!(progress_info.total_blocks, 50000);
+        assert_eq!(progress_info.blocks_processed, 10000);
+        assert_eq!(progress_info.outputs_found, 25);
+        assert_eq!(progress_info.inputs_found, 15);
+        assert_eq!(progress_info.progress_percent, 20.0);
+        assert_eq!(progress_info.blocks_per_sec, 10.5);
+        assert_eq!(progress_info.elapsed, Duration::from_secs(120));
+        assert_eq!(progress_info.eta, Some(Duration::from_secs(3600)));
+
+        // Test should_display with various frequencies
+        assert!(progress_info.should_display(100)); // 10000 % 100 == 0
+        assert!(progress_info.should_display(1000)); // 10000 % 1000 == 0
+        assert!(!progress_info.should_display(333)); // 10000 % 333 != 0
+    }
 }

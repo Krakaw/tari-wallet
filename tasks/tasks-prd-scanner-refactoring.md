@@ -90,7 +90,7 @@ Based on the PRD requirements, this task list guides the implementation of extra
   - [x] 6.3 Write unit tests for `storage_manager.rs`: memory vs database modes, wallet operations, transaction storage
   - [x] 6.4 Write unit tests for `background_writer.rs`: async operations, command queue, error handling
   - [x] 6.5 Write unit tests for `wallet_scanner.rs`: scanning logic, API methods, result processing
-  - [ ] 6.6 Write unit tests for `progress.rs`: progress tracking, display formatting, callback handling
+  - [x] 6.6 Write unit tests for `progress.rs`: progress tracking, display formatting, callback handling
   - [ ] 6.7 Create integration tests for end-to-end scanning workflows with both memory and database storage
   - [ ] 6.8 Add tests for all feature flag combinations (`grpc`, `storage`, `wasm`)
   - [ ] 6.9 Implement mocking for blockchain data to enable deterministic testing
