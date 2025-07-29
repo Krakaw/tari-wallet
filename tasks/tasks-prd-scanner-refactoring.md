@@ -20,6 +20,7 @@ Based on the PRD requirements, this task list guides the implementation of extra
 - `src/scanning/tests/test_wallet_scanner.rs` - Unit tests for main scanning API
 - `src/scanning/tests/test_progress.rs` - Unit tests for progress tracking
 - `tests/integration_scanner.rs` - Integration tests for end-to-end scanning workflows
+- `INTEGRATION_GUIDE.md` - Comprehensive integration guide documenting the library API for developers
 
 ### Notes
 
@@ -105,5 +106,5 @@ Based on the PRD requirements, this task list guides the implementation of extra
   - [ ] 7.6 Run `cargo fmt` on all files and verify code formatting standards
   - [ ] 7.7 Test all feature flag combinations compile and work correctly
   - [ ] 7.8 Verify all existing integration tests pass with refactored implementation
-  - [ ] 7.9 Conduct final code review to ensure no business logic remains in binary
-  - [ ] 7.10 Create migration guide documenting the new library API for other developers
+  - [x] 7.9 Conduct final code review to ensure no business logic remains in binary
+  - [x] 7.10 Create migration guide documenting the new library API for other developers
