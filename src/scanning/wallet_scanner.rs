@@ -13,33 +13,52 @@
 //!
 //! This module is part of the scanner.rs binary refactoring effort.
 
-use blake2::{Blake2b, Digest};
-use digest::consts::U32;
-use tari_utilities::ByteArray;
 use tokio::time::Instant;
-use zeroize::Zeroize;
 
 use crate::{
     common::format_number,
-    data_structures::{
-        transaction::TransactionDirection, transaction_output::LightweightTransactionOutput,
-        types::PrivateKey, wallet_transaction::WalletState,
-    },
-    errors::{KeyManagementError, LightweightWalletError, LightweightWalletResult},
-    key_management::key_derivation,
-    scanning::GrpcBlockchainScanner,
-    storage::storage_trait::{OutputStatus, StoredOutput},
+    data_structures::wallet_transaction::WalletState,
+    errors::{LightweightWalletError, LightweightWalletResult},
     wallet::Wallet,
 };
 
-use super::{BinaryScanConfig, ProgressInfo, ProgressTracker, ScanContext, ScannerStorage};
+#[cfg(all(feature = "grpc", feature = "storage"))]
+use crate::scanning::GrpcBlockchainScanner;
+
+#[cfg(feature = "storage")]
+use crate::{
+    data_structures::{
+        transaction::TransactionDirection, transaction_output::LightweightTransactionOutput,
+        types::PrivateKey,
+    },
+    errors::KeyManagementError,
+    key_management::key_derivation,
+    storage::storage_trait::{OutputStatus, StoredOutput},
+};
+
+#[cfg(all(feature = "grpc", feature = "storage"))]
+use blake2::{Blake2b, Digest};
+
+#[cfg(all(feature = "grpc", feature = "storage"))]
+use digest::consts::U32;
+
+#[cfg(all(feature = "grpc", feature = "storage"))]
+use tari_utilities::ByteArray;
+
+#[cfg(all(feature = "grpc", feature = "storage"))]
+use zeroize::Zeroize;
+
+use super::{BinaryScanConfig, ProgressInfo, ProgressTracker, ScanContext};
+
+#[cfg(all(feature = "grpc", feature = "storage"))]
+use super::ScannerStorage;
 
 // =============================================================================
 // Transaction extraction helper functions
 // =============================================================================
 
 /// Filter transactions from a specific block
-#[cfg(all(feature = "grpc", feature = "storage"))]
+#[cfg(feature = "storage")]
 fn filter_block_transactions(
     wallet_state: &WalletState,
     block_height: u64,
@@ -53,7 +72,7 @@ fn filter_block_transactions(
 }
 
 /// Create stored output from blockchain output and transaction data
-#[cfg(all(feature = "grpc", feature = "storage"))]
+#[cfg(feature = "storage")]
 fn create_stored_output_from_blockchain_data(
     transaction: &crate::data_structures::wallet_transaction::WalletTransaction,
     blockchain_output: &LightweightTransactionOutput,
@@ -152,7 +171,7 @@ fn create_stored_output_from_blockchain_data(
 }
 
 /// Extract UTXO data from blockchain outputs and create StoredOutput objects
-#[cfg(all(feature = "grpc", feature = "storage"))]
+#[cfg(feature = "storage")]
 pub fn extract_utxo_outputs_from_wallet_state(
     wallet_state: &WalletState,
     scan_context: &ScanContext,
@@ -1147,6 +1166,7 @@ impl WalletScanner {
     /// - Invalid scan configuration provided
     /// - Storage operations fail
     /// - Scanning is cancelled by external signal
+    #[cfg(all(feature = "grpc", feature = "storage"))]
     pub async fn scan(
         &mut self,
         scanner: &mut GrpcBlockchainScanner,
@@ -1201,6 +1221,7 @@ impl WalletScanner {
     }
 
     /// Execute the scan with retry logic for failed operations
+    #[cfg(all(feature = "grpc", feature = "storage"))]
     async fn execute_scan_with_retry(
         &mut self,
         scanner: &mut GrpcBlockchainScanner,
@@ -1256,6 +1277,7 @@ impl WalletScanner {
     }
 
     /// Check if an error is retryable
+    #[cfg(all(feature = "grpc", feature = "storage"))]
     fn is_retryable_error(&self, error: &LightweightWalletError) -> bool {
         match error {
             // Network-related errors are typically retryable
@@ -1282,7 +1304,7 @@ impl Default for WalletScanner {
 // =============================================================================
 
 /// Determine scanning block range with resume support
-#[cfg(feature = "grpc")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 async fn determine_scan_range(
     config: &BinaryScanConfig,
     storage_backend: &mut ScannerStorage,
@@ -1324,7 +1346,7 @@ async fn determine_scan_range(
 }
 
 /// Prepare block heights list for scanning
-#[cfg(feature = "grpc")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 fn prepare_block_heights(config: &BinaryScanConfig, from_block: u64, to_block: u64) -> Vec<u64> {
     let has_specific_blocks = config.block_heights.is_some();
 
@@ -1344,7 +1366,7 @@ fn prepare_block_heights(config: &BinaryScanConfig, from_block: u64, to_block: u
 }
 
 /// Initialize scanning operation and return initial state
-#[cfg(feature = "grpc")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 fn initialize_scan_state() -> (WalletState, Instant) {
     let wallet_state = WalletState::new();
     let start_time = Instant::now();
@@ -1352,7 +1374,7 @@ fn initialize_scan_state() -> (WalletState, Instant) {
 }
 
 /// Core scanning logic - simplified and focused with batch processing
-#[cfg(feature = "grpc")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 async fn scan_wallet_across_blocks_with_cancellation(
     scanner: &mut GrpcBlockchainScanner,
     scan_context: &ScanContext,
@@ -1538,7 +1560,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
 }
 
 /// Display scan configuration information
-#[cfg(feature = "grpc")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_specific_blocks: bool) {
     if has_specific_blocks {
         println!(
@@ -2122,6 +2144,7 @@ mod tests {
         assert_eq!(reliability.config.retry_config.max_retries, 5);
     }
 
+    #[cfg(all(feature = "grpc", feature = "storage"))]
     #[test]
     fn test_wallet_scanner_is_retryable_error() {
         let scanner = WalletScanner::new();

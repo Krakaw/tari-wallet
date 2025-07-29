@@ -75,17 +75,22 @@ pub use scan_config::{BinaryScanConfig, OutputFormat, ScanContext};
 
 #[cfg(feature = "grpc")]
 pub use wallet_scanner::{
-    create_wallet_from_seed_phrase, create_wallet_from_view_key,
-    extract_utxo_outputs_from_wallet_state, RetryConfig, ScanMetadata, ScanResult,
-    ScannerConfigError, WalletScanner as WalletScannerStruct, WalletScannerConfig,
+    create_wallet_from_seed_phrase, create_wallet_from_view_key, RetryConfig, ScanMetadata,
+    ScanResult, ScannerConfigError, WalletScannerConfig,
 };
+
+#[cfg(all(feature = "grpc", feature = "storage"))]
+pub use wallet_scanner::WalletScanner as WalletScannerStruct;
+
+#[cfg(feature = "storage")]
+pub use wallet_scanner::extract_utxo_outputs_from_wallet_state;
 
 // Re-export background writer types for scanner binary operations
 #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
 pub use background_writer::{BackgroundWriter, BackgroundWriterCommand};
 
 // Re-export storage manager types for scanner binary operations
-#[cfg(feature = "grpc")]
+#[cfg(feature = "storage")]
 pub use storage_manager::ScannerStorage;
 
 // Re-export progress tracking types for scanner binary operations
