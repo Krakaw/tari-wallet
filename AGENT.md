@@ -23,7 +23,7 @@
 
 ### Scanner Binary (Refactored)
 The scanner binary is now a lightweight wrapper around the scanning library:
-- **~200 lines** of CLI-specific code (down from 2,895 lines)
+- **~700 lines** of CLI-specific code (down from 2,895 lines)
 - **Clean separation** between business logic (library) and UI (binary)
 - **Full functionality preserved** while using the new library API
 - **Better testability** with library components being unit-testable
