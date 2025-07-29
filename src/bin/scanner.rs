@@ -305,21 +305,50 @@ async fn display_completion_info(
     Ok(())
 }
 
-/// CLI-focused progress display using library ProgressInfo type
+/// Enhanced CLI progress display with ASCII progress bar
 ///
 /// Maintains identical user experience with real-time updates and consistent formatting.
-/// Critical for user experience: shows progress percentage, block info, and scan results.
+/// Critical for user experience: shows visual progress bar, percentage, block info, and scan results.
 #[cfg(feature = "grpc")]
 #[allow(dead_code)]
 fn display_progress(progress_info: &ProgressInfo) {
-    print!("\r🔍 Progress: {:.1}% ({}/{}) | Block {} | {:.1} blocks/s | Found: {} outputs, {} spent   ",
+    // Create ASCII progress bar
+    let bar_width = 40;
+    let progress_fraction = progress_info.progress_percent / 100.0;
+    let filled_width = (progress_fraction * bar_width as f64) as usize;
+    let filled_width = filled_width.min(bar_width); // Ensure we don't exceed bar width
+
+    let progress_bar = format!(
+        "{}{}",
+        "█".repeat(filled_width),
+        "░".repeat(bar_width - filled_width)
+    );
+
+    // Format the time remaining if available
+    let eta_display = if let Some(eta) = progress_info.eta {
+        let eta_secs = eta.as_secs();
+        if eta_secs < 60 {
+            format!(" ETA: {}s", eta_secs)
+        } else if eta_secs < 3600 {
+            format!(" ETA: {}m{}s", eta_secs / 60, eta_secs % 60)
+        } else {
+            format!(" ETA: {}h{}m", eta_secs / 3600, (eta_secs % 3600) / 60)
+        }
+    } else {
+        String::new()
+    };
+
+    print!(
+        "\r🔍 [{}] {:.1}% ({}/{}) | Block {} | {:.1} blocks/s | Found: {} outputs, {} spent{}   ",
+        progress_bar,
         progress_info.progress_percent,
         format_number(progress_info.blocks_processed),
         format_number(progress_info.total_blocks),
         format_number(progress_info.current_block),
         progress_info.blocks_per_sec,
         format_number(progress_info.outputs_found),
-        format_number(progress_info.inputs_found)
+        format_number(progress_info.inputs_found),
+        eta_display
     );
     std::io::Write::flush(&mut std::io::stdout()).unwrap();
 }

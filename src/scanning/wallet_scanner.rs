@@ -1364,7 +1364,12 @@ async fn scan_wallet_across_blocks_with_cancellation(
     // Initialize scanning state
     let (mut wallet_state, _start_time) = initialize_scan_state();
 
-    // Progress tracking is already set up by the caller
+    // Update progress tracker with total block count
+    if let Some(tracker) = progress_tracker.as_mut() {
+        let total_blocks = to_block - from_block + 1;
+        // Update the total blocks but preserve existing configuration and callback
+        tracker.set_total_blocks(total_blocks as usize);
+    }
 
     // Prepare block heights list for scanning
     let block_heights = prepare_block_heights(config, from_block, to_block);

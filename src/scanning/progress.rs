@@ -218,6 +218,11 @@ impl ProgressTracker {
     pub fn set_config(&mut self, config: ProgressConfig) {
         self.config = config;
     }
+
+    /// Update the total number of blocks to process
+    pub fn set_total_blocks(&mut self, total_blocks: usize) {
+        self.total_blocks = total_blocks;
+    }
 }
 
 #[cfg(test)]
