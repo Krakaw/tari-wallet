@@ -1036,9 +1036,6 @@ impl WalletScanner {
     ///
     /// This timeout applies to individual GRPC calls to the blockchain.
     /// Default is 30 seconds.
-    ///
-    /// # Panics
-    /// Panics if timeout is invalid. Use `try_with_timeout` for error handling.
     pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.config.timeout = Some(timeout.clamp(
             std::time::Duration::from_millis(100),

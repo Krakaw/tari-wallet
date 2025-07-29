@@ -310,7 +310,6 @@ async fn display_completion_info(
 /// Maintains identical user experience with real-time updates and consistent formatting.
 /// Critical for user experience: shows visual progress bar, percentage, block info, and scan results.
 #[cfg(feature = "grpc")]
-#[allow(dead_code)]
 fn display_progress(progress_info: &ProgressInfo) {
     // Create ASCII progress bar
     let bar_width = 40;
