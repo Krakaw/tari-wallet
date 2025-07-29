@@ -391,6 +391,20 @@ pub fn create_wallet_from_view_key(
 // =============================================================================
 
 /// Additional metadata about the scanning operation
+///
+/// Contains detailed information about a completed or interrupted scanning
+/// operation, including timing, block ranges, and processing statistics.
+/// This metadata is useful for logging, monitoring, and resuming operations.
+///
+/// # Examples
+/// ```
+/// use lightweight_wallet_libs::scanning::ScanMetadata;
+///
+/// let metadata = ScanMetadata::new(1000, 2000, 1001, false);
+/// if let Some(duration) = metadata.duration() {
+///     println!("Scan took {:?}", duration);
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct ScanMetadata {
     /// Block range that was scanned
@@ -636,6 +650,18 @@ impl ScanResult {
 }
 
 /// Configuration for the wallet scanner
+///
+/// This structure controls the behavior of wallet scanning operations,
+/// including performance settings, logging options, and retry behavior.
+///
+/// # Examples
+/// ```
+/// use lightweight_wallet_libs::scanning::WalletScannerConfig;
+///
+/// let config = WalletScannerConfig::default()
+///     .with_batch_size(20)
+///     .with_verbose_logging(true);
+/// ```
 pub struct WalletScannerConfig {
     /// Progress tracking configuration
     pub progress_tracker: Option<ProgressTracker>,
@@ -708,6 +734,21 @@ impl From<ScannerConfigError> for LightweightWalletError {
 }
 
 /// Retry configuration for failed operations
+///
+/// Controls how the scanner behaves when encountering transient failures
+/// during blockchain operations. Supports exponential backoff with configurable
+/// delays and maximum retry attempts.
+///
+/// # Examples
+/// ```
+/// use lightweight_wallet_libs::scanning::RetryConfig;
+/// use std::time::Duration;
+///
+/// let retry_config = RetryConfig::default()
+///     .with_max_retries(5)
+///     .with_base_delay(Duration::from_secs(1))
+///     .with_exponential_backoff(true);
+/// ```
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
     /// Maximum number of retry attempts
@@ -872,21 +913,46 @@ impl std::fmt::Debug for WalletScannerConfig {
 /// implemented directly in the scanner binary. It provides a clean API for
 /// scanning wallets across blockchain height ranges with flexible configuration.
 ///
+/// # Features
+/// - **Configurable batch processing** for optimal performance
+/// - **Built-in retry logic** with exponential backoff for transient failures
+/// - **Progress tracking** with customizable callbacks and real-time updates
+/// - **Graceful interruption** support for user-initiated cancellation
+/// - **Comprehensive error handling** with detailed error context
+/// - **Memory-efficient streaming** processing for large block ranges
+/// - **Resumable scanning** from the last successfully processed block
+///
+/// # Performance Considerations
+/// - Larger batch sizes improve throughput but increase memory usage
+/// - Progress callbacks add minimal overhead when used judiciously
+/// - Retry logic helps handle network instability gracefully
+/// - Database operations are batched for optimal I/O performance
+///
 /// # Examples
 ///
+/// Basic scanner setup:
 /// ```rust,no_run
 /// use lightweight_wallet_libs::scanning::WalletScanner;
 ///
 /// // Create a basic scanner
 /// let scanner = WalletScanner::new();
+/// ```
 ///
-/// // Create a scanner with progress tracking
+/// Advanced configuration with progress tracking:
+/// ```rust,no_run
+/// use lightweight_wallet_libs::scanning::WalletScanner;
+/// use std::time::Duration;
+///
 /// let scanner = WalletScanner::new()
 ///     .with_progress_callback(|info| {
-///         println!("Progress: {}%", info.progress_percent);
+///         println!("Progress: {:.2}% ({}/{} blocks, {} outputs found)",
+///                  info.progress_percent,
+///                  info.blocks_processed,
+///                  info.total_blocks,
+///                  info.outputs_found);
 ///     })
 ///     .with_batch_size(20)
-///     .with_timeout(std::time::Duration::from_secs(60))
+///     .with_timeout(Duration::from_secs(60))
 ///     .with_verbose_logging(true);
 /// ```
 pub struct WalletScanner {

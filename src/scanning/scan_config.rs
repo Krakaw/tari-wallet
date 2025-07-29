@@ -169,23 +169,37 @@ impl BinaryScanConfig {
 ///
 /// This structure holds the cryptographic context needed for wallet scanning,
 /// including the private view key and entropy derived from the wallet seed.
+/// It provides all the necessary cryptographic material for detecting and
+/// decrypting wallet outputs during blockchain scanning.
 ///
-/// # Security
-/// This structure contains sensitive cryptographic material and implements
-/// zeroization to securely clear memory when dropped.
+/// # Components
+/// - **View Key**: Used for detecting and decrypting wallet outputs
+/// - **Entropy**: Wallet-specific entropy for key derivation and scanning
+///
+/// # Security Considerations
+/// - This structure contains sensitive cryptographic material
+/// - Implements `Zeroize` and `ZeroizeOnDrop` for automatic memory cleanup
+/// - Sensitive data is securely cleared when the struct is dropped
+/// - Should not be stored in persistent memory or logged
+/// - Use secure memory handling practices when working with this data
+///
+/// # Creation Methods
+/// 1. **From Wallet** (Recommended): Provides full scanning context with entropy
+/// 2. **From View Key**: Limited context for view-only scanning operations
+/// 3. **From Seed Phrase**: Direct construction from mnemonic phrase
 ///
 /// # Examples
 /// ```no_run
 /// use lightweight_wallet_libs::scanning::ScanContext;
 /// use lightweight_wallet_libs::wallet::Wallet;
 ///
-/// // From a wallet
+/// // From a wallet (provides full context)
 /// let wallet = Wallet::generate_new_with_seed_phrase(None)?;
 /// let context = ScanContext::from_wallet(&wallet)?;
 ///
-/// // From a view key
-/// let view_key_hex = "a1b2c3d4..."; // 64 character hex string
-/// let context = ScanContext::from_view_key(view_key_hex)?;
+/// // From a view key (limited context)
+/// let view_key_hex = "9d84cc4795b509dadae90bd68b42f7d630a6a3d56281c0b5dd1c0ed36390e70a";
+/// let context = ScanContext::from_view_key_hex(view_key_hex)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]

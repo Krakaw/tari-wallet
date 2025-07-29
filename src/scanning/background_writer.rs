@@ -76,8 +76,31 @@ pub enum BackgroundWriterCommand {
 /// Background writer service for non-WASM32 architectures
 ///
 /// This struct manages a background thread for performing database operations
-/// asynchronously, improving scanning performance by decoupling writes from
-/// the main scanning loop.
+/// asynchronously, significantly improving scanning performance by decoupling
+/// database writes from the main scanning loop.
+///
+/// # Features
+/// - **Asynchronous I/O**: Database operations run in a separate task
+/// - **Command Queue**: Uses unbounded channels for reliable command delivery
+/// - **Error Handling**: Each operation returns results via oneshot channels
+/// - **Graceful Shutdown**: Supports clean termination of background operations
+/// - **Sequential Processing**: Commands are processed in order for consistency
+///
+/// # Architecture
+/// The background writer uses a command-based architecture where the main thread
+/// sends `BackgroundWriterCommand` messages through an unbounded channel. The
+/// background task processes these commands sequentially while maintaining
+/// database consistency and transaction integrity.
+///
+/// # Platform Support
+/// This component is only available on non-WASM32 architectures where full
+/// threading and async I/O are supported. For WASM32 builds, database operations
+/// are performed synchronously to maintain compatibility with browser limitations.
+///
+/// # Lifecycle
+/// 1. **Creation**: Spawned by `ScannerStorage` when database mode is enabled
+/// 2. **Operation**: Processes commands throughout the scanning operation
+/// 3. **Shutdown**: Gracefully terminated when scanning completes or errors occur
 #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
 pub struct BackgroundWriter {
     /// Command sender for communicating with the background writer thread
