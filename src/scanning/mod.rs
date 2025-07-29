@@ -67,8 +67,6 @@ pub use grpc_scanner::{GrpcBlockchainScanner, GrpcScannerBuilder};
 // Re-export HTTP scanner types
 pub use http_scanner::{HttpBlockchainScanner, HttpScannerBuilder};
 
-// Re-export scanner refactoring types (for binary refactoring)
-
 // Re-export configuration types for scanner binary operations
 #[cfg(feature = "grpc")]
 pub use scan_config::{BinaryScanConfig, OutputFormat, ScanContext};
@@ -79,14 +77,14 @@ pub use wallet_scanner::{
     ScanResult, ScannerConfigError, WalletScannerConfig,
 };
 
-#[cfg(all(feature = "grpc", feature = "storage"))]
+#[cfg(feature = "grpc")]
 pub use wallet_scanner::WalletScanner as WalletScannerStruct;
 
 #[cfg(feature = "storage")]
 pub use wallet_scanner::extract_utxo_outputs_from_wallet_state;
 
 // Re-export background writer types for scanner binary operations
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 pub use background_writer::{BackgroundWriter, BackgroundWriterCommand};
 
 // Re-export storage manager types for scanner binary operations
