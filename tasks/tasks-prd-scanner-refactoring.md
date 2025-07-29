@@ -73,7 +73,7 @@ Based on the PRD requirements, this task list guides the implementation of extra
   - [x] 4.8 Create clean public API with builder pattern support and comprehensive error handling
   - [x] 4.9 Ensure all scanning logic maintains async/await compatibility and proper zeroization
 
-- [ ] 5.0 Refactor binary to use library components
+- [x] 5.0 Refactor binary to use library components
   - [x] 5.1 Strip `src/bin/scanner.rs` down to CLI-only concerns: clap parsing, user interaction, output formatting
   - [x] 5.2 Update imports to use library components: `use lightweight_wallet_libs::scanning::*`
   - [x] 5.3 Convert CLI args to `ScanConfig` and integrate with `WalletScanner::new()`
@@ -81,7 +81,7 @@ Based on the PRD requirements, this task list guides the implementation of extra
   - [x] 5.5 Preserve user experience: identical progress display, error messages, and output formats
   - [x] 5.6 Handle wallet selection prompts in binary while using library methods for data operations
   - [x] 5.7 Ensure resume functionality and all CLI arguments work identically to original implementation
-  - [ ] 5.8 Verify binary has maintained full functionality.
+  - [x] 5.8 Verify binary has maintained full functionality.
 
 - [ ] 6.0 Implement comprehensive testing framework
   - [ ] 6.1 Create `src/scanning/tests/` directory and test module organization

@@ -328,11 +328,15 @@ fn display_progress(progress_info: &ProgressInfo) {
     let eta_display = if let Some(eta) = progress_info.eta {
         let eta_secs = eta.as_secs();
         if eta_secs < 60 {
-            format!(" ETA: {}s", eta_secs)
+            format!(" ETA: {eta_secs}s")
         } else if eta_secs < 3600 {
-            format!(" ETA: {}m{}s", eta_secs / 60, eta_secs % 60)
+            let minutes = eta_secs / 60;
+            let seconds = eta_secs % 60;
+            format!(" ETA: {minutes}m{seconds}s")
         } else {
-            format!(" ETA: {}h{}m", eta_secs / 3600, (eta_secs % 3600) / 60)
+            let hours = eta_secs / 3600;
+            let minutes = (eta_secs % 3600) / 60;
+            format!(" ETA: {hours}h{minutes}m")
         }
     } else {
         String::new()
@@ -428,7 +432,7 @@ async fn handle_interactive_wallet_selection(
             };
             let last_scanned = if let Some(block) = wallet.latest_scanned_block {
                 if block > 0 {
-                    format!("(last scanned: block {})", block)
+                    format!("(last scanned: block {block})")
                 } else {
                     "(never scanned)".to_string()
                 }
@@ -451,7 +455,7 @@ async fn handle_interactive_wallet_selection(
         // Read user input
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).map_err(|e| {
-            LightweightWalletError::StorageError(format!("Failed to read user input: {}", e))
+            LightweightWalletError::StorageError(format!("Failed to read user input: {e}"))
         })?;
 
         let choice: usize =
@@ -662,10 +666,9 @@ async fn main() -> LightweightWalletResult<()> {
     if from_block > to_block {
         return Err(LightweightWalletError::InvalidArgument {
             argument: "block_range".to_string(),
-            value: format!("{}-{}", from_block, to_block),
+            value: format!("{from_block}-{to_block}"),
             message: format!(
-                "Starting block ({}) cannot be greater than ending block ({})",
-                from_block, to_block
+                "Starting block ({from_block}) cannot be greater than ending block ({to_block})"
             ),
         });
     }
@@ -738,7 +741,7 @@ async fn main() -> LightweightWalletResult<()> {
                     if let Some(resume_cmd) = result.resume_command(
                         "cargo run --bin scanner --features grpc-storage -- <your-options>",
                     ) {
-                        println!("   {}", resume_cmd);
+                        println!("   {resume_cmd}");
                     }
                 }
                 std::process::exit(130); // Standard exit code for SIGINT

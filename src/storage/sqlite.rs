@@ -1118,6 +1118,17 @@ impl WalletStorage for SqliteStorage {
             .map_err(|e| {
                 LightweightWalletError::StorageError(format!("Failed to clear outputs: {e}"))
             })?;
+        self.connection
+            .call(|conn| {
+                conn.execute("UPDATE wallets SET latest_scanned_block = 0", [])?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| {
+                LightweightWalletError::StorageError(format!(
+                    "Failed to clear latest scanned block: {e}"
+                ))
+            })?;
         Ok(())
     }
 

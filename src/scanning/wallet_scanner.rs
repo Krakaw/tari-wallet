@@ -540,10 +540,7 @@ impl ScanResult {
                 .unwrap_or(0);
 
             if next_block > 0 {
-                Some(format!(
-                    "{} --from-block {}",
-                    original_command_args, next_block
-                ))
+                Some(format!("{original_command_args} --from-block {next_block}"))
             } else {
                 None
             }
@@ -591,13 +588,13 @@ impl ScanResult {
             "    \"total_transactions\": {},\n",
             wallet_state.transactions.len()
         ));
-        json.push_str(&format!("    \"inbound_count\": {},\n", inbound_count));
-        json.push_str(&format!("    \"outbound_count\": {},\n", outbound_count));
-        json.push_str(&format!("    \"total_received\": {},\n", total_received));
-        json.push_str(&format!("    \"total_spent\": {},\n", total_spent));
-        json.push_str(&format!("    \"current_balance\": {},\n", balance));
-        json.push_str(&format!("    \"unspent_outputs\": {},\n", unspent_count));
-        json.push_str(&format!("    \"spent_outputs\": {}\n", spent_count));
+        json.push_str(&format!("    \"inbound_count\": {inbound_count},\n"));
+        json.push_str(&format!("    \"outbound_count\": {outbound_count},\n"));
+        json.push_str(&format!("    \"total_received\": {total_received},\n"));
+        json.push_str(&format!("    \"total_spent\": {total_spent},\n"));
+        json.push_str(&format!("    \"current_balance\": {balance},\n"));
+        json.push_str(&format!("    \"unspent_outputs\": {unspent_count},\n"));
+        json.push_str(&format!("    \"spent_outputs\": {spent_count}\n"));
         json.push_str("  }");
 
         if let Some(metadata) = self.metadata() {
@@ -620,7 +617,7 @@ impl ScanResult {
                 ));
             }
             if let Some(bps) = metadata.blocks_per_second() {
-                json.push_str(&format!(",\n    \"blocks_per_second\": {:.2}", bps));
+                json.push_str(&format!(",\n    \"blocks_per_second\": {bps:.2}"));
             }
 
             json.push_str("\n  }");
@@ -679,22 +676,20 @@ impl std::fmt::Display for ScannerConfigError {
             ScannerConfigError::InvalidBatchSize { value, min, max } => {
                 write!(
                     f,
-                    "Invalid batch size {}: must be between {} and {}",
-                    value, min, max
+                    "Invalid batch size {value}: must be between {min} and {max}"
                 )
             }
             ScannerConfigError::InvalidTimeout { value, min, max } => {
                 write!(
                     f,
-                    "Invalid timeout {:?}: must be between {:?} and {:?}",
-                    value, min, max
+                    "Invalid timeout {value:?}: must be between {min:?} and {max:?}"
                 )
             }
             ScannerConfigError::InvalidRetryConfig { reason } => {
-                write!(f, "Invalid retry configuration: {}", reason)
+                write!(f, "Invalid retry configuration: {reason}")
             }
             ScannerConfigError::ValidationError { field, reason } => {
-                write!(f, "Validation error for {}: {}", field, reason)
+                write!(f, "Validation error for {field}: {reason}")
             }
         }
     }
@@ -943,7 +938,7 @@ impl WalletScanner {
         self.config.batch_size = batch_size;
         // Validate immediately to provide early feedback
         if let Err(e) = self.config.validate() {
-            panic!("Invalid batch size: {}", e);
+            panic!("Invalid batch size: {e}");
         }
         self
     }
@@ -972,7 +967,7 @@ impl WalletScanner {
         self.config.timeout = Some(timeout);
         // Validate immediately to provide early feedback
         if let Err(e) = self.config.validate() {
-            panic!("Invalid timeout: {}", e);
+            panic!("Invalid timeout: {e}");
         }
         self
     }
@@ -1012,7 +1007,7 @@ impl WalletScanner {
         self.config.retry_config = retry_config;
         // Validate immediately to provide early feedback
         if let Err(e) = self.config.validate() {
-            panic!("Invalid retry config: {}", e);
+            panic!("Invalid retry config: {e}");
         }
         self
     }
@@ -1157,7 +1152,7 @@ impl WalletScanner {
             println!("🚀 Starting wallet scan with enhanced scanner");
             println!("   • Batch size: {}", self.config.batch_size);
             if let Some(timeout) = self.config.timeout {
-                println!("   • Timeout: {:?}", timeout);
+                println!("   • Timeout: {timeout:?}");
             }
             println!(
                 "   • Progress tracking: {}",
@@ -1227,7 +1222,7 @@ impl WalletScanner {
                     // Check if this is a retryable error and we haven't exceeded max retries
                     if attempts <= max_retries && self.is_retryable_error(&e) {
                         if self.config.verbose_logging && !config.quiet {
-                            println!("⚠️  Scan attempt {} failed, retrying: {}", attempts, e);
+                            println!("⚠️  Scan attempt {attempts} failed, retrying: {e}");
                         }
 
                         // Calculate delay with exponential backoff if enabled
@@ -1297,23 +1292,23 @@ async fn determine_scan_range(
                         format_number(wallet_birthday)
                     );
                 }
-                return Ok((wallet_birthday, config.to_block));
+                Ok((wallet_birthday, config.to_block))
             } else {
                 if !config.quiet {
                     println!("📄 Wallet not found, starting from configuration");
                 }
-                return Ok((config.from_block, config.to_block));
+                Ok((config.from_block, config.to_block))
             }
         } else {
             if !config.quiet {
                 println!("⚠️  Resume requires a selected wallet");
             }
-            return Ok((config.from_block, config.to_block));
+            Ok((config.from_block, config.to_block))
         }
 
         #[cfg(not(feature = "storage"))]
         {
-            return Ok((config.from_block, config.to_block));
+            Ok((config.from_block, config.to_block))
         }
     } else {
         Ok((config.from_block, config.to_block))
@@ -1488,10 +1483,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
             }
             Err(e) => {
                 if !config.quiet {
-                    eprintln!(
-                        "❌ Error getting blocks {}-{}: {}",
-                        current_block, batch_end, e
-                    );
+                    eprintln!("❌ Error getting blocks {current_block}-{batch_end}: {e}");
                 }
                 return Err(e);
             }
@@ -1501,7 +1493,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
     // Wallet state has been updated directly by the block scanning logic
     let total_blocks_scanned = to_block - from_block + 1;
     if !config.quiet {
-        println!("✅ Completed scanning {} blocks", total_blocks_scanned);
+        println!("✅ Completed scanning {total_blocks_scanned} blocks");
         if !wallet_state.transactions.is_empty() {
             println!(
                 "   Found {} total transactions",
@@ -1656,7 +1648,7 @@ fn display_transaction_breakdown(
 fn display_balance_and_totals(balance: i64, total_count: usize) {
     println!(
         "💰 Current balance: {}",
-        format_currency_amount(balance.abs() as u64)
+        format_currency_amount(balance.unsigned_abs())
     );
     println!(
         "📊 Total activity: {} transactions",
