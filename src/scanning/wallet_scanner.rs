@@ -997,29 +997,10 @@ impl WalletScanner {
     ///
     /// Larger batch sizes can improve performance but may use more memory.
     /// Default is 10 blocks per batch.
-    ///
-    /// # Panics
-    /// Panics if batch_size is invalid (0 or > 1000). Use `try_with_batch_size` for error handling.
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
-        self.config.batch_size = batch_size;
-        // Validate immediately to provide early feedback
-        if let Err(e) = self.config.validate() {
-            panic!("Invalid batch size: {e}");
-        }
+        // Use the min or the max of the provided size and the limits
+        self.config.batch_size = batch_size.min(1000).max(1);
         self
-    }
-
-    /// Set the batch size for block processing (fallible version)
-    ///
-    /// Larger batch sizes can improve performance but may use more memory.
-    /// Default is 10 blocks per batch.
-    ///
-    /// # Errors
-    /// Returns an error if batch_size is invalid (0 or > 1000).
-    pub fn try_with_batch_size(mut self, batch_size: usize) -> Result<Self, ScannerConfigError> {
-        self.config.batch_size = batch_size;
-        self.config.validate()?;
-        Ok(self)
     }
 
     /// Set the timeout duration for blockchain operations
@@ -1030,28 +1011,12 @@ impl WalletScanner {
     /// # Panics
     /// Panics if timeout is invalid. Use `try_with_timeout` for error handling.
     pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
-        self.config.timeout = Some(timeout);
-        // Validate immediately to provide early feedback
-        if let Err(e) = self.config.validate() {
-            panic!("Invalid timeout: {e}");
-        }
+        self.config.timeout = Some(
+            timeout
+                .min(std::time::Duration::from_secs(300))
+                .max(std::time::Duration::from_millis(100)),
+        );
         self
-    }
-
-    /// Set the timeout duration for blockchain operations (fallible version)
-    ///
-    /// This timeout applies to individual GRPC calls to the blockchain.
-    /// Default is 30 seconds.
-    ///
-    /// # Errors
-    /// Returns an error if timeout is invalid (< 100ms or > 300s).
-    pub fn try_with_timeout(
-        mut self,
-        timeout: std::time::Duration,
-    ) -> Result<Self, ScannerConfigError> {
-        self.config.timeout = Some(timeout);
-        self.config.validate()?;
-        Ok(self)
     }
 
     /// Enable or disable verbose logging
@@ -1066,15 +1031,9 @@ impl WalletScanner {
     /// Set retry configuration for failed operations
     ///
     /// Configure how the scanner handles temporary failures during blockchain operations.
-    ///
-    /// # Panics
-    /// Panics if retry_config is invalid. Use `try_with_retry_config` for error handling.
+
     pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
         self.config.retry_config = retry_config;
-        // Validate immediately to provide early feedback
-        if let Err(e) = self.config.validate() {
-            panic!("Invalid retry config: {e}");
-        }
         self
     }
 
@@ -2077,19 +2036,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid batch size")]
     fn test_wallet_scanner_with_invalid_batch_size() {
-        let _scanner = WalletScanner::new().with_batch_size(0);
-    }
-
-    #[test]
-    fn test_wallet_scanner_try_with_batch_size() {
-        let scanner = WalletScanner::new().try_with_batch_size(50);
-        assert!(scanner.is_ok());
-        assert_eq!(scanner.unwrap().config.batch_size, 50);
-
-        let scanner = WalletScanner::new().try_with_batch_size(0);
-        assert!(scanner.is_err());
+        let scanner = WalletScanner::new().with_batch_size(0);
+        assert_eq!(scanner.config.batch_size, 1);
     }
 
     #[test]
@@ -2097,18 +2046,6 @@ mod tests {
         let timeout = Duration::from_secs(60);
         let scanner = WalletScanner::new().with_timeout(timeout);
         assert_eq!(scanner.config.timeout, Some(timeout));
-    }
-
-    #[test]
-    fn test_wallet_scanner_try_with_timeout() {
-        let timeout = Duration::from_secs(60);
-        let scanner = WalletScanner::new().try_with_timeout(timeout);
-        assert!(scanner.is_ok());
-        assert_eq!(scanner.unwrap().config.timeout, Some(timeout));
-
-        let invalid_timeout = Duration::from_millis(50);
-        let scanner = WalletScanner::new().try_with_timeout(invalid_timeout);
-        assert!(scanner.is_err());
     }
 
     #[test]
