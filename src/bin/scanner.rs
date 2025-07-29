@@ -121,9 +121,8 @@ use lightweight_wallet_libs::{
         GrpcScannerBuilder,
         OutputFormat,
 
-        // Storage and progress types
+        // Progress types
         ProgressInfo,
-        ScannerStorage,
 
         WalletScannerConfig,
         WalletScannerStruct,
@@ -131,6 +130,14 @@ use lightweight_wallet_libs::{
     KeyManagementError,
     LightweightWalletError,
 };
+
+// Add conditional imports for storage feature
+#[cfg(all(feature = "grpc", feature = "storage"))]
+use lightweight_wallet_libs::scanning::ScannerStorage;
+
+// Add conditional imports for grpc feature without storage
+#[cfg(all(feature = "grpc", not(feature = "storage")))]
+use lightweight_wallet_libs::scanning::MemoryDataProcessor;
 
 #[cfg(feature = "grpc")]
 use tokio::signal;
@@ -356,7 +363,7 @@ fn display_progress(progress_info: &ProgressInfo) {
     std::io::Write::flush(&mut std::io::stdout()).unwrap();
 }
 
-#[cfg(feature = "grpc")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 fn create_scan_config(
     args: &CliArgs,
     from_block: u64,
@@ -395,7 +402,7 @@ fn create_wallet_scanner_config(args: &CliArgs) -> WalletScannerConfig {
 }
 
 /// Create both scan config and wallet scanner config from CLI arguments
-#[cfg(feature = "grpc")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 fn create_scanner_configs(
     args: &CliArgs,
     from_block: u64,
@@ -489,9 +496,21 @@ async fn handle_interactive_wallet_selection(
 
 // Main scanner binary implementation
 
-#[cfg(feature = "grpc")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 #[tokio::main]
 async fn main() -> LightweightWalletResult<()> {
+    main_with_storage().await
+}
+
+#[cfg(all(feature = "grpc", not(feature = "storage")))]
+#[tokio::main]
+async fn main() -> LightweightWalletResult<()> {
+    main_without_storage().await
+}
+
+/// Main function for storage-enabled builds
+#[cfg(all(feature = "grpc", feature = "storage"))]
+async fn main_with_storage() -> LightweightWalletResult<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
@@ -776,6 +795,238 @@ async fn main() -> LightweightWalletResult<()> {
             println!("🛑 Stopping background database writer...");
         }
         storage_backend.stop_background_writer().await?;
+    }
+
+    Ok(())
+}
+
+/// Main function for builds without storage feature
+#[cfg(all(feature = "grpc", not(feature = "storage")))]
+async fn main_without_storage() -> LightweightWalletResult<()> {
+    // Initialize logging
+    tracing_subscriber::fmt::init();
+
+    let args = CliArgs::parse();
+
+    // Without storage feature, we require keys to be provided
+    let keys_provided = args.seed_phrase.is_some() || args.view_key.is_some();
+
+    if !keys_provided {
+        eprintln!("❌ Error: When storage feature is disabled, you must provide either --seed-phrase or --view-key");
+        eprintln!("💡 Run with: cargo run --bin scanner --features grpc-storage -- <your-options>");
+        std::process::exit(1);
+    }
+
+    match (&args.seed_phrase, &args.view_key) {
+        (Some(_), Some(_)) => {
+            eprintln!("❌ Error: Cannot specify both --seed-phrase and --view-key. Choose one.");
+            std::process::exit(1);
+        }
+        _ => {} // Valid: exactly one is provided
+    }
+
+    if !args.quiet {
+        println!("🚀 Enhanced Tari Wallet Scanner (No Storage)");
+        println!("==============================================");
+    }
+
+    // Create scan context from provided keys
+    let (scan_context, default_from_block) = if let Some(seed_phrase) = &args.seed_phrase {
+        if !args.quiet {
+            println!("🔨 Creating wallet from seed phrase...");
+        }
+        create_wallet_from_seed_phrase(seed_phrase)?
+    } else if let Some(view_key_hex) = &args.view_key {
+        if !args.quiet {
+            println!("🔑 Creating scan context from view key...");
+        }
+        create_wallet_from_view_key(view_key_hex)?
+    } else {
+        unreachable!("Keys validation should have caught this");
+    };
+
+    // Connect to base node
+    if !args.quiet {
+        println!("🌐 Connecting to Tari base node...");
+    }
+    let mut scanner = GrpcScannerBuilder::new()
+        .with_base_url(args.base_url.clone())
+        .with_timeout(std::time::Duration::from_secs(args.timeout))
+        .build()
+        .await
+        .map_err(|e| {
+            if !args.quiet {
+                eprintln!("❌ Failed to connect to Tari base node: {e}");
+                eprintln!("💡 Make sure tari_base_node is running with GRPC enabled on port 18142");
+            }
+            e
+        })?;
+
+    if !args.quiet {
+        println!("✅ Connected to Tari base node successfully");
+    }
+
+    // Get blockchain tip and determine scan range
+    let tip_info = scanner.get_tip_info().await?;
+    if !args.quiet {
+        println!(
+            "📊 Current blockchain tip: block {}",
+            format_number(tip_info.best_block_height)
+        );
+    }
+
+    let to_block = args.to_block.unwrap_or(tip_info.best_block_height);
+    let from_block = args.from_block.unwrap_or(default_from_block);
+
+    // Validate block range
+    if from_block > to_block {
+        return Err(LightweightWalletError::InvalidArgument {
+            argument: "block_range".to_string(),
+            value: format!("{from_block}-{to_block}"),
+            message: format!(
+                "Starting block ({from_block}) cannot be greater than ending block ({to_block})"
+            ),
+        });
+    }
+
+    if !args.quiet {
+        println!("💭 Using in-memory storage (transactions will not be persisted)");
+        println!(
+            "🔍 Scanning blocks {} to {} ({} blocks total)...",
+            format_number(from_block),
+            format_number(to_block),
+            format_number(to_block - from_block + 1)
+        );
+    }
+
+    // Create data processor for collecting results in memory
+    let mut data_processor = MemoryDataProcessor::new();
+
+    // Setup cancellation mechanism
+    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+
+    // Setup ctrl-c handling
+    let ctrl_c = async {
+        signal::ctrl_c().await.expect("Failed to listen for ctrl-c");
+        let _ = cancel_tx.send(true);
+    };
+
+    // Create wallet scanner with config and progress callback
+    let quiet = args.quiet;
+    let wallet_scanner_config = create_wallet_scanner_config(&args);
+    let mut wallet_scanner = WalletScannerStruct::from_config(wallet_scanner_config)
+        .with_progress_callback(move |progress_info| {
+            if !quiet {
+                display_progress(progress_info);
+            }
+        });
+
+    // Perform the scan with cancellation support
+    let scan_result = tokio::select! {
+        result = wallet_scanner.scan_with_processor(&mut scanner, &scan_context, from_block, to_block, &mut data_processor, &mut cancel_rx) => {
+            Some(result)
+        }
+        _ = ctrl_c => {
+            if !args.quiet {
+                println!("\n\n🛑 Scan interrupted by user (Ctrl+C)");
+                println!("📊 Waiting for current batch to complete...\n");
+            }
+            // Give a moment for the scan to notice the cancellation
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            None
+        }
+    };
+
+    match scan_result {
+        Some(Ok(result)) => {
+            // Parse output format
+            let output_format: OutputFormat = args
+                .format
+                .parse()
+                .map_err(|e: String| KeyManagementError::key_derivation_failed(&e))?;
+
+            // Display results using the appropriate format
+            match output_format {
+                OutputFormat::Json => result.display_json(),
+                OutputFormat::Summary => {
+                    // Create a minimal config for display
+                    let display_config = BinaryScanConfig {
+                        from_block,
+                        to_block,
+                        block_heights: args.blocks.clone(),
+                        progress_frequency: args.progress_frequency,
+                        quiet: args.quiet,
+                        output_format,
+                        batch_size: args.batch_size,
+                        database_path: None, // No database in this mode
+                        wallet_name: None,
+                        explicit_from_block: args.from_block,
+                        use_database: false,
+                    };
+                    result.display_summary(&display_config);
+                }
+                OutputFormat::Detailed => {
+                    result.display_detailed(&BinaryScanConfig {
+                        from_block,
+                        to_block,
+                        block_heights: args.blocks.clone(),
+                        progress_frequency: args.progress_frequency,
+                        quiet: args.quiet,
+                        output_format,
+                        batch_size: args.batch_size,
+                        database_path: None,
+                        wallet_name: None,
+                        explicit_from_block: args.from_block,
+                        use_database: false,
+                    });
+                }
+            }
+
+            // Handle interrupted scans
+            if result.is_interrupted() {
+                if !args.quiet {
+                    println!("⚠️  Scan was interrupted but collected partial data:\n");
+                    println!("\n🔄 To resume scanning from where you left off, use:");
+                    if let Some(resume_cmd) = result
+                        .resume_command("cargo run --bin scanner --features grpc -- <your-options>")
+                    {
+                        println!("   {resume_cmd}");
+                    }
+                }
+                std::process::exit(130); // Standard exit code for SIGINT
+            }
+
+            // Display memory completion info
+            if !args.quiet {
+                println!("💭 Scan completed using in-memory storage");
+                if data_processor.total_transactions() > 0 {
+                    println!(
+                        "📄 Found {} transactions in memory",
+                        format_number(data_processor.total_transactions())
+                    );
+                }
+                println!(
+                    "📍 Processed {} blocks",
+                    format_number(data_processor.blocks.len())
+                );
+            }
+        }
+        Some(Err(e)) => {
+            if !args.quiet {
+                eprintln!("❌ Scan failed: {e}");
+            }
+            return Err(e);
+        }
+        None => {
+            // Should not happen with our new implementation, but handle gracefully
+            if !args.quiet {
+                println!("💡 Scan was interrupted before completion.");
+                println!(
+                    "⚡ To resume, use the same command with appropriate --from-block parameter."
+                );
+            }
+            std::process::exit(130); // Standard exit code for SIGINT
+        }
     }
 
     Ok(())

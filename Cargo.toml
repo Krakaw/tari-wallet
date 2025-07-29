@@ -121,7 +121,7 @@ http-storage = ["http", "storage"]
 # Don't build binaries for WASM target - they use tokio/clap which are not WASM-compatible
 [[bin]]
 name = "scanner"
-required-features = ["grpc-storage"]
+required-features = ["grpc"]
 
 [[bin]]
 name = "wallet" 

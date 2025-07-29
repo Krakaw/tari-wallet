@@ -22,7 +22,7 @@ use crate::{
     wallet::Wallet,
 };
 
-#[cfg(all(feature = "grpc", feature = "storage"))]
+#[cfg(feature = "grpc")]
 use crate::scanning::GrpcBlockchainScanner;
 
 #[cfg(feature = "storage")]
@@ -48,7 +48,10 @@ use tari_utilities::ByteArray;
 #[cfg(all(feature = "grpc", feature = "storage"))]
 use zeroize::Zeroize;
 
-use super::{BinaryScanConfig, ProgressInfo, ProgressTracker, ScanContext};
+use super::{
+    data_processor::{BlockData, CompletionData, DataProcessor, ProgressData},
+    BinaryScanConfig, ProgressInfo, ProgressTracker, ScanContext,
+};
 
 #[cfg(all(feature = "grpc", feature = "storage"))]
 use super::ScannerStorage;
@@ -1154,6 +1157,124 @@ impl WalletScanner {
             .with_verbose_logging(true)
     }
 
+    /// Perform wallet scanning across blocks with data processor callback
+    ///
+    /// This is the new main scanning method that processes blockchain blocks to find
+    /// wallet outputs and transactions using a generic data processing callback.
+    /// It supports both specific block scanning and range scanning.
+    ///
+    /// # Arguments
+    /// * `scanner` - GRPC blockchain scanner for fetching blocks
+    /// * `scan_context` - Wallet scanning context with keys and entropy
+    /// * `config` - Binary scan configuration
+    /// * `data_processor` - Data processor for handling scan results
+    /// * `cancel_rx` - Channel receiver for cancellation signals
+    ///
+    /// # Returns
+    /// `ScanResult` indicating completion or interruption with wallet state and metadata
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - Blockchain connection fails
+    /// - Invalid scan configuration provided
+    /// - Data processing operations fail
+    /// - Scanning is cancelled by external signal
+    #[cfg(feature = "grpc")]
+    pub async fn scan_with_processor<T: DataProcessor>(
+        &mut self,
+        scanner: &mut GrpcBlockchainScanner,
+        scan_context: &ScanContext,
+        from_block: u64,
+        to_block: u64,
+        data_processor: &mut T,
+        cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> LightweightWalletResult<ScanResult> {
+        // Log scan start if verbose logging is enabled
+        if self.config.verbose_logging {
+            println!("🚀 Starting wallet scan with data processor");
+            println!("   • Batch size: {}", self.config.batch_size);
+            if let Some(timeout) = self.config.timeout {
+                println!("   • Timeout: {timeout:?}");
+            }
+            println!(
+                "   • Progress tracking: {}",
+                self.config.progress_tracker.is_some()
+            );
+        }
+
+        let start_time = Instant::now();
+
+        // Initialize the data processor
+        data_processor.initialize().await?;
+
+        // Execute the scan with enhanced error handling
+        let scan_result = self
+            .execute_scan_with_processor_retry(
+                scanner,
+                scan_context,
+                from_block,
+                to_block,
+                data_processor,
+                cancel_rx,
+            )
+            .await;
+
+        // Finalize the data processor
+        data_processor.finalize().await?;
+
+        // Add timing information to the result
+        match scan_result {
+            Ok(ScanResult::Completed(wallet_state, mut metadata)) => {
+                if let Some(ref mut meta) = metadata {
+                    meta.start_time = Some(start_time);
+                    meta.end_time = Some(Instant::now());
+                }
+
+                // Send completion data to processor
+                if let Some(ref meta) = metadata {
+                    let completion_data = CompletionData::new(
+                        from_block,
+                        to_block,
+                        meta.blocks_processed,
+                        false, // not interrupted
+                        meta.duration(),
+                        wallet_state.transactions.len(),
+                    );
+                    data_processor.process_completion(completion_data).await?;
+                }
+
+                Ok(ScanResult::Completed(wallet_state, metadata))
+            }
+            Ok(ScanResult::Interrupted(wallet_state, mut metadata)) => {
+                if let Some(ref mut meta) = metadata {
+                    meta.start_time = Some(start_time);
+                    meta.end_time = Some(Instant::now());
+                }
+
+                // Send completion data to processor (interrupted)
+                if let Some(ref meta) = metadata {
+                    let completion_data = CompletionData::new(
+                        from_block,
+                        to_block,
+                        meta.blocks_processed,
+                        true, // interrupted
+                        meta.duration(),
+                        wallet_state.transactions.len(),
+                    );
+                    data_processor.process_completion(completion_data).await?;
+                }
+
+                Ok(ScanResult::Interrupted(wallet_state, metadata))
+            }
+            Err(e) => {
+                if self.config.verbose_logging {
+                    println!("❌ Scan failed after {:?}: {}", start_time.elapsed(), e);
+                }
+                Err(e)
+            }
+        }
+    }
+
     /// Perform wallet scanning across blocks with cancellation support
     ///
     /// This is the main scanning method that processes blockchain blocks to find
@@ -1230,6 +1351,66 @@ impl WalletScanner {
         }
     }
 
+    /// Execute the scan with retry logic for failed operations (data processor version)
+    #[cfg(feature = "grpc")]
+    async fn execute_scan_with_processor_retry<T: DataProcessor>(
+        &mut self,
+        scanner: &mut GrpcBlockchainScanner,
+        scan_context: &ScanContext,
+        from_block: u64,
+        to_block: u64,
+        data_processor: &mut T,
+        cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> LightweightWalletResult<ScanResult> {
+        let mut attempts = 0;
+        let max_retries = self.config.retry_config.max_retries;
+
+        loop {
+            match scan_wallet_across_blocks_with_processor(
+                scanner,
+                scan_context,
+                from_block,
+                to_block,
+                data_processor,
+                cancel_rx,
+                self.config.progress_tracker.as_mut(),
+                self.config.batch_size,
+                self.config.verbose_logging,
+            )
+            .await
+            {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    attempts += 1;
+
+                    // Check if this is a retryable error and we haven't exceeded max retries
+                    if attempts <= max_retries && self.is_retryable_error(&e) {
+                        if self.config.verbose_logging {
+                            println!("⚠️  Scan attempt {attempts} failed, retrying: {e}");
+                        }
+
+                        // Calculate delay with exponential backoff if enabled
+                        let delay = if self.config.retry_config.exponential_backoff {
+                            let exp = (attempts - 1).min(10) as u32; // Cap to prevent overflow
+                            std::cmp::min(
+                                self.config.retry_config.base_delay * (2_u32.pow(exp)),
+                                self.config.retry_config.max_delay,
+                            )
+                        } else {
+                            self.config.retry_config.base_delay
+                        };
+
+                        // Wait before retrying
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+    }
+
     /// Execute the scan with retry logic for failed operations
     #[cfg(all(feature = "grpc", feature = "storage"))]
     async fn execute_scan_with_retry(
@@ -1287,7 +1468,7 @@ impl WalletScanner {
     }
 
     /// Check if an error is retryable
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "grpc")]
     fn is_retryable_error(&self, error: &LightweightWalletError) -> bool {
         match error {
             // Network-related errors are typically retryable
@@ -1376,11 +1557,193 @@ fn prepare_block_heights(config: &BinaryScanConfig, from_block: u64, to_block: u
 }
 
 /// Initialize scanning operation and return initial state
-#[cfg(all(feature = "grpc", feature = "storage"))]
+#[cfg(feature = "grpc")]
 fn initialize_scan_state() -> (WalletState, Instant) {
     let wallet_state = WalletState::new();
     let start_time = Instant::now();
     (wallet_state, start_time)
+}
+
+/// Core scanning logic using data processor - simplified and focused with batch processing
+#[cfg(feature = "grpc")]
+async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
+    scanner: &mut GrpcBlockchainScanner,
+    scan_context: &ScanContext,
+    from_block: u64,
+    to_block: u64,
+    data_processor: &mut T,
+    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    mut progress_tracker: Option<&mut ProgressTracker>,
+    batch_size: usize,
+    verbose_logging: bool,
+) -> LightweightWalletResult<ScanResult> {
+    // Initialize scanning state
+    let (mut wallet_state, _start_time) = initialize_scan_state();
+
+    // Update progress tracker with total block count
+    if let Some(tracker) = progress_tracker.as_mut() {
+        let total_blocks = to_block - from_block + 1;
+        tracker.set_total_blocks(total_blocks as usize);
+    }
+
+    if verbose_logging {
+        println!(
+            "🔍 Scanning blocks {} to {} ({} blocks total)...",
+            format_number(from_block),
+            format_number(to_block),
+            format_number(to_block - from_block + 1)
+        );
+    }
+
+    // Create extraction config from scan context
+    let _extraction_config = crate::extraction::ExtractionConfig {
+        enable_key_derivation: true,
+        validate_range_proofs: true,
+        validate_signatures: true,
+        handle_special_outputs: true,
+        detect_corruption: true,
+        private_key: Some(scan_context.view_key.clone()),
+        public_key: None,
+    };
+
+    // Perform the actual blockchain scan
+    let mut current_block = from_block;
+    let mut blocks_processed = 0u64;
+    let mut last_progress_update = Instant::now();
+
+    // Process blocks in batches with cancellation support
+    while current_block <= to_block {
+        // Check for cancellation
+        if *cancel_rx.borrow() {
+            if verbose_logging {
+                println!("\n🛑 Scan cancelled by user");
+            }
+            let metadata = ScanMetadata::new(
+                from_block,
+                current_block.saturating_sub(1),
+                blocks_processed as usize,
+                false, // No specific blocks
+            );
+            return Ok(ScanResult::Interrupted(wallet_state, Some(metadata)));
+        }
+
+        let batch_end = std::cmp::min(current_block + batch_size as u64 - 1, to_block);
+
+        // Get blocks and process them using the proper block scanning logic
+        let block_heights: Vec<u64> = (current_block..=batch_end).collect();
+        match scanner.get_blocks_by_heights(block_heights.clone()).await {
+            Ok(blocks) => {
+                for block_info in blocks {
+                    // Convert BlockInfo to Block for processing
+                    let block = crate::data_structures::block::Block::new(
+                        block_info.height,
+                        block_info.hash.clone(),
+                        block_info.timestamp,
+                        block_info.outputs.clone(),
+                        block_info.inputs.clone(),
+                    );
+
+                    // Use the real block scanning logic that actually works!
+                    let (found_outputs, spent_outputs) = block.scan_for_wallet_activity(
+                        &scan_context.view_key,
+                        &scan_context.entropy,
+                        &mut wallet_state,
+                    )?;
+
+                    // Create block data for the processor
+                    let block_transactions: Vec<_> = wallet_state
+                        .transactions
+                        .iter()
+                        .filter(|tx| tx.block_height == block.height)
+                        .cloned()
+                        .collect();
+
+                    let block_data = BlockData::new(
+                        block.height,
+                        hex::encode(&block_info.hash),
+                        block.timestamp,
+                        block_transactions,
+                        true, // completed
+                    );
+
+                    // Send block data to processor
+                    data_processor.process_block(block_data).await?;
+
+                    if verbose_logging && (found_outputs > 0 || spent_outputs > 0) {
+                        println!(
+                            "Block {}: found {} outputs, {} spent",
+                            block.height, found_outputs, spent_outputs
+                        );
+                    }
+
+                    // Update progress with actual wallet activity found
+                    if let Some(tracker) = progress_tracker.as_mut() {
+                        tracker.update(block.height, found_outputs, spent_outputs);
+                    }
+
+                    // Send progress updates to processor
+                    if let Some(tracker) = progress_tracker.as_ref() {
+                        let progress_info = tracker.get_progress_info();
+                        let progress_data = ProgressData::new(
+                            progress_info.current_block,
+                            progress_info.total_blocks as u64,
+                            progress_info.blocks_processed as u64,
+                            progress_info.outputs_found,
+                            progress_info.inputs_found,
+                            progress_info.blocks_per_sec,
+                            progress_info.eta,
+                        );
+                        data_processor.process_progress(progress_data).await?;
+                    }
+                }
+
+                let batch_size_actual = batch_end - current_block + 1;
+                blocks_processed += batch_size_actual;
+
+                // Update progress display
+                if verbose_logging
+                    && (blocks_processed % 10 == 0 || last_progress_update.elapsed().as_secs() >= 1)
+                {
+                    if let Some(tracker) = progress_tracker.as_ref() {
+                        let _progress_info = tracker.get_progress_info();
+                        // Progress callbacks are handled internally by ProgressTracker
+                    }
+                    last_progress_update = Instant::now();
+                }
+
+                current_block = batch_end + 1;
+            }
+            Err(e) => {
+                if verbose_logging {
+                    eprintln!("❌ Error getting blocks {current_block}-{batch_end}: {e}");
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    // Wallet state has been updated directly by the block scanning logic
+    let total_blocks_scanned = to_block - from_block + 1;
+    if verbose_logging {
+        println!("✅ Completed scanning {total_blocks_scanned} blocks");
+        if !wallet_state.transactions.is_empty() {
+            println!(
+                "   Found {} total transactions",
+                wallet_state.transactions.len()
+            );
+        }
+        println!(); // Clear progress line
+    }
+
+    // Create scan metadata
+    let metadata = ScanMetadata::new(
+        from_block,
+        to_block,
+        (to_block - from_block + 1) as usize,
+        false, // No specific blocks
+    );
+
+    Ok(ScanResult::Completed(wallet_state, Some(metadata)))
 }
 
 /// Core scanning logic - simplified and focused with batch processing
@@ -2154,7 +2517,7 @@ mod tests {
         assert_eq!(reliability.config.retry_config.max_retries, 5);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "grpc")]
     #[test]
     fn test_wallet_scanner_is_retryable_error() {
         let scanner = WalletScanner::new();

@@ -60,6 +60,13 @@ pub mod wallet_scanner;
 #[cfg(feature = "grpc")]
 pub mod progress;
 
+// Data processing callback interface
+pub mod data_processor;
+
+// Database data processor implementation
+#[cfg(feature = "storage")]
+pub mod database_processor;
+
 // Re-export GRPC scanner types
 #[cfg(feature = "grpc")]
 pub use grpc_scanner::{GrpcBlockchainScanner, GrpcScannerBuilder};
@@ -94,6 +101,16 @@ pub use storage_manager::ScannerStorage;
 // Re-export progress tracking types for scanner binary operations
 #[cfg(feature = "grpc")]
 pub use progress::{ProgressCallback, ProgressConfig, ProgressInfo, ProgressTracker};
+
+// Re-export data processor types
+pub use data_processor::{
+    BlockData, CompletionData, CompositeDataProcessor, DataProcessor, MemoryDataProcessor,
+    NoOpDataProcessor, ProgressData,
+};
+
+// Re-export database processor types
+#[cfg(feature = "storage")]
+pub use database_processor::{DatabaseDataProcessor, MemoryStorageProcessor};
 
 /// Legacy progress callback for scanning operations (for compatibility)
 pub type LegacyProgressCallback = Box<dyn Fn(ScanProgress) + Send + Sync>;
