@@ -102,10 +102,10 @@ fn create_stored_output_from_blockchain_data(
             .sender_offset_public_key
             .as_bytes()
             .to_vec(),
-        // Note: LightweightSignature only has bytes field, so we use placeholders
-        // In a full implementation, these would be extracted from the signature structure
-        metadata_signature_ephemeral_commitment: vec![0u8; 32], // Placeholder
-        metadata_signature_ephemeral_pubkey: vec![0u8; 32],     // Placeholder
+        // Note: LightweightSignature only contains raw bytes field. The structured fields
+        // below are not available in the current data structure, so we use zero values
+        metadata_signature_ephemeral_commitment: vec![0u8; 32], // Not available in LightweightSignature
+        metadata_signature_ephemeral_pubkey: vec![0u8; 32], // Not available in LightweightSignature
         metadata_signature_u_a: if blockchain_output.metadata_signature.bytes.len() >= 32 {
             blockchain_output.metadata_signature.bytes[0..32].to_vec()
         } else {
@@ -116,7 +116,7 @@ fn create_stored_output_from_blockchain_data(
         } else {
             vec![0u8; 32]
         },
-        metadata_signature_u_y: vec![0u8; 32], // Placeholder
+        metadata_signature_u_y: vec![0u8; 32], // Not available in LightweightSignature
 
         // Payment information
         encrypted_data: blockchain_output.encrypted_data.as_bytes().to_vec(),
@@ -272,7 +272,7 @@ fn generate_transaction_id(block_height: u64, input_index: usize) -> u64 {
 }
 
 /// Derive spending keys for a UTXO output using wallet entropy
-/// For view-key mode (entropy all zeros), returns placeholder keys
+/// For view-key mode (entropy all zeros), returns zero keys since spending is not possible
 #[cfg(all(feature = "grpc", feature = "storage"))]
 fn derive_utxo_spending_keys(
     entropy: &[u8; 16],
@@ -313,10 +313,10 @@ fn derive_utxo_spending_keys(
 
         Ok((spending_key, script_private_key))
     } else {
-        // View-key mode: use placeholder keys (cannot spend, but can store UTXO structure)
-        let placeholder_key_bytes = [0u8; 32];
-        let spending_key = PrivateKey::new(placeholder_key_bytes);
-        let script_private_key = PrivateKey::new(placeholder_key_bytes);
+        // View-key mode: use zero keys since spending keys cannot be derived without entropy
+        let zero_key_bytes = [0u8; 32];
+        let spending_key = PrivateKey::new(zero_key_bytes);
+        let script_private_key = PrivateKey::new(zero_key_bytes);
 
         Ok((spending_key, script_private_key))
     }
@@ -915,7 +915,7 @@ impl WalletScanner {
     where
         F: Fn(&ProgressInfo) + Send + Sync + 'static,
     {
-        // Create a progress tracker with placeholder total_blocks (will be updated during scan)
+        // Create a progress tracker with total_blocks=0 (will be updated when scanning begins)
         let progress_tracker = ProgressTracker::new(0).with_callback(Box::new(callback));
         self.config.progress_tracker = Some(progress_tracker);
         self
@@ -2218,7 +2218,7 @@ mod tests {
         assert!(result.is_ok());
         let (spending_key, script_private_key) = result.unwrap();
 
-        // Should not be placeholder keys
+        // Should not be zero keys
         assert_ne!(spending_key.as_bytes(), [0u8; 32]);
         assert_ne!(script_private_key.as_bytes(), [0u8; 32]);
     }
@@ -2232,7 +2232,7 @@ mod tests {
         assert!(result.is_ok());
         let (spending_key, script_private_key) = result.unwrap();
 
-        // Should be placeholder keys in view-only mode
+        // Should be zero keys in view-only mode
         assert_eq!(spending_key.as_bytes(), [0u8; 32]);
         assert_eq!(script_private_key.as_bytes(), [0u8; 32]);
     }
@@ -2304,7 +2304,6 @@ mod tests {
     }
 }
 
-// Placeholder type definitions until actual implementation
-// TODO: Rename to WalletScanner once refactoring is complete and trait is moved
-pub struct BinaryWalletScanner;
-pub struct BinaryScanResult;
+// Note: The legacy BinaryWalletScanner and BinaryScanResult types have been removed
+// as they were placeholders. The new WalletScanner and ScanResult types provide
+// the complete scanning functionality.

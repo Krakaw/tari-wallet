@@ -405,15 +405,15 @@ impl HttpBlockchainScanner {
         output_hash.copy_from_slice(output_hash_bytes);
 
         // Create minimal TransactionInput with the output hash
-        // We don't have the commitment from the HTTP API, so we use zeros as placeholder
-        // The important field is output_hash which we use for matching spent outputs
+        // Note: HTTP API only provides output hash, other fields not available so we use defaults
+        // The output_hash field is the actual data we need for matching spent outputs
         Ok(TransactionInput::new(
             1,                                                                           // version
             0,                              // features (default)
-            [0u8; 32], // commitment (not available from HTTP API, use placeholder)
-            [0u8; 64], // script_signature (not available)
+            [0u8; 32],                      // commitment (not available from HTTP API)
+            [0u8; 64],                      // script_signature (not available)
             CompressedPublicKey::default(), // sender_offset_public_key (not available)
-            Vec::new(), // covenant (not available)
+            Vec::new(),                     // covenant (not available)
             crate::data_structures::transaction_input::LightweightExecutionStack::new(), // input_data (not available)
             output_hash,           // output_hash (this is the actual data from HTTP API)
             0,                     // output_features (not available)
@@ -1457,7 +1457,7 @@ impl WalletScanner for HttpBlockchainScanner {
     }
 }
 
-// Placeholder module for when HTTP feature is not enabled
+// Empty module when HTTP feature is not enabled
 #[cfg(not(feature = "http"))]
 pub struct HttpBlockchainScanner;
 

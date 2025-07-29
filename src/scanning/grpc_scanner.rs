@@ -300,7 +300,7 @@ impl GrpcBlockchainScanner {
             script_signature.copy_from_slice(&grpc_input.script[..64]);
         }
 
-        // Convert sender offset public key (use features field as placeholder since the exact field name may vary)
+        // Note: Sender offset public key not available in GRPC input data structure
         let sender_offset_public_key = CompressedPublicKey::new([0u8; 32]);
 
         // Convert input data to execution stack
@@ -331,10 +331,10 @@ impl GrpcBlockchainScanner {
             grpc_input.covenant.clone(),
             input_data,
             output_hash,
-            0, // output_features placeholder
+            0, // output_features not available in GRPC input data
             output_metadata_signature,
-            0,                     // maturity placeholder
-            MicroMinotari::new(0), // value placeholder
+            0,                     // maturity not available in GRPC input data
+            MicroMinotari::new(0), // value not available in GRPC input data
         )
     }
 
@@ -366,7 +366,7 @@ impl GrpcBlockchainScanner {
             lock_height: grpc_kernel.lock_height,
             excess: CompressedPublicKey::new(excess),
             excess_sig,
-            hash_type: 0, // placeholder since hash_type field doesn't exist
+            hash_type: 0, // hash_type field not available in GRPC kernel data
             burn_commitment: if !grpc_kernel.burn_commitment.is_empty() {
                 let mut commitment = [0u8; 32];
                 if grpc_kernel.burn_commitment.len() >= 32 {
@@ -1112,7 +1112,7 @@ impl Default for GrpcScannerBuilder {
     }
 }
 
-// Placeholder module for when GRPC feature is not enabled
+// Empty module when GRPC feature is not enabled
 #[cfg(not(feature = "grpc"))]
 pub struct GrpcBlockchainScanner;
 
