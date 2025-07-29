@@ -615,20 +615,16 @@
                 }
             }
 
-            async syncUtxosByBlock(startHeaderHash, endHeaderHash, limit = 10, page = 0) {
-                const endHashDisplay = endHeaderHash ? endHeaderHash.substring(0, 16) + '...' : 'server-controlled';
-                log('info', `📡 Syncing UTXOs from ${startHeaderHash.substring(0, 16)}... to ${endHashDisplay}`, true);
+            async syncUtxosByBlock(startHeaderHash) {
+                const limit = 10;
+                const page = 0;
+                log('info', `📡 Syncing UTXOs from ${startHeaderHash.substring(0, 16)}...`, true);
                 try {
                     const params = {
                         start_header_hash: startHeaderHash,
                         limit,
                         page
                     };
-                    
-                    // Only include end_header_hash if it's provided
-                    if (endHeaderHash) {
-                        params.end_header_hash = endHeaderHash;
-                    }
                     
                     const response = await this.request('/sync_utxos_by_block', params);
                     log('info', `✅ Synced ${response.blocks?.length || 0} blocks, next_header: ${response.next_header_to_scan ? 'provided' : 'none'}`, true);
@@ -686,7 +682,7 @@
                     .join('');
             }
 
-            async* fetchBlockRangeBatches(startHeight, endHeight, limit) {
+            async* fetchBlockRangeBatches(startHeight, endHeight) {
                 log('info', `📡 Fetching block range ${startHeight} to ${endHeight} in batches...`, true);
 
                 try {
@@ -698,7 +694,7 @@
 
                     while (currentBlockHeight <= endHeight) {
                         // Use current header as start, no end header needed (server decides)
-                        const syncResponse = await this.syncUtxosByBlock(currentHeaderHash, null, limit, 0);
+                        const syncResponse = await this.syncUtxosByBlock(currentHeaderHash);
 
                         log('info', `📊 Batch from ${currentBlockHeight}: fetched ${syncResponse.blocks?.length || 0} blocks`, true);
 
@@ -713,9 +709,23 @@
                             
                             // Update current block height
                             currentBlockHeight = batchEnd + 1;
-                            
-                            // Yield the entire HTTP response for batch processing
-                            yield syncResponse;
+                            // If the batch end height is greater than the end height, yield the response as a slice up to the end height
+                            if (batchEnd > endHeight) {
+                                const slicedResponse = {
+                                    ...syncResponse,
+                                    blocks: syncResponse.blocks.slice(0, endHeight - batchStart + 1)
+                                };
+                                yield slicedResponse;
+                            } else {
+                                // Yield the entire HTTP response for batch processing
+                                yield syncResponse;
+                            }
+                        }
+
+                        // Safety check to prevent scanning beyond our target end height
+                        if (currentBlockHeight > endHeight) {
+                            log('info', `🎯 Reached target end height ${endHeight}, stopping scan`, true);
+                            break;
                         }
 
                         // Check if we have a next header to continue with
@@ -727,11 +737,7 @@
                             break;
                         }
 
-                        // Safety check to prevent scanning beyond our target end height
-                        if (currentBlockHeight > endHeight) {
-                            log('info', `🎯 Reached target end height ${endHeight}, stopping scan`, true);
-                            break;
-                        }
+                        
                     }
 
                     log('success', `✅ Streamed ${totalBlocks} blocks using next_header_to_scan from base node`, true);
@@ -1209,7 +1215,7 @@
                     rangeEndHeight = parseInt(endHeight);
 
                     totalBlocks = rangeEndHeight - rangeStartHeight + 1;
-                    blockIterator = httpClient.fetchBlockRangeBatches(rangeStartHeight, rangeEndHeight, limit);
+                    blockIterator = httpClient.fetchBlockRangeBatches(rangeStartHeight, rangeEndHeight);
                     scanDescription = `height range ${rangeStartHeight} to ${rangeEndHeight}`;
                     log('info', `🔍 Starting blockchain scan from height ${rangeStartHeight} to ${rangeEndHeight}`);
                 }
