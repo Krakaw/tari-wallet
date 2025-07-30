@@ -483,6 +483,143 @@ mod tests {
         assert_eq!(config.filters.get("min_value"), Some(&"1000".to_string()));
         assert_eq!(config.filters.len(), 2);
     }
+
+    #[test]
+    fn test_block_processed_event_creation() {
+        let processing_duration = Duration::from_millis(250);
+        let event = WalletScanEvent::block_processed(
+            12345,
+            "0x1234567890abcdef".to_string(),
+            1697123456,
+            processing_duration,
+            5,
+        );
+
+        match &event {
+            WalletScanEvent::BlockProcessed {
+                metadata,
+                height,
+                hash,
+                timestamp,
+                processing_duration: duration,
+                outputs_count,
+            } => {
+                assert!(!metadata.event_id.is_empty());
+                assert_eq!(metadata.source, "wallet_scanner");
+                assert!(metadata.timestamp <= SystemTime::now());
+                assert_eq!(*height, 12345);
+                assert_eq!(hash, "0x1234567890abcdef");
+                assert_eq!(*timestamp, 1697123456);
+                assert_eq!(*duration, processing_duration);
+                assert_eq!(*outputs_count, 5);
+            }
+            _ => panic!("Expected BlockProcessed event"),
+        }
+    }
+
+    #[test]
+    fn test_block_processed_event_traits() {
+        let event = WalletScanEvent::block_processed(
+            98765,
+            "0xabcdef1234567890".to_string(),
+            1697123999,
+            Duration::from_millis(180),
+            3,
+        );
+
+        // Test EventType trait
+        assert_eq!(event.event_type(), "BlockProcessed");
+        assert!(event.debug_data().is_some());
+        let debug_data = event.debug_data().unwrap();
+        assert!(debug_data.contains("height: 98765"));
+        assert!(debug_data.contains("outputs: 3"));
+
+        // Test SerializableEvent trait
+        let summary = event.summary();
+        assert!(summary.contains("Processed block 98765"));
+        assert!(summary.contains("with 3 outputs"));
+
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("\"type\":\"BlockProcessed\""));
+        assert!(json.contains("\"height\":98765"));
+        assert!(json.contains("\"hash\":\"0xabcdef1234567890\""));
+        assert!(json.contains("\"outputs_count\":3"));
+    }
+
+    #[test]
+    fn test_block_processed_zero_outputs() {
+        let event = WalletScanEvent::block_processed(
+            100,
+            "0x0000000000000000".to_string(),
+            1697000000,
+            Duration::from_millis(50),
+            0,
+        );
+
+        match &event {
+            WalletScanEvent::BlockProcessed { outputs_count, .. } => {
+                assert_eq!(*outputs_count, 0);
+            }
+            _ => panic!("Expected BlockProcessed event"),
+        }
+
+        let summary = event.summary();
+        assert!(summary.contains("with 0 outputs"));
+    }
+
+    #[test]
+    fn test_block_processed_with_correlation_id() {
+        let metadata =
+            EventMetadata::with_correlation("wallet_scanner", "block_batch_123".to_string());
+        let event = WalletScanEvent::BlockProcessed {
+            metadata,
+            height: 54321,
+            hash: "0xdeadbeef".to_string(),
+            timestamp: 1697987654,
+            processing_duration: Duration::from_millis(300),
+            outputs_count: 10,
+        };
+
+        match &event {
+            WalletScanEvent::BlockProcessed { metadata, .. } => {
+                assert_eq!(metadata.correlation_id, Some("block_batch_123".to_string()));
+                assert_eq!(metadata.source, "wallet_scanner");
+            }
+            _ => panic!("Expected BlockProcessed event"),
+        }
+    }
+
+    #[test]
+    fn test_block_processed_duration_handling() {
+        // Test various processing durations
+        let durations = vec![
+            Duration::from_nanos(1),
+            Duration::from_micros(1),
+            Duration::from_millis(1),
+            Duration::from_secs(1),
+            Duration::from_secs(60),
+        ];
+
+        for (i, duration) in durations.iter().enumerate() {
+            let event = WalletScanEvent::block_processed(
+                i as u64,
+                format!("0x{:016x}", i),
+                1697000000 + i as u64,
+                *duration,
+                i,
+            );
+
+            match &event {
+                WalletScanEvent::BlockProcessed {
+                    processing_duration,
+                    ..
+                } => {
+                    assert_eq!(processing_duration, duration);
+                }
+                _ => panic!("Expected BlockProcessed event"),
+            }
+        }
+    }
 }
 
 /// Helper functions for creating events with proper metadata
