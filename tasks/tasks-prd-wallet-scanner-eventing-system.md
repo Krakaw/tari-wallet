@@ -38,7 +38,7 @@
   - [x] 2.4 Implement `OutputFound` event with complete output data, block info, address info (Req #10)
   - [x] 2.5 Implement `ScanProgress` event with current/total blocks, percentage, speed, ETA (Req #11)
   - [x] 2.6 Implement `ScanCompleted` event with final statistics and success status (Req #12)
-  - [ ] 2.7 Implement `ScanError` event with error details, block height, retry info (Req #13)
+  - [x] 2.7 Implement `ScanError` event with error details, block height, retry info (Req #13)
   - [ ] 2.8 Implement `ScanCancelled` event with cancellation reason and final stats (Req #14)
   - [ ] 2.9 Use `Arc<Event>` for efficient sharing between listeners (Design consideration)
   - [ ] 2.10 Add serialization support for debugging (Open question #1)
