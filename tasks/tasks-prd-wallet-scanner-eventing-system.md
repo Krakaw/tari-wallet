@@ -33,7 +33,7 @@
 
 - [ ] 2.0 Create Event Types and Data Structures
   - [x] 2.1 Create `src/events/types.rs` with base event enum and shared traits
-  - [ ] 2.2 Implement `ScanStarted` event with scan config, block range, wallet context (Req #8)
+  - [x] 2.2 Implement `ScanStarted` event with scan config, block range, wallet context (Req #8)
   - [ ] 2.3 Implement `BlockProcessed` event with height, hash, timestamp, duration, outputs count (Req #9)
   - [ ] 2.4 Implement `OutputFound` event with complete output data, block info, address info (Req #10)
   - [ ] 2.5 Implement `ScanProgress` event with current/total blocks, percentage, speed, ETA (Req #11)

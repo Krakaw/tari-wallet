@@ -381,6 +381,110 @@ impl SerializableEvent for WalletScanEvent {
 /// Type alias for efficiently shared events
 pub type SharedEvent = Arc<WalletScanEvent>;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::SystemTime;
+
+    #[test]
+    fn test_scan_started_event_creation() {
+        let config = ScanConfig::new()
+            .with_batch_size(10)
+            .with_timeout_seconds(30)
+            .with_retry_attempts(3);
+
+        let event = WalletScanEvent::scan_started(
+            config.clone(),
+            (1000, 2000),
+            "test_wallet_context".to_string(),
+        );
+
+        match &event {
+            WalletScanEvent::ScanStarted {
+                metadata,
+                config: event_config,
+                block_range,
+                wallet_context,
+            } => {
+                assert!(!metadata.event_id.is_empty());
+                assert_eq!(metadata.source, "wallet_scanner");
+                assert!(metadata.timestamp <= SystemTime::now());
+                assert_eq!(event_config.batch_size, Some(10));
+                assert_eq!(event_config.timeout_seconds, Some(30));
+                assert_eq!(event_config.retry_attempts, Some(3));
+                assert_eq!(*block_range, (1000, 2000));
+                assert_eq!(wallet_context, "test_wallet_context");
+            }
+            _ => panic!("Expected ScanStarted event"),
+        }
+    }
+
+    #[test]
+    fn test_scan_started_event_traits() {
+        let config = ScanConfig::default();
+        let event = WalletScanEvent::scan_started(config, (0, 100), "wallet_123".to_string());
+
+        // Test EventType trait
+        assert_eq!(event.event_type(), "ScanStarted");
+        assert!(event.debug_data().is_some());
+        assert!(event.debug_data().unwrap().contains("blocks: 0-100"));
+        assert!(event.debug_data().unwrap().contains("wallet: wallet_123"));
+
+        // Test SerializableEvent trait
+        let summary = event.summary();
+        assert!(summary.contains("Scan started"));
+        assert!(summary.contains("wallet_123"));
+        assert!(summary.contains("blocks 0-100"));
+
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("\"type\":\"ScanStarted\""));
+        assert!(json.contains("\"block_range\":[0,100]"));
+        assert!(json.contains("\"wallet_context\":\"wallet_123\""));
+    }
+
+    #[test]
+    fn test_scan_started_with_correlation_id() {
+        let metadata =
+            EventMetadata::with_correlation("wallet_scanner", "scan_session_123".to_string());
+        let config = ScanConfig::default();
+
+        let event = WalletScanEvent::ScanStarted {
+            metadata,
+            config,
+            block_range: (500, 1500),
+            wallet_context: "test_wallet".to_string(),
+        };
+
+        match &event {
+            WalletScanEvent::ScanStarted { metadata, .. } => {
+                assert_eq!(
+                    metadata.correlation_id,
+                    Some("scan_session_123".to_string())
+                );
+                assert_eq!(metadata.source, "wallet_scanner");
+            }
+            _ => panic!("Expected ScanStarted event"),
+        }
+    }
+
+    #[test]
+    fn test_scan_config_builder_pattern() {
+        let config = ScanConfig::new()
+            .with_batch_size(25)
+            .with_timeout_seconds(60)
+            .with_retry_attempts(5)
+            .with_filter("output_type".to_string(), "utxo".to_string())
+            .with_filter("min_value".to_string(), "1000".to_string());
+
+        assert_eq!(config.batch_size, Some(25));
+        assert_eq!(config.timeout_seconds, Some(60));
+        assert_eq!(config.retry_attempts, Some(5));
+        assert_eq!(config.filters.get("output_type"), Some(&"utxo".to_string()));
+        assert_eq!(config.filters.get("min_value"), Some(&"1000".to_string()));
+        assert_eq!(config.filters.len(), 2);
+    }
+}
+
 /// Helper functions for creating events with proper metadata
 impl WalletScanEvent {
     /// Create a new ScanStarted event

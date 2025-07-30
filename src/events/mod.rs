@@ -892,11 +892,8 @@ mod native_tests {
         dispatcher.register(Box::new(listener3)).unwrap();
 
         // Create a test event
-        let event = WalletScanEvent::ScanStarted {
-            config: ScanConfig::default(),
-            block_range: (0, 100),
-            wallet_context: "test".to_string(),
-        };
+        let event =
+            WalletScanEvent::scan_started(ScanConfig::default(), (0, 100), "test".to_string());
 
         // Dispatch the event
         dispatcher.dispatch(event).await;
@@ -1040,19 +1037,16 @@ mod native_tests {
         dispatcher.register(Box::new(listener3)).unwrap();
 
         // Create test events
-        let event1 = WalletScanEvent::ScanStarted {
-            config: ScanConfig::default(),
-            block_range: (0, 100),
-            wallet_context: "test".to_string(),
-        };
+        let event1 =
+            WalletScanEvent::scan_started(ScanConfig::default(), (0, 100), "test".to_string());
 
-        let event2 = WalletScanEvent::ScanProgress {
-            current_block: 50,
-            total_blocks: 100,
-            percentage: 50.0,
-            speed_blocks_per_second: 10.0,
-            estimated_time_remaining_seconds: Some(5),
-        };
+        let event2 = WalletScanEvent::scan_progress(
+            50,
+            100,
+            50.0,
+            10.0,
+            Some(std::time::Duration::from_secs(5)),
+        );
 
         // Dispatch events
         dispatcher.dispatch(event1).await;
@@ -1102,11 +1096,11 @@ mod native_tests {
 
         // Dispatch 5 events (more than the limit of 3)
         for i in 0..5 {
-            let event = WalletScanEvent::ScanStarted {
-                config: ScanConfig::default(),
-                block_range: (i, i + 1),
-                wallet_context: format!("test_{}", i),
-            };
+            let event = WalletScanEvent::scan_started(
+                ScanConfig::default(),
+                (i, i + 1),
+                format!("test_{}", i),
+            );
             dispatcher.dispatch(event).await;
         }
 
@@ -1127,11 +1121,8 @@ mod native_tests {
         let listener = TestListener::new("summary_listener");
         dispatcher.register(Box::new(listener)).unwrap();
 
-        let event = WalletScanEvent::ScanStarted {
-            config: ScanConfig::default(),
-            block_range: (0, 100),
-            wallet_context: "test".to_string(),
-        };
+        let event =
+            WalletScanEvent::scan_started(ScanConfig::default(), (0, 100), "test".to_string());
 
         dispatcher.dispatch(event).await;
 
@@ -1150,11 +1141,8 @@ mod native_tests {
         let listener = TestListener::new("clear_test_listener");
         dispatcher.register(Box::new(listener)).unwrap();
 
-        let event = WalletScanEvent::ScanStarted {
-            config: ScanConfig::default(),
-            block_range: (0, 100),
-            wallet_context: "test".to_string(),
-        };
+        let event =
+            WalletScanEvent::scan_started(ScanConfig::default(), (0, 100), "test".to_string());
 
         dispatcher.dispatch(event).await;
 
@@ -1191,11 +1179,11 @@ mod native_tests {
 
         // Dispatch some events to test memory limits
         for i in 0..10 {
-            let event = WalletScanEvent::ScanStarted {
-                config: ScanConfig::default(),
-                block_range: (i, i + 1),
-                wallet_context: format!("test_{}", i),
-            };
+            let event = WalletScanEvent::scan_started(
+                ScanConfig::default(),
+                (i, i + 1),
+                format!("test_{}", i),
+            );
             dispatcher.dispatch(event).await;
         }
 
@@ -1223,33 +1211,35 @@ mod native_tests {
         // Create events with many different types to test map cleanup
         for i in 0..10 {
             let event = match i % 5 {
-                0 => WalletScanEvent::ScanStarted {
-                    config: ScanConfig::default(),
-                    block_range: (i, i + 1),
-                    wallet_context: format!("test_{}", i),
-                },
-                1 => WalletScanEvent::BlockProcessed {
-                    height: i,
-                    hash: format!("hash_{}", i),
-                    timestamp: i,
-                    processing_duration_ms: 100,
-                    outputs_count: 1,
-                },
-                2 => WalletScanEvent::ScanProgress {
-                    current_block: i,
-                    total_blocks: 100,
-                    percentage: i as f64,
-                    speed_blocks_per_second: 10.0,
-                    estimated_time_remaining_seconds: Some(5),
-                },
-                3 => WalletScanEvent::ScanCompleted {
-                    final_statistics: std::collections::HashMap::new(),
-                    success: true,
-                },
-                _ => WalletScanEvent::ScanCancelled {
-                    reason: "test".to_string(),
-                    final_statistics: std::collections::HashMap::new(),
-                },
+                0 => WalletScanEvent::scan_started(
+                    ScanConfig::default(),
+                    (i, i + 1),
+                    format!("test_{}", i),
+                ),
+                1 => WalletScanEvent::block_processed(
+                    i,
+                    format!("hash_{}", i),
+                    i,
+                    std::time::Duration::from_millis(100),
+                    1,
+                ),
+                2 => WalletScanEvent::scan_progress(
+                    i,
+                    100,
+                    i as f64,
+                    10.0,
+                    Some(std::time::Duration::from_secs(5)),
+                ),
+                3 => WalletScanEvent::scan_completed(
+                    std::collections::HashMap::new(),
+                    true,
+                    std::time::Duration::from_secs(60),
+                ),
+                _ => WalletScanEvent::scan_cancelled(
+                    "test".to_string(),
+                    std::collections::HashMap::new(),
+                    None,
+                ),
             };
             dispatcher.dispatch(event).await;
         }
@@ -1276,11 +1266,11 @@ mod native_tests {
 
         // Dispatch 7 events to reach the auto cleanup threshold (threshold is 7)
         for i in 0..7 {
-            let event = WalletScanEvent::ScanStarted {
-                config: ScanConfig::default(),
-                block_range: (i, i + 1),
-                wallet_context: format!("test_{}", i),
-            };
+            let event = WalletScanEvent::scan_started(
+                ScanConfig::default(),
+                (i, i + 1),
+                format!("test_{}", i),
+            );
             dispatcher.dispatch(event).await;
         }
 
@@ -1388,11 +1378,11 @@ mod cross_platform_tests {
         let listener = WasmTestListener::new("cross_platform_listener");
         dispatcher.register(Box::new(listener)).unwrap();
 
-        let event = WalletScanEvent::ScanStarted {
-            config: ScanConfig::default(),
-            block_range: (0, 100),
-            wallet_context: "cross_platform_test".to_string(),
-        };
+        let event = WalletScanEvent::scan_started(
+            ScanConfig::default(),
+            (0, 100),
+            "cross_platform_test".to_string(),
+        );
 
         // This should work identically on native and WASM
         dispatcher.dispatch(event).await;
@@ -1419,11 +1409,11 @@ mod cross_platform_tests {
             .register(Box::new(another_working_listener))
             .unwrap();
 
-        let event = WalletScanEvent::ScanStarted {
-            config: ScanConfig::default(),
-            block_range: (0, 100),
-            wallet_context: "error_test".to_string(),
-        };
+        let event = WalletScanEvent::scan_started(
+            ScanConfig::default(),
+            (0, 100),
+            "error_test".to_string(),
+        );
 
         // Error isolation should work the same on both platforms
         dispatcher.dispatch(event).await;
@@ -1453,11 +1443,11 @@ mod cross_platform_tests {
         dispatcher.register(Box::new(listener)).unwrap();
         assert_eq!(dispatcher.listener_count(), 1);
 
-        let event = WalletScanEvent::ScanStarted {
-            config: ScanConfig::default(),
-            block_range: (0, 100),
-            wallet_context: "basic_test".to_string(),
-        };
+        let event = WalletScanEvent::scan_started(
+            ScanConfig::default(),
+            (0, 100),
+            "basic_test".to_string(),
+        );
 
         dispatcher.dispatch(event).await;
 
