@@ -68,7 +68,7 @@
 //!
 //! #[async_trait]
 //! impl EventListener for CustomListener {
-//!     async fn handle_event(&mut self, event: &WalletScanEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//!     async fn handle_event(&mut self, event: &SharedEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //!         // Handle the event
 //!         println!("Received event: {:?}", event);
 //!         Ok(())
@@ -204,7 +204,7 @@ pub trait EventListener: Send + Sync {
     /// Errors are logged but do not interrupt the scanning process or other listeners.
     async fn handle_event(
         &mut self,
-        event: &WalletScanEvent,
+        event: &SharedEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
     /// Optional: Get a name for this listener (used for debugging and logging)
@@ -216,7 +216,7 @@ pub trait EventListener: Send + Sync {
     ///
     /// This can be used for performance optimization when a listener only cares
     /// about specific event types.
-    fn wants_event(&self, _event: &WalletScanEvent) -> bool {
+    fn wants_event(&self, _event: &SharedEvent) -> bool {
         true
     }
 }
@@ -429,13 +429,14 @@ impl EventDispatcher {
     /// * `event` - The event to dispatch
     pub async fn dispatch(&mut self, event: WalletScanEvent) {
         let dispatch_start = Instant::now();
-        let event_type = self.get_event_type_name(&event);
+        let shared_event = SharedEvent::new(event);
+        let event_type = self.get_event_type_name(&shared_event);
 
         if self.debug_mode {
             #[cfg(target_arch = "wasm32")]
-            web_sys::console::log_1(&format!("Dispatching event: {:?}", event).into());
+            web_sys::console::log_1(&format!("Dispatching event: {:?}", shared_event).into());
             #[cfg(not(target_arch = "wasm32"))]
-            println!("Dispatching event: {:?}", event);
+            println!("Dispatching event: {:?}", shared_event);
         }
 
         // Update statistics
@@ -451,7 +452,7 @@ impl EventDispatcher {
 
         for listener in &mut self.listeners {
             // Skip listeners that don't want this event type
-            if !listener.wants_event(&event) {
+            if !listener.wants_event(&shared_event) {
                 continue;
             }
 
@@ -460,7 +461,7 @@ impl EventDispatcher {
             self.stats.total_listener_calls += 1;
 
             // Handle the event with error isolation and timing
-            let result = listener.handle_event(&event).await;
+            let result = listener.handle_event(&shared_event).await;
             let processing_duration = listener_start.elapsed();
 
             let (success, error_message) = match &result {
@@ -774,8 +775,8 @@ impl EventDispatcher {
     }
 
     /// Get the string name for an event type
-    fn get_event_type_name(&self, event: &WalletScanEvent) -> String {
-        match event {
+    fn get_event_type_name(&self, event: &SharedEvent) -> String {
+        match &**event {
             WalletScanEvent::ScanStarted { .. } => "ScanStarted".to_string(),
             WalletScanEvent::BlockProcessed { .. } => "BlockProcessed".to_string(),
             WalletScanEvent::OutputFound { .. } => "OutputFound".to_string(),
@@ -832,13 +833,13 @@ mod native_tests {
     impl EventListener for TestListener {
         async fn handle_event(
             &mut self,
-            event: &WalletScanEvent,
+            event: &SharedEvent,
         ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if self.should_fail {
                 return Err("Test listener failure".into());
             }
 
-            let event_name = match event {
+            let event_name = match &**event {
                 WalletScanEvent::ScanStarted { .. } => "ScanStarted",
                 WalletScanEvent::BlockProcessed { .. } => "BlockProcessed",
                 WalletScanEvent::OutputFound { .. } => "OutputFound",
@@ -969,7 +970,7 @@ mod native_tests {
         impl EventListener for EmptyNameListener {
             async fn handle_event(
                 &mut self,
-                _event: &WalletScanEvent,
+                _event: &SharedEvent,
             ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 Ok(())
             }
@@ -992,7 +993,7 @@ mod native_tests {
         impl EventListener for WhitespaceNameListener {
             async fn handle_event(
                 &mut self,
-                _event: &WalletScanEvent,
+                _event: &SharedEvent,
             ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 Ok(())
             }
@@ -1346,13 +1347,13 @@ mod cross_platform_tests {
     impl EventListener for WasmTestListener {
         async fn handle_event(
             &mut self,
-            event: &WalletScanEvent,
+            event: &SharedEvent,
         ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if self.should_fail {
                 return Err("Test listener failure".into());
             }
 
-            let event_name = match event {
+            let event_name = match &**event {
                 WalletScanEvent::ScanStarted { .. } => "ScanStarted",
                 WalletScanEvent::BlockProcessed { .. } => "BlockProcessed",
                 WalletScanEvent::OutputFound { .. } => "OutputFound",
