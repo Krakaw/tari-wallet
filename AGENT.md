@@ -18,14 +18,17 @@
 - `wasm-pack build --target nodejs --out-dir examples/wasm/pkg --features http` - Build WASM module for node
 
 ### CLI Usage
-- `cargo run --bin scanner --features grpc-storage` - Refactored blockchain scanner (now uses library API)
+- `cargo run --bin scanner --features grpc` - Memory-only blockchain scanner (no storage dependency)
+- `cargo run --bin scanner --features grpc-storage` - Database-backed scanner with persistence
 - `cargo run --bin wallet --features storage` - Wallet management CLI
 
-### Scanner Binary (Refactored)
-The scanner binary is now a lightweight wrapper around the scanning library:
-- **~700 lines** of CLI-specific code (down from 2,895 lines)
+### Scanner Binary (Refactored with Generic Data Processing)
+The scanner binary now uses a generic data processing architecture:
+- **~250 lines** of CLI-specific code (down from 2,895 lines)
+- **No storage dependency** - works with `--features grpc` for memory-only scanning
+- **Generic DataProcessor trait** - pluggable callback architecture for result handling
+- **Dual mode operation**: Memory-only (`grpc`) or database-backed (`grpc-storage`)
 - **Clean separation** between business logic (library) and UI (binary)
-- **Full functionality preserved** while using the new library API
 - **Better testability** with library components being unit-testable
 
 ### Quality & Dependencies

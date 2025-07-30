@@ -39,11 +39,13 @@ The Tari Lightweight Wallet Libraries provide essential wallet functionality ext
 
 ### 🔍 **Blockchain Scanning**
 - ✅ GRPC-based blockchain scanning with Tari base nodes
+- ✅ **Generic data processing callbacks** for flexible result handling
+- ✅ **Memory-only scanning** (no storage dependency required)
+- ✅ **Database persistence** with resume functionality (optional)
 - ✅ UTXO discovery and wallet output reconstruction
 - ✅ Progress tracking and interactive error handling
 - ✅ Batch processing with configurable block ranges
 - ✅ Multiple scanning strategies (one-sided, recoverable, coinbase)
-- ✅ Resume functionality for interrupted scans
 - ✅ Multiple output formats (detailed, summary, JSON)
 
 ### 🔒 **Cryptographic Validation**
@@ -77,7 +79,9 @@ lightweight_wallet_libs = { version = "0.1", features = ["wasm", "grpc"] }
 
 - `default`: Core wallet functionality
 - `wasm`: WASM compatibility and JavaScript bindings
-- `grpc`: GRPC blockchain scanning support
+- `grpc`: GRPC blockchain scanning support (memory-only)
+- `storage`: SQLite database support for persistent storage
+- `grpc-storage`: Combined GRPC scanning with database persistence
 
 ## 🏗️ **Quick Start**
 
@@ -204,12 +208,12 @@ The scanning functionality has been refactored into a comprehensive library API:
 
 ```rust
 use lightweight_wallet_libs::scanning::{
-    WalletScanner, BinaryScanConfig, ScanContext, ScannerStorage,
-    GrpcBlockchainScanner, create_wallet_from_seed_phrase
+    WalletScanner, GrpcBlockchainScanner, create_wallet_from_seed_phrase,
+    MemoryDataProcessor, DataProcessor
 };
 
-// Method 1: Complete scanning workflow with progress tracking
-async fn scan_wallet_comprehensive() -> Result<(), Box<dyn std::error::Error>> {
+// Method 1: Memory-only scanning (no storage dependency)
+async fn scan_wallet_memory_only() -> Result<(), Box<dyn std::error::Error>> {
     // Create scanner with progress tracking
     let mut scanner = WalletScanner::new()
         .with_batch_size(20)
@@ -225,52 +229,117 @@ async fn scan_wallet_comprehensive() -> Result<(), Box<dyn std::error::Error>> {
     // Create scan context from seed phrase
     let (scan_context, birthday) = create_wallet_from_seed_phrase("your 24-word seed phrase")?;
 
-    // Configure scan range
-    let config = BinaryScanConfig::new(birthday, birthday + 1000)
-        .with_progress_frequency(10)
-        .with_batch_size(50);
-
-    // Set up storage (memory or database)
-    let mut storage = ScannerStorage::new_memory();
-    // Or use database: ScannerStorage::new_with_database("wallet.db").await?;
+    // Create memory-only data processor
+    let mut data_processor = MemoryDataProcessor::new();
 
     // Connect to GRPC scanner
     let mut grpc_scanner = GrpcBlockchainScanner::new("http://localhost:18142".to_string()).await?;
     
     // Perform scan with cancellation support
     let mut cancel_rx = tokio::sync::watch::channel(false).1;
-    let result = scanner.scan(&mut grpc_scanner, &scan_context, &config, &mut storage, &mut cancel_rx).await?;
+    let result = scanner.scan_with_processor(
+        &mut grpc_scanner, 
+        &scan_context, 
+        birthday, 
+        birthday + 1000, 
+        &mut data_processor, 
+        &mut cancel_rx
+    ).await?;
 
     match result {
         ScanResult::Completed(wallet_state, metadata) => {
             println!("Scan completed! Found {} transactions", wallet_state.transactions.len());
+            println!("Processed {} blocks with {} total transactions in memory",
+                     data_processor.blocks.len(),
+                     data_processor.total_transactions());
             if let Some(meta) = metadata {
-                println!("Processed {} blocks in {:?}", meta.blocks_processed, meta.duration());
+                println!("Duration: {:?}", meta.duration());
             }
         }
         ScanResult::Interrupted(wallet_state, _) => {
-            println!("Scan interrupted but can be resumed");
+            println!("Scan interrupted but partial data collected");
         }
     }
     
     Ok(())
 }
 
-// Method 2: Performance-optimized scanning
-async fn scan_high_performance() -> Result<(), Box<dyn std::error::Error>> {
-    let mut scanner = WalletScanner::performance_optimized();
-    // Uses larger batch sizes and optimized settings
+// Method 2: Database-backed scanning with persistence (requires storage feature)
+#[cfg(feature = "storage")]
+async fn scan_with_database() -> Result<(), Box<dyn std::error::Error>> {
+    use lightweight_wallet_libs::scanning::{
+        BinaryScanConfig, ScannerStorage, DatabaseDataProcessor
+    };
     
-    // ... rest of scanning logic
+    // Create scanner with database storage
+    let mut scanner = WalletScanner::new()
+        .with_batch_size(20)
+        .with_verbose_logging(true);
+
+    let (scan_context, birthday) = create_wallet_from_seed_phrase("your seed phrase")?;
+
+    // Create database processor for persistent storage
+    let mut storage_backend = ScannerStorage::new_with_database("wallet.db").await?;
+    let mut data_processor = DatabaseDataProcessor::new(storage_backend, true);
+
+    // Traditional scan method for backward compatibility
+    let config = BinaryScanConfig::new(birthday, birthday + 1000);
+    let mut grpc_scanner = GrpcBlockchainScanner::new("http://localhost:18142".to_string()).await?;
+    let mut cancel_rx = tokio::sync::watch::channel(false).1;
+    
+    let result = scanner.scan(&mut grpc_scanner, &scan_context, &config, data_processor.storage_mut(), &mut cancel_rx).await?;
+    
+    match result {
+        ScanResult::Completed(wallet_state, _) => {
+            println!("Scan completed and saved to database");
+            println!("Database statistics: {:?}", data_processor.get_statistics().await?);
+        }
+        ScanResult::Interrupted(_, _) => {
+            println!("Scan interrupted - can resume from database");
+        }
+    }
+    
     Ok(())
 }
 
-// Method 3: Reliability-focused scanning with retry logic
-async fn scan_with_reliability() -> Result<(), Box<dyn std::error::Error>> {
-    let mut scanner = WalletScanner::reliability_optimized();
-    // Uses smaller batches and aggressive retry settings
+// Method 3: Custom data processor implementation
+struct CustomDataProcessor {
+    // Your custom fields
+}
+
+#[async_trait::async_trait]
+impl DataProcessor for CustomDataProcessor {
+    async fn process_block(&mut self, block_data: BlockData) -> LightweightWalletResult<()> {
+        // Custom processing logic - send to API, save to file, etc.
+        println!("Processing block {} with {} transactions", 
+                 block_data.height, block_data.transactions.len());
+        Ok(())
+    }
+
+    async fn process_progress(&mut self, progress_data: ProgressData) -> LightweightWalletResult<()> {
+        // Custom progress handling
+        println!("Progress: {:.1}%", progress_data.progress_percent());
+        Ok(())
+    }
+}
+
+async fn scan_with_custom_processor() -> Result<(), Box<dyn std::error::Error>> {
+    let mut scanner = WalletScanner::performance_optimized();
+    let (scan_context, birthday) = create_wallet_from_seed_phrase("your seed phrase")?;
+    let mut custom_processor = CustomDataProcessor { /* fields */ };
     
-    // ... rest of scanning logic
+    let mut grpc_scanner = GrpcBlockchainScanner::new("http://localhost:18142".to_string()).await?;
+    let mut cancel_rx = tokio::sync::watch::channel(false).1;
+    
+    let result = scanner.scan_with_processor(
+        &mut grpc_scanner,
+        &scan_context,
+        birthday,
+        birthday + 1000,
+        &mut custom_processor,
+        &mut cancel_rx
+    ).await?;
+    
     Ok(())
 }
 ```
@@ -311,24 +380,24 @@ if let Some(block) = block_info {
 The refactored scanner binary provides comprehensive blockchain analysis:
 
 ```bash
-# 1. Seed phrase OR view key scanning
-cargo run --bin scanner --features grpc-storage -- --seed-phrase "your seed phrase"
-cargo run --bin scanner --features grpc-storage -- --view-key "64_char_hex_view_key"
+# Memory-only scanning (no storage dependency)
+cargo run --bin scanner --features grpc -- --seed-phrase "your seed phrase"
+cargo run --bin scanner --features grpc -- --view-key "64_char_hex_view_key"
 
-# 2. Flexible block range scanning
-cargo run --bin scanner --features grpc-storage -- --from-block 1000 --to-block 2000
-cargo run --bin scanner --features grpc-storage -- --blocks 1000,1500,2000,2500
+# Flexible block range scanning (memory-only)
+cargo run --bin scanner --features grpc -- --from-block 1000 --to-block 2000
+cargo run --bin scanner --features grpc -- --blocks 1000,1500,2000,2500
 
-# 3. Multiple output formats
-cargo run --bin scanner --features grpc-storage -- --format detailed  # Full transaction history
-cargo run --bin scanner --features grpc-storage -- --format summary   # Compact overview  
-cargo run --bin scanner --features grpc-storage -- --format json      # Machine-readable
+# Multiple output formats (memory-only)
+cargo run --bin scanner --features grpc -- --format detailed  # Full transaction history
+cargo run --bin scanner --features grpc -- --format summary   # Compact overview  
+cargo run --bin scanner --features grpc -- --format json      # Machine-readable
 
-# 4. Database persistence with resume functionality
+# Database persistence with resume functionality (requires storage)
 cargo run --bin scanner --features grpc-storage -- --seed-phrase "your seed phrase" --database wallet.db
 
-# 5. Progress tracking with real-time statistics
-cargo run --bin scanner --features grpc-storage -- --seed-phrase "your seed phrase" --progress-frequency 5
+# Progress tracking with real-time statistics
+cargo run --bin scanner --features grpc -- --seed-phrase "your seed phrase" --progress-frequency 5
 ```
 
 #### **Library API Usage (Advanced)**
@@ -459,14 +528,16 @@ lightweight_wallet_libs/
 ├── validation/       # Cryptographic validation
 ├── extraction/       # UTXO processing
 ├── scanning/         # Refactored blockchain scanning library
-│   ├── mod.rs            # Public API and trait definitions
-│   ├── wallet_scanner.rs # Main scanning API and implementation
-│   ├── scan_config.rs    # Configuration structures
-│   ├── storage_manager.rs# Storage abstraction (memory/database)
+│   ├── mod.rs               # Public API and trait definitions
+│   ├── wallet_scanner.rs    # Main scanning API and implementation
+│   ├── data_processor.rs    # Generic data processing callback architecture
+│   ├── database_processor.rs# Database storage data processor
+│   ├── scan_config.rs       # Configuration structures
+│   ├── storage_manager.rs   # Storage abstraction (memory/database)
 │   ├── background_writer.rs # Async database operations
-│   ├── progress.rs       # Progress tracking and callbacks
-│   ├── grpc_scanner.rs   # GRPC blockchain scanner
-│   └── http_scanner.rs   # HTTP blockchain scanner
+│   ├── progress.rs          # Progress tracking and callbacks
+│   ├── grpc_scanner.rs      # GRPC blockchain scanner
+│   └── http_scanner.rs      # HTTP blockchain scanner
 ├── crypto/           # Independent crypto primitives
 │   ├── signing.rs    # Message signing and verification
 │   └── hash_domain.rs # Domain separation for security  
@@ -487,9 +558,12 @@ lightweight_wallet_libs/
 ### Scanning Library Components
 
 - **`WalletScanner`**: Main scanning API with configurable batching, progress tracking, and retry logic
+- **`DataProcessor`**: Generic trait for handling scan results (memory, database, custom implementations)
+- **`MemoryDataProcessor`**: In-memory data collection without persistence requirements
+- **`DatabaseDataProcessor`**: Database-backed storage with resume functionality (requires storage feature)
 - **`ScanContext`**: Cryptographic context containing view keys and entropy for scanning
-- **`BinaryScanConfig`**: Configuration for block ranges, output formats, and scanning parameters
-- **`ScannerStorage`**: Storage abstraction supporting both memory-only and database-backed persistence
+- **`BinaryScanConfig`**: Configuration for block ranges, output formats, and scanning parameters (storage mode)
+- **`ScannerStorage`**: Storage abstraction supporting both memory-only and database-backed persistence (legacy)
 - **`BackgroundWriter`**: Async database writer for improved scanning performance (non-WASM)
 - **`ProgressTracker`**: Real-time progress tracking with customizable callbacks and ETA calculation
 
@@ -549,28 +623,30 @@ cargo run --bin wallet new-wallet --network stagenet --payment-id "my-payment-12
 
 ### 🔍 **Scanner CLI** - Refactored blockchain analysis
 ```bash
-# Comprehensive blockchain scanning (requires running Tari base node)
-cargo run --bin scanner --features grpc-storage -- --seed-phrase "your seed phrase"
+# Memory-only blockchain scanning (requires running Tari base node)
+cargo run --bin scanner --features grpc -- --seed-phrase "your seed phrase"
 
-# Scan specific block range with view key
-cargo run --bin scanner --features grpc-storage -- --view-key "your_64_char_hex_view_key" --from-block 1000 --to-block 2000
+# Scan specific block range with view key (memory-only)
+cargo run --bin scanner --features grpc -- --view-key "your_64_char_hex_view_key" --from-block 1000 --to-block 2000
 
-# Scan with database persistence and resume functionality
+# Scan with database persistence and resume functionality (requires storage)
 cargo run --bin scanner --features grpc-storage -- --seed-phrase "your seed phrase" --database wallet.db
 
-# Scan with multiple output formats and progress tracking
-cargo run --bin scanner --features grpc-storage -- --seed-phrase "your seed phrase" --format summary --progress-frequency 10
+# Scan with multiple output formats and progress tracking (memory-only)
+cargo run --bin scanner --features grpc -- --seed-phrase "your seed phrase" --format summary --progress-frequency 10
 
-# Scan specific blocks with JSON output
-cargo run --bin scanner --features grpc-storage -- --view-key "your_view_key" --blocks 1000,1500,2000 --format json
+# Scan specific blocks with JSON output (memory-only)
+cargo run --bin scanner --features grpc -- --view-key "your_view_key" --blocks 1000,1500,2000 --format json
 ```
 
 **Refactored Scanner Features:**
 - **🏗️ Library-Based**: Now uses the scanning library API internally (~200 lines vs 2,895 lines)
+- **🪶 No Storage Dependency**: Memory-only scanning with `--features grpc` (storage optional)
+- **🔌 Generic Data Processing**: Pluggable callback architecture for flexible result handling
 - **📊 Enhanced Progress**: Real-time progress with blocks/sec, ETA, and output counts
-- **💾 Database Support**: Automatic resume functionality with SQLite persistence
+- **💾 Optional Database Support**: Automatic resume functionality with SQLite persistence
 - **🔄 Error Recovery**: Improved error handling with retry logic and cancellation
-- **🎯 Better Performance**: Async background database operations for faster scanning
+- **🎯 Better Performance**: Async background database operations for faster scanning (storage mode)
 - **🧪 Better Testing**: Library components are fully unit-testable
 
 ### ✍️ **Signing CLI** - Message signing and verification
@@ -743,7 +819,8 @@ cargo test --features grpc
 
 # Test specific binaries
 cargo test --bin wallet --features storage
-cargo test --bin scanner --features grpc-storage
+cargo test --bin scanner --features grpc  # Memory-only mode
+cargo test --bin scanner --features grpc-storage  # With database
 cargo test --bin signing --features storage
 
 # WASM tests
