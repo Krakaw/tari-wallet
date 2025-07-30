@@ -80,6 +80,7 @@ use async_trait::async_trait;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
+use std::time::{Duration, Instant};
 
 // Public module exports
 pub mod listeners;
@@ -120,6 +121,28 @@ impl fmt::Display for EventDispatcherError {
 }
 
 impl Error for EventDispatcherError {}
+
+/// Debug information about event processing
+#[derive(Debug, Clone)]
+pub struct EventTrace {
+    pub event_type: String,
+    pub listener_name: String,
+    pub processing_duration: Duration,
+    pub success: bool,
+    pub error_message: Option<String>,
+    pub timestamp: Instant,
+}
+
+/// Statistics about event processing
+#[derive(Debug, Default, Clone)]
+pub struct EventStats {
+    pub total_events_dispatched: usize,
+    pub total_listener_calls: usize,
+    pub total_listener_errors: usize,
+    pub total_processing_time: Duration,
+    pub events_by_type: std::collections::HashMap<String, usize>,
+    pub errors_by_listener: std::collections::HashMap<String, usize>,
+}
 
 /// Trait for handling wallet scan events asynchronously
 ///
@@ -189,6 +212,9 @@ pub struct EventDispatcher {
     debug_mode: bool,
     registered_names: HashSet<String>,
     max_listeners: Option<usize>,
+    event_traces: Vec<EventTrace>,
+    stats: EventStats,
+    max_trace_entries: usize,
 }
 
 impl EventDispatcher {
@@ -199,6 +225,9 @@ impl EventDispatcher {
             debug_mode: false,
             registered_names: HashSet::new(),
             max_listeners: None,
+            event_traces: Vec::new(),
+            stats: EventStats::default(),
+            max_trace_entries: 1000, // Default limit to prevent unbounded memory growth
         }
     }
 
@@ -212,6 +241,9 @@ impl EventDispatcher {
             debug_mode: true,
             registered_names: HashSet::new(),
             max_listeners: None,
+            event_traces: Vec::new(),
+            stats: EventStats::default(),
+            max_trace_entries: 1000,
         }
     }
 
@@ -229,6 +261,26 @@ impl EventDispatcher {
             debug_mode: false,
             registered_names: HashSet::new(),
             max_listeners: Some(max_listeners),
+            event_traces: Vec::new(),
+            stats: EventStats::default(),
+            max_trace_entries: 1000,
+        }
+    }
+
+    /// Create a new event dispatcher with custom trace limit
+    ///
+    /// # Arguments
+    ///
+    /// * `max_trace_entries` - Maximum number of trace entries to keep in memory
+    pub fn new_with_trace_limit(max_trace_entries: usize) -> Self {
+        Self {
+            listeners: Vec::new(),
+            debug_mode: true, // Enable debug mode when tracing is requested
+            registered_names: HashSet::new(),
+            max_listeners: None,
+            event_traces: Vec::new(),
+            stats: EventStats::default(),
+            max_trace_entries,
         }
     }
 
@@ -325,6 +377,9 @@ impl EventDispatcher {
     ///
     /// * `event` - The event to dispatch
     pub async fn dispatch(&mut self, event: WalletScanEvent) {
+        let dispatch_start = Instant::now();
+        let event_type = self.get_event_type_name(&event);
+
         if self.debug_mode {
             #[cfg(target_arch = "wasm32")]
             web_sys::console::log_1(&format!("Dispatching event: {:?}", event).into());
@@ -332,22 +387,104 @@ impl EventDispatcher {
             println!("Dispatching event: {:?}", event);
         }
 
+        // Update statistics
+        self.stats.total_events_dispatched += 1;
+        *self
+            .stats
+            .events_by_type
+            .entry(event_type.clone())
+            .or_insert(0) += 1;
+
+        // Collect traces to add after processing (to avoid borrowing conflicts)
+        let mut traces_to_add = Vec::new();
+
         for listener in &mut self.listeners {
             // Skip listeners that don't want this event type
             if !listener.wants_event(&event) {
                 continue;
             }
 
-            // Handle the event with error isolation
-            if let Err(e) = listener.handle_event(&event).await {
-                // Log the error but continue with other listeners
+            let listener_name = listener.name().to_string();
+            let listener_start = Instant::now();
+            self.stats.total_listener_calls += 1;
+
+            // Handle the event with error isolation and timing
+            let result = listener.handle_event(&event).await;
+            let processing_duration = listener_start.elapsed();
+
+            let (success, error_message) = match &result {
+                Ok(_) => (true, None),
+                Err(e) => {
+                    self.stats.total_listener_errors += 1;
+                    *self
+                        .stats
+                        .errors_by_listener
+                        .entry(listener_name.clone())
+                        .or_insert(0) += 1;
+
+                    // Log the error but continue with other listeners
+                    #[cfg(target_arch = "wasm32")]
+                    web_sys::console::error_1(
+                        &format!("Event listener '{}' failed: {}", listener_name, e).into(),
+                    );
+                    #[cfg(not(target_arch = "wasm32"))]
+                    eprintln!("Event listener '{}' failed: {}", listener_name, e);
+
+                    (false, Some(e.to_string()))
+                }
+            };
+
+            // Create trace entry if debugging is enabled
+            if self.debug_mode {
+                let trace = EventTrace {
+                    event_type: event_type.clone(),
+                    listener_name: listener_name.clone(),
+                    processing_duration,
+                    success,
+                    error_message,
+                    timestamp: listener_start,
+                };
+
+                traces_to_add.push(trace);
+
                 #[cfg(target_arch = "wasm32")]
-                web_sys::console::error_1(
-                    &format!("Event listener '{}' failed: {}", listener.name(), e).into(),
+                web_sys::console::log_1(
+                    &format!(
+                        "Listener '{}' processed {} in {:?} - Success: {}",
+                        listener_name, event_type, processing_duration, success
+                    )
+                    .into(),
                 );
                 #[cfg(not(target_arch = "wasm32"))]
-                eprintln!("Event listener '{}' failed: {}", listener.name(), e);
+                println!(
+                    "Listener '{}' processed {} in {:?} - Success: {}",
+                    listener_name, event_type, processing_duration, success
+                );
             }
+        }
+
+        // Add traces after loop to avoid borrowing conflicts
+        for trace in traces_to_add {
+            self.add_trace(trace);
+        }
+
+        let total_dispatch_duration = dispatch_start.elapsed();
+        self.stats.total_processing_time += total_dispatch_duration;
+
+        if self.debug_mode {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::log_1(
+                &format!(
+                    "Event {} dispatch completed in {:?}",
+                    event_type, total_dispatch_duration
+                )
+                .into(),
+            );
+            #[cfg(not(target_arch = "wasm32"))]
+            println!(
+                "Event {} dispatch completed in {:?}",
+                event_type, total_dispatch_duration
+            );
         }
     }
 
@@ -364,6 +501,109 @@ impl EventDispatcher {
     /// Enable or disable debug mode
     pub fn set_debug_mode(&mut self, enabled: bool) {
         self.debug_mode = enabled;
+    }
+
+    /// Get event processing statistics
+    ///
+    /// Returns a copy of the current statistics for analysis and monitoring.
+    pub fn get_stats(&self) -> EventStats {
+        self.stats.clone()
+    }
+
+    /// Get event traces (most recent first)
+    ///
+    /// Returns a copy of the event traces for debugging and analysis.
+    /// Limited by the configured max_trace_entries.
+    pub fn get_traces(&self) -> Vec<EventTrace> {
+        self.event_traces.clone()
+    }
+
+    /// Get traces for a specific event type
+    pub fn get_traces_for_event_type(&self, event_type: &str) -> Vec<EventTrace> {
+        self.event_traces
+            .iter()
+            .filter(|trace| trace.event_type == event_type)
+            .cloned()
+            .collect()
+    }
+
+    /// Get traces for a specific listener
+    pub fn get_traces_for_listener(&self, listener_name: &str) -> Vec<EventTrace> {
+        self.event_traces
+            .iter()
+            .filter(|trace| trace.listener_name == listener_name)
+            .cloned()
+            .collect()
+    }
+
+    /// Clear all traces and reset statistics
+    pub fn clear_debug_data(&mut self) {
+        self.event_traces.clear();
+        self.stats = EventStats::default();
+    }
+
+    /// Set the maximum number of trace entries to keep
+    pub fn set_max_trace_entries(&mut self, max_entries: usize) {
+        self.max_trace_entries = max_entries;
+        // Trim existing traces if needed
+        if self.event_traces.len() > max_entries {
+            self.event_traces
+                .drain(0..self.event_traces.len() - max_entries);
+        }
+    }
+
+    /// Get debugging summary as a formatted string
+    pub fn get_debug_summary(&self) -> String {
+        let stats = &self.stats;
+        format!(
+            "Event Dispatcher Debug Summary:\n\
+             - Total events dispatched: {}\n\
+             - Total listener calls: {}\n\
+             - Total listener errors: {}\n\
+             - Total processing time: {:?}\n\
+             - Average time per event: {:?}\n\
+             - Events by type: {:?}\n\
+             - Errors by listener: {:?}\n\
+             - Active listeners: {}\n\
+             - Trace entries: {}/{}",
+            stats.total_events_dispatched,
+            stats.total_listener_calls,
+            stats.total_listener_errors,
+            stats.total_processing_time,
+            if stats.total_events_dispatched > 0 {
+                stats.total_processing_time / stats.total_events_dispatched as u32
+            } else {
+                Duration::ZERO
+            },
+            stats.events_by_type,
+            stats.errors_by_listener,
+            self.listeners.len(),
+            self.event_traces.len(),
+            self.max_trace_entries
+        )
+    }
+
+    // Private helper methods
+
+    /// Add a trace entry, maintaining the maximum number of entries
+    fn add_trace(&mut self, trace: EventTrace) {
+        self.event_traces.push(trace);
+        if self.event_traces.len() > self.max_trace_entries {
+            self.event_traces.remove(0);
+        }
+    }
+
+    /// Get the string name for an event type
+    fn get_event_type_name(&self, event: &WalletScanEvent) -> String {
+        match event {
+            WalletScanEvent::ScanStarted { .. } => "ScanStarted".to_string(),
+            WalletScanEvent::BlockProcessed { .. } => "BlockProcessed".to_string(),
+            WalletScanEvent::OutputFound { .. } => "OutputFound".to_string(),
+            WalletScanEvent::ScanProgress { .. } => "ScanProgress".to_string(),
+            WalletScanEvent::ScanCompleted { .. } => "ScanCompleted".to_string(),
+            WalletScanEvent::ScanError { .. } => "ScanError".to_string(),
+            WalletScanEvent::ScanCancelled { .. } => "ScanCancelled".to_string(),
+        }
     }
 }
 
@@ -605,5 +845,141 @@ mod tests {
         dispatcher.register_unchecked(Box::new(listener2)); // Should work despite duplicate name and limit
 
         assert_eq!(dispatcher.listener_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_event_tracing_and_statistics() {
+        let mut dispatcher = EventDispatcher::new_with_debug();
+
+        let listener1 = TestListener::new("tracing_listener1");
+        let listener2 = TestListener::new_failing("tracing_listener2"); // This one will fail
+        let listener3 = TestListener::new("tracing_listener3");
+
+        dispatcher.register(Box::new(listener1)).unwrap();
+        dispatcher.register(Box::new(listener2)).unwrap();
+        dispatcher.register(Box::new(listener3)).unwrap();
+
+        // Create test events
+        let event1 = WalletScanEvent::ScanStarted {
+            config: ScanConfig::default(),
+            block_range: (0, 100),
+            wallet_context: "test".to_string(),
+        };
+
+        let event2 = WalletScanEvent::ScanProgress {
+            current_block: 50,
+            total_blocks: 100,
+            percentage: 50.0,
+            speed_blocks_per_second: 10.0,
+            estimated_time_remaining_seconds: Some(5),
+        };
+
+        // Dispatch events
+        dispatcher.dispatch(event1).await;
+        dispatcher.dispatch(event2).await;
+
+        // Check statistics
+        let stats = dispatcher.get_stats();
+        assert_eq!(stats.total_events_dispatched, 2);
+        assert_eq!(stats.total_listener_calls, 6); // 3 listeners * 2 events
+        assert_eq!(stats.total_listener_errors, 2); // 1 failing listener * 2 events
+        assert!(stats.total_processing_time > Duration::ZERO);
+
+        // Check events by type
+        assert_eq!(stats.events_by_type.get("ScanStarted"), Some(&1));
+        assert_eq!(stats.events_by_type.get("ScanProgress"), Some(&1));
+
+        // Check errors by listener
+        assert_eq!(stats.errors_by_listener.get("tracing_listener2"), Some(&2));
+
+        // Check traces
+        let traces = dispatcher.get_traces();
+        assert_eq!(traces.len(), 6); // 3 listeners * 2 events
+
+        // Check traces for specific event type
+        let scan_started_traces = dispatcher.get_traces_for_event_type("ScanStarted");
+        assert_eq!(scan_started_traces.len(), 3);
+
+        // Check traces for specific listener
+        let failing_listener_traces = dispatcher.get_traces_for_listener("tracing_listener2");
+        assert_eq!(failing_listener_traces.len(), 2);
+        assert!(failing_listener_traces.iter().all(|trace| !trace.success));
+    }
+
+    #[tokio::test]
+    async fn test_trace_limit_enforcement() {
+        let mut dispatcher = EventDispatcher::new_with_trace_limit(3);
+
+        let listener = TestListener::new("test_listener");
+        dispatcher.register(Box::new(listener)).unwrap();
+
+        // Dispatch 5 events (more than the limit of 3)
+        for i in 0..5 {
+            let event = WalletScanEvent::ScanStarted {
+                config: ScanConfig::default(),
+                block_range: (i, i + 1),
+                wallet_context: format!("test_{}", i),
+            };
+            dispatcher.dispatch(event).await;
+        }
+
+        // Should only keep the most recent 3 traces
+        let traces = dispatcher.get_traces();
+        assert_eq!(traces.len(), 3);
+
+        // Check that these are the most recent traces
+        assert_eq!(traces[0].event_type, "ScanStarted");
+        assert_eq!(traces[1].event_type, "ScanStarted");
+        assert_eq!(traces[2].event_type, "ScanStarted");
+    }
+
+    #[tokio::test]
+    async fn test_debug_summary() {
+        let mut dispatcher = EventDispatcher::new_with_debug();
+
+        let listener = TestListener::new("summary_listener");
+        dispatcher.register(Box::new(listener)).unwrap();
+
+        let event = WalletScanEvent::ScanStarted {
+            config: ScanConfig::default(),
+            block_range: (0, 100),
+            wallet_context: "test".to_string(),
+        };
+
+        dispatcher.dispatch(event).await;
+
+        let summary = dispatcher.get_debug_summary();
+        assert!(summary.contains("Total events dispatched: 1"));
+        assert!(summary.contains("Total listener calls: 1"));
+        assert!(summary.contains("Total listener errors: 0"));
+        assert!(summary.contains("Active listeners: 1"));
+        assert!(summary.contains("Trace entries: 1/1000"));
+    }
+
+    #[tokio::test]
+    async fn test_clear_debug_data() {
+        let mut dispatcher = EventDispatcher::new_with_debug();
+
+        let listener = TestListener::new("clear_test_listener");
+        dispatcher.register(Box::new(listener)).unwrap();
+
+        let event = WalletScanEvent::ScanStarted {
+            config: ScanConfig::default(),
+            block_range: (0, 100),
+            wallet_context: "test".to_string(),
+        };
+
+        dispatcher.dispatch(event).await;
+
+        // Verify data exists
+        assert_eq!(dispatcher.get_stats().total_events_dispatched, 1);
+        assert_eq!(dispatcher.get_traces().len(), 1);
+
+        // Clear data
+        dispatcher.clear_debug_data();
+
+        // Verify data is cleared
+        assert_eq!(dispatcher.get_stats().total_events_dispatched, 0);
+        assert_eq!(dispatcher.get_traces().len(), 0);
     }
 }
