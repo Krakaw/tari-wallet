@@ -398,7 +398,17 @@ impl EventType for WalletScanEvent {
                 estimated_time_remaining
                     .map_or("unknown".to_string(), |dur| format!("{}s", dur.as_secs()))
             )),
-            WalletScanEvent::ScanCompleted { success, .. } => Some(format!("success: {}", success)),
+            WalletScanEvent::ScanCompleted {
+                success,
+                final_statistics,
+                total_duration,
+                ..
+            } => Some(format!(
+                "success: {}, duration: {:?}, stats: {} items",
+                success,
+                total_duration,
+                final_statistics.len()
+            )),
             WalletScanEvent::ScanError {
                 error_message,
                 block_height,
@@ -484,11 +494,16 @@ impl SerializableEvent for WalletScanEvent {
                 )
             }
             WalletScanEvent::ScanCompleted {
-                metadata, success, ..
+                metadata,
+                final_statistics,
+                success,
+                total_duration,
             } => {
+                let stats_count = final_statistics.len();
+                let duration_secs = total_duration.as_secs();
                 format!(
-                    "{{\"type\":\"ScanCompleted\",\"event_id\":\"{}\",\"success\":{}}}",
-                    metadata.event_id, success
+                    "{{\"type\":\"ScanCompleted\",\"event_id\":\"{}\",\"success\":{},\"duration_seconds\":{},\"stats_count\":{}}}",
+                    metadata.event_id, success, duration_secs, stats_count
                 )
             }
             WalletScanEvent::ScanError {
@@ -577,8 +592,46 @@ impl SerializableEvent for WalletScanEvent {
                     current_block, total_blocks, percentage, speed_blocks_per_second, eta_str
                 )
             }
-            WalletScanEvent::ScanCompleted { success, .. } => {
-                format!("Scan completed (success: {})", success)
+            WalletScanEvent::ScanCompleted {
+                success,
+                final_statistics,
+                total_duration,
+                ..
+            } => {
+                let duration_str = {
+                    let secs = total_duration.as_secs();
+                    if secs < 60 {
+                        format!("{}s", secs)
+                    } else if secs < 3600 {
+                        format!("{}m {}s", secs / 60, secs % 60)
+                    } else {
+                        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+                    }
+                };
+
+                let key_stats = [
+                    ("blocks_processed", "blocks"),
+                    ("outputs_found", "outputs"),
+                    ("transactions_found", "transactions"),
+                    ("errors_encountered", "errors"),
+                ]
+                .iter()
+                .filter_map(|(key, unit)| {
+                    final_statistics
+                        .get(*key)
+                        .map(|value| format!("{} {}", value, unit))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+
+                if key_stats.is_empty() {
+                    format!("Scan completed (success: {}) in {}", success, duration_str)
+                } else {
+                    format!(
+                        "Scan completed (success: {}) in {} - {}",
+                        success, duration_str, key_stats
+                    )
+                }
             }
             WalletScanEvent::ScanError {
                 error_message,
@@ -1125,6 +1178,178 @@ mod tests {
             }
             _ => panic!("Expected ScanProgress event"),
         }
+    }
+
+    #[test]
+    fn test_scan_completed_event_creation() {
+        let mut final_stats = HashMap::new();
+        final_stats.insert("blocks_processed".to_string(), 1000);
+        final_stats.insert("outputs_found".to_string(), 25);
+        final_stats.insert("transactions_found".to_string(), 15);
+        final_stats.insert("errors_encountered".to_string(), 0);
+
+        let event =
+            WalletScanEvent::scan_completed(final_stats.clone(), true, Duration::from_secs(300));
+
+        match &event {
+            WalletScanEvent::ScanCompleted {
+                metadata,
+                final_statistics,
+                success,
+                total_duration,
+            } => {
+                assert!(!metadata.event_id.is_empty());
+                assert_eq!(metadata.source, "wallet_scanner");
+                assert_eq!(*success, true);
+                assert_eq!(*total_duration, Duration::from_secs(300));
+                assert_eq!(final_statistics.len(), 4);
+                assert_eq!(final_statistics.get("blocks_processed"), Some(&1000));
+                assert_eq!(final_statistics.get("outputs_found"), Some(&25));
+                assert_eq!(final_statistics.get("transactions_found"), Some(&15));
+                assert_eq!(final_statistics.get("errors_encountered"), Some(&0));
+            }
+            _ => panic!("Expected ScanCompleted event"),
+        }
+    }
+
+    #[test]
+    fn test_scan_completed_event_traits() {
+        let mut final_stats = HashMap::new();
+        final_stats.insert("blocks_processed".to_string(), 500);
+        final_stats.insert("outputs_found".to_string(), 10);
+
+        let event = WalletScanEvent::scan_completed(final_stats, true, Duration::from_secs(150));
+
+        // Test EventType trait
+        assert_eq!(event.event_type(), "ScanCompleted");
+        assert!(event.debug_data().is_some());
+        let debug_data = event.debug_data().unwrap();
+        assert!(debug_data.contains("success: true"));
+        assert!(debug_data.contains("duration: 150s"));
+        assert!(debug_data.contains("stats: 2 items"));
+
+        // Test SerializableEvent trait
+        let summary = event.summary();
+        assert!(summary.contains("Scan completed (success: true)"));
+        assert!(summary.contains("2m 30s"));
+        assert!(summary.contains("500 blocks"));
+        assert!(summary.contains("10 outputs"));
+
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("\"type\":\"ScanCompleted\""));
+        assert!(json.contains("\"success\":true"));
+        assert!(json.contains("\"duration_seconds\":150"));
+        assert!(json.contains("\"stats_count\":2"));
+    }
+
+    #[test]
+    fn test_scan_completed_failure() {
+        let mut final_stats = HashMap::new();
+        final_stats.insert("blocks_processed".to_string(), 750);
+        final_stats.insert("errors_encountered".to_string(), 5);
+
+        let event = WalletScanEvent::scan_completed(final_stats, false, Duration::from_secs(45));
+
+        match &event {
+            WalletScanEvent::ScanCompleted { success, .. } => {
+                assert_eq!(*success, false);
+            }
+            _ => panic!("Expected ScanCompleted event"),
+        }
+
+        let summary = event.summary();
+        assert!(summary.contains("success: false"));
+        assert!(summary.contains("45s"));
+        assert!(summary.contains("750 blocks"));
+        assert!(summary.contains("5 errors"));
+    }
+
+    #[test]
+    fn test_scan_completed_empty_stats() {
+        let empty_stats = HashMap::new();
+        let event = WalletScanEvent::scan_completed(empty_stats, true, Duration::from_secs(30));
+
+        // Test with empty statistics
+        let debug_data = event.debug_data().unwrap();
+        assert!(debug_data.contains("stats: 0 items"));
+
+        let summary = event.summary();
+        assert!(summary.contains("Scan completed (success: true) in 30s"));
+        // Should not contain additional stats when empty
+        assert!(!summary.contains(" - "));
+    }
+
+    #[test]
+    fn test_scan_completed_duration_formatting() {
+        // Test different duration formats
+        let test_cases = vec![
+            (Duration::from_secs(30), "30s"),
+            (Duration::from_secs(90), "1m 30s"),
+            (Duration::from_secs(3661), "1h 1m"),
+            (Duration::from_secs(7200), "2h 0m"),
+        ];
+
+        for (duration, expected_format) in test_cases {
+            let event = WalletScanEvent::scan_completed(HashMap::new(), true, duration);
+            let summary = event.summary();
+            assert!(
+                summary.contains(expected_format),
+                "Expected '{}' in summary: {}",
+                expected_format,
+                summary
+            );
+        }
+    }
+
+    #[test]
+    fn test_scan_completed_with_correlation_id() {
+        let metadata =
+            EventMetadata::with_correlation("wallet_scanner", "final_scan_789".to_string());
+        let mut stats = HashMap::new();
+        stats.insert("blocks_processed".to_string(), 100);
+
+        let event = WalletScanEvent::ScanCompleted {
+            metadata,
+            final_statistics: stats,
+            success: true,
+            total_duration: Duration::from_secs(60),
+        };
+
+        match &event {
+            WalletScanEvent::ScanCompleted { metadata, .. } => {
+                assert_eq!(metadata.correlation_id, Some("final_scan_789".to_string()));
+                assert_eq!(metadata.source, "wallet_scanner");
+            }
+            _ => panic!("Expected ScanCompleted event"),
+        }
+    }
+
+    #[test]
+    fn test_scan_completed_comprehensive_stats() {
+        let mut comprehensive_stats = HashMap::new();
+        comprehensive_stats.insert("blocks_processed".to_string(), 2000);
+        comprehensive_stats.insert("outputs_found".to_string(), 150);
+        comprehensive_stats.insert("transactions_found".to_string(), 75);
+        comprehensive_stats.insert("errors_encountered".to_string(), 3);
+        comprehensive_stats.insert("average_block_time_ms".to_string(), 250);
+        comprehensive_stats.insert("total_value_found".to_string(), 50000);
+
+        let event = WalletScanEvent::scan_completed(
+            comprehensive_stats,
+            true,
+            Duration::from_secs(1800), // 30 minutes
+        );
+
+        let summary = event.summary();
+        assert!(summary.contains("2000 blocks"));
+        assert!(summary.contains("150 outputs"));
+        assert!(summary.contains("75 transactions"));
+        assert!(summary.contains("3 errors"));
+        assert!(summary.contains("30m 0s"));
+
+        // Should only include the key stats, not all stats
+        assert!(!summary.contains("average_block_time_ms"));
+        assert!(!summary.contains("total_value_found"));
     }
 }
 
