@@ -7,6 +7,7 @@ pub mod common;
 pub mod crypto;
 pub mod data_structures;
 pub mod errors;
+pub mod events;
 pub mod extraction;
 pub mod hex_utils;
 pub mod key_management;
