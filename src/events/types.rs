@@ -386,10 +386,17 @@ impl EventType for WalletScanEvent {
                 current_block,
                 total_blocks,
                 percentage,
+                speed_blocks_per_second,
+                estimated_time_remaining,
                 ..
             } => Some(format!(
-                "{}/{} ({:.1}%)",
-                current_block, total_blocks, percentage
+                "{}/{} ({:.1}%), speed: {:.1} bps, ETA: {}",
+                current_block,
+                total_blocks,
+                percentage,
+                speed_blocks_per_second,
+                estimated_time_remaining
+                    .map_or("unknown".to_string(), |dur| format!("{}s", dur.as_secs()))
             )),
             WalletScanEvent::ScanCompleted { success, .. } => Some(format!("success: {}", success)),
             WalletScanEvent::ScanError {
@@ -461,14 +468,19 @@ impl SerializableEvent for WalletScanEvent {
                 current_block,
                 total_blocks,
                 percentage,
-                ..
+                speed_blocks_per_second,
+                estimated_time_remaining,
             } => {
+                let eta_seconds = estimated_time_remaining
+                    .map_or("null".to_string(), |dur| dur.as_secs().to_string());
                 format!(
-                    "{{\"type\":\"ScanProgress\",\"event_id\":\"{}\",\"current_block\":{},\"total_blocks\":{},\"percentage\":{:.2}}}",
+                    "{{\"type\":\"ScanProgress\",\"event_id\":\"{}\",\"current_block\":{},\"total_blocks\":{},\"percentage\":{:.2},\"speed_bps\":{:.2},\"eta_seconds\":{}}}",
                     metadata.event_id,
                     current_block,
                     total_blocks,
-                    percentage
+                    percentage,
+                    speed_blocks_per_second,
+                    eta_seconds
                 )
             }
             WalletScanEvent::ScanCompleted {
@@ -546,11 +558,23 @@ impl SerializableEvent for WalletScanEvent {
                 current_block,
                 total_blocks,
                 percentage,
+                speed_blocks_per_second,
+                estimated_time_remaining,
                 ..
             } => {
+                let eta_str = estimated_time_remaining.map_or("unknown ETA".to_string(), |dur| {
+                    let secs = dur.as_secs();
+                    if secs < 60 {
+                        format!("{}s", secs)
+                    } else if secs < 3600 {
+                        format!("{}m {}s", secs / 60, secs % 60)
+                    } else {
+                        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+                    }
+                });
                 format!(
-                    "Scan progress: {}/{} blocks ({:.1}%)",
-                    current_block, total_blocks, percentage
+                    "Scan progress: {}/{} blocks ({:.1}%) at {:.1} blocks/sec, {}",
+                    current_block, total_blocks, percentage, speed_blocks_per_second, eta_str
                 )
             }
             WalletScanEvent::ScanCompleted { success, .. } => {
@@ -939,6 +963,168 @@ mod tests {
         assert_eq!(output_data.maturity_height, Some(1000));
         assert_eq!(output_data.script, Some("script".to_string()));
         assert_eq!(output_data.encrypted_value, Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn test_scan_progress_event_creation() {
+        let event =
+            WalletScanEvent::scan_progress(750, 1000, 75.0, 5.5, Some(Duration::from_secs(45)));
+
+        match &event {
+            WalletScanEvent::ScanProgress {
+                metadata,
+                current_block,
+                total_blocks,
+                percentage,
+                speed_blocks_per_second,
+                estimated_time_remaining,
+            } => {
+                assert!(!metadata.event_id.is_empty());
+                assert_eq!(metadata.source, "wallet_scanner");
+                assert_eq!(*current_block, 750);
+                assert_eq!(*total_blocks, 1000);
+                assert_eq!(*percentage, 75.0);
+                assert_eq!(*speed_blocks_per_second, 5.5);
+                assert_eq!(*estimated_time_remaining, Some(Duration::from_secs(45)));
+            }
+            _ => panic!("Expected ScanProgress event"),
+        }
+    }
+
+    #[test]
+    fn test_scan_progress_event_traits() {
+        let event =
+            WalletScanEvent::scan_progress(500, 2000, 25.0, 10.0, Some(Duration::from_secs(150)));
+
+        // Test EventType trait
+        assert_eq!(event.event_type(), "ScanProgress");
+        assert!(event.debug_data().is_some());
+        let debug_data = event.debug_data().unwrap();
+        assert!(debug_data.contains("500/2000"));
+        assert!(debug_data.contains("25.0%"));
+        assert!(debug_data.contains("speed: 10.0 bps"));
+        assert!(debug_data.contains("ETA: 150s"));
+
+        // Test SerializableEvent trait
+        let summary = event.summary();
+        assert!(summary.contains("Scan progress: 500/2000 blocks"));
+        assert!(summary.contains("25.0%"));
+        assert!(summary.contains("10.0 blocks/sec"));
+        assert!(summary.contains("2m 30s"));
+
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("\"type\":\"ScanProgress\""));
+        assert!(json.contains("\"current_block\":500"));
+        assert!(json.contains("\"total_blocks\":2000"));
+        assert!(json.contains("\"percentage\":25.00"));
+        assert!(json.contains("\"speed_bps\":10.00"));
+        assert!(json.contains("\"eta_seconds\":150"));
+    }
+
+    #[test]
+    fn test_scan_progress_no_eta() {
+        let event = WalletScanEvent::scan_progress(100, 500, 20.0, 2.0, None);
+
+        match &event {
+            WalletScanEvent::ScanProgress {
+                estimated_time_remaining,
+                ..
+            } => {
+                assert_eq!(*estimated_time_remaining, None);
+            }
+            _ => panic!("Expected ScanProgress event"),
+        }
+
+        // Test serialization handles None ETA
+        let debug_data = event.debug_data().unwrap();
+        assert!(debug_data.contains("ETA: unknown"));
+
+        let summary = event.summary();
+        assert!(summary.contains("unknown ETA"));
+
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("\"eta_seconds\":null"));
+    }
+
+    #[test]
+    fn test_scan_progress_eta_formatting() {
+        // Test different ETA durations
+        let test_cases = vec![
+            (Duration::from_secs(30), "30s"),
+            (Duration::from_secs(90), "1m 30s"),
+            (Duration::from_secs(3661), "1h 1m"),
+            (Duration::from_secs(7200), "2h 0m"),
+        ];
+
+        for (duration, expected_format) in test_cases {
+            let event = WalletScanEvent::scan_progress(100, 200, 50.0, 1.0, Some(duration));
+            let summary = event.summary();
+            assert!(
+                summary.contains(expected_format),
+                "Expected '{}' in summary: {}",
+                expected_format,
+                summary
+            );
+        }
+    }
+
+    #[test]
+    fn test_scan_progress_edge_cases() {
+        // Test 0% progress
+        let event = WalletScanEvent::scan_progress(0, 1000, 0.0, 0.0, None);
+        match &event {
+            WalletScanEvent::ScanProgress {
+                current_block,
+                percentage,
+                speed_blocks_per_second,
+                ..
+            } => {
+                assert_eq!(*current_block, 0);
+                assert_eq!(*percentage, 0.0);
+                assert_eq!(*speed_blocks_per_second, 0.0);
+            }
+            _ => panic!("Expected ScanProgress event"),
+        }
+
+        // Test 100% progress
+        let event = WalletScanEvent::scan_progress(1000, 1000, 100.0, 5.0, Some(Duration::ZERO));
+        match &event {
+            WalletScanEvent::ScanProgress {
+                current_block,
+                total_blocks,
+                percentage,
+                estimated_time_remaining,
+                ..
+            } => {
+                assert_eq!(*current_block, 1000);
+                assert_eq!(*total_blocks, 1000);
+                assert_eq!(*percentage, 100.0);
+                assert_eq!(*estimated_time_remaining, Some(Duration::ZERO));
+            }
+            _ => panic!("Expected ScanProgress event"),
+        }
+    }
+
+    #[test]
+    fn test_scan_progress_with_correlation_id() {
+        let metadata =
+            EventMetadata::with_correlation("wallet_scanner", "scan_batch_456".to_string());
+        let event = WalletScanEvent::ScanProgress {
+            metadata,
+            current_block: 300,
+            total_blocks: 600,
+            percentage: 50.0,
+            speed_blocks_per_second: 8.0,
+            estimated_time_remaining: Some(Duration::from_secs(37)),
+        };
+
+        match &event {
+            WalletScanEvent::ScanProgress { metadata, .. } => {
+                assert_eq!(metadata.correlation_id, Some("scan_batch_456".to_string()));
+                assert_eq!(metadata.source, "wallet_scanner");
+            }
+            _ => panic!("Expected ScanProgress event"),
+        }
     }
 }
 
