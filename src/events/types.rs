@@ -76,6 +76,168 @@ pub struct ScanConfig {
     pub filters: HashMap<String, String>,
 }
 
+/// Complete output data information for OutputFound events
+#[derive(Debug, Clone)]
+pub struct OutputData {
+    /// The commitment value of the output
+    pub commitment: String,
+    /// The range proof associated with the output
+    pub range_proof: String,
+    /// The encrypted value of the output (if available)
+    pub encrypted_value: Option<Vec<u8>>,
+    /// The script associated with the output (if any)
+    pub script: Option<String>,
+    /// Features flags for this output
+    pub features: u32,
+    /// Maturity height (if applicable)
+    pub maturity_height: Option<u64>,
+    /// The amount value (if decrypted successfully)
+    pub amount: Option<u64>,
+    /// Whether this output belongs to our wallet
+    pub is_mine: bool,
+    /// Spending key index used (if this is our output)
+    pub key_index: Option<u64>,
+}
+
+impl OutputData {
+    /// Create a new OutputData with required fields
+    pub fn new(commitment: String, range_proof: String, features: u32, is_mine: bool) -> Self {
+        Self {
+            commitment,
+            range_proof,
+            encrypted_value: None,
+            script: None,
+            features,
+            maturity_height: None,
+            amount: None,
+            is_mine,
+            key_index: None,
+        }
+    }
+
+    /// Set the decrypted amount
+    pub fn with_amount(mut self, amount: u64) -> Self {
+        self.amount = Some(amount);
+        self
+    }
+
+    /// Set the key index for owned outputs
+    pub fn with_key_index(mut self, key_index: u64) -> Self {
+        self.key_index = Some(key_index);
+        self
+    }
+
+    /// Set the maturity height
+    pub fn with_maturity_height(mut self, height: u64) -> Self {
+        self.maturity_height = Some(height);
+        self
+    }
+
+    /// Set the script
+    pub fn with_script(mut self, script: String) -> Self {
+        self.script = Some(script);
+        self
+    }
+
+    /// Set encrypted value
+    pub fn with_encrypted_value(mut self, encrypted_value: Vec<u8>) -> Self {
+        self.encrypted_value = Some(encrypted_value);
+        self
+    }
+}
+
+/// Block information associated with an output
+#[derive(Debug, Clone)]
+pub struct BlockInfo {
+    /// Block height where the output was found
+    pub height: u64,
+    /// Block hash
+    pub hash: String,
+    /// Block timestamp
+    pub timestamp: u64,
+    /// Transaction index within the block
+    pub transaction_index: Option<usize>,
+    /// Output index within the transaction
+    pub output_index: usize,
+    /// Block difficulty (if available)
+    pub difficulty: Option<u64>,
+}
+
+impl BlockInfo {
+    /// Create new block info with required fields
+    pub fn new(height: u64, hash: String, timestamp: u64, output_index: usize) -> Self {
+        Self {
+            height,
+            hash,
+            timestamp,
+            transaction_index: None,
+            output_index,
+            difficulty: None,
+        }
+    }
+
+    /// Set the transaction index
+    pub fn with_transaction_index(mut self, tx_index: usize) -> Self {
+        self.transaction_index = Some(tx_index);
+        self
+    }
+
+    /// Set the block difficulty
+    pub fn with_difficulty(mut self, difficulty: u64) -> Self {
+        self.difficulty = Some(difficulty);
+        self
+    }
+}
+
+/// Address information for the output
+#[derive(Debug, Clone)]
+pub struct AddressInfo {
+    /// The address that can spend this output
+    pub address: String,
+    /// Address type (e.g., "stealth", "standard", "script")
+    pub address_type: String,
+    /// Network type (e.g., "mainnet", "testnet", "localnet")
+    pub network: String,
+    /// Derivation path for deterministic wallets
+    pub derivation_path: Option<String>,
+    /// Public spend key (if applicable)
+    pub public_spend_key: Option<String>,
+    /// View key used for scanning (if applicable)
+    pub view_key: Option<String>,
+}
+
+impl AddressInfo {
+    /// Create new address info with required fields
+    pub fn new(address: String, address_type: String, network: String) -> Self {
+        Self {
+            address,
+            address_type,
+            network,
+            derivation_path: None,
+            public_spend_key: None,
+            view_key: None,
+        }
+    }
+
+    /// Set the derivation path
+    pub fn with_derivation_path(mut self, path: String) -> Self {
+        self.derivation_path = Some(path);
+        self
+    }
+
+    /// Set the public spend key
+    pub fn with_public_spend_key(mut self, key: String) -> Self {
+        self.public_spend_key = Some(key);
+        self
+    }
+
+    /// Set the view key
+    pub fn with_view_key(mut self, key: String) -> Self {
+        self.view_key = Some(key);
+        self
+    }
+}
+
 impl ScanConfig {
     /// Create a new scan configuration with default values
     pub fn new() -> Self {
@@ -129,9 +291,9 @@ pub enum WalletScanEvent {
     /// Emitted when an output is found for the wallet
     OutputFound {
         metadata: EventMetadata,
-        output_data: String, // Placeholder for actual output data structure
-        block_height: u64,
-        address_info: String,
+        output_data: OutputData,
+        block_info: BlockInfo,
+        address_info: AddressInfo,
     },
     /// Emitted periodically to report scan progress
     ScanProgress {
@@ -208,9 +370,18 @@ impl EventType for WalletScanEvent {
                 outputs_count,
                 ..
             } => Some(format!("height: {}, outputs: {}", height, outputs_count)),
-            WalletScanEvent::OutputFound { block_height, .. } => {
-                Some(format!("block: {}", block_height))
-            }
+            WalletScanEvent::OutputFound {
+                block_info,
+                output_data,
+                ..
+            } => Some(format!(
+                "block: {}, amount: {}, mine: {}",
+                block_info.height,
+                output_data
+                    .amount
+                    .map_or("unknown".to_string(), |a| a.to_string()),
+                output_data.is_mine
+            )),
             WalletScanEvent::ScanProgress {
                 current_block,
                 total_blocks,
@@ -271,12 +442,18 @@ impl SerializableEvent for WalletScanEvent {
             }
             WalletScanEvent::OutputFound {
                 metadata,
-                block_height,
-                ..
+                block_info,
+                output_data,
+                address_info,
             } => {
                 format!(
-                    "{{\"type\":\"OutputFound\",\"event_id\":\"{}\",\"block_height\":{}}}",
-                    metadata.event_id, block_height
+                    "{{\"type\":\"OutputFound\",\"event_id\":\"{}\",\"block_height\":{},\"amount\":{},\"is_mine\":{},\"address\":\"{}\",\"commitment\":\"{}\"}}",
+                    metadata.event_id,
+                    block_info.height,
+                    output_data.amount.map_or("null".to_string(), |a| a.to_string()),
+                    output_data.is_mine,
+                    address_info.address,
+                    output_data.commitment
                 )
             }
             WalletScanEvent::ScanProgress {
@@ -346,8 +523,24 @@ impl SerializableEvent for WalletScanEvent {
             } => {
                 format!("Processed block {} with {} outputs", height, outputs_count)
             }
-            WalletScanEvent::OutputFound { block_height, .. } => {
-                format!("Found output at block {}", block_height)
+            WalletScanEvent::OutputFound {
+                block_info,
+                output_data,
+                address_info,
+                ..
+            } => {
+                let amount_str = output_data
+                    .amount
+                    .map_or("unknown amount".to_string(), |a| format!("{} units", a));
+                let mine_str = if output_data.is_mine {
+                    "mine"
+                } else {
+                    "not mine"
+                };
+                format!(
+                    "Found output at block {} ({}, {}, addr: {})",
+                    block_info.height, amount_str, mine_str, address_info.address
+                )
             }
             WalletScanEvent::ScanProgress {
                 current_block,
@@ -620,6 +813,133 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_output_found_event_creation() {
+        let output_data = OutputData::new(
+            "0x1234567890abcdef".to_string(),
+            "range_proof_data".to_string(),
+            1,    // features
+            true, // is_mine
+        )
+        .with_amount(1000)
+        .with_key_index(5);
+
+        let block_info = BlockInfo::new(
+            12345,
+            "0xabcdef1234567890".to_string(),
+            1697123456,
+            2, // output_index
+        )
+        .with_transaction_index(1);
+
+        let address_info = AddressInfo::new(
+            "tari1xyz123...".to_string(),
+            "stealth".to_string(),
+            "mainnet".to_string(),
+        )
+        .with_derivation_path("m/44'/0'/0'/0/5".to_string());
+
+        let event = WalletScanEvent::output_found(output_data, block_info, address_info);
+
+        match &event {
+            WalletScanEvent::OutputFound {
+                metadata,
+                output_data,
+                block_info,
+                address_info,
+            } => {
+                assert!(!metadata.event_id.is_empty());
+                assert_eq!(metadata.source, "wallet_scanner");
+
+                // Test output data
+                assert_eq!(output_data.commitment, "0x1234567890abcdef");
+                assert_eq!(output_data.range_proof, "range_proof_data");
+                assert_eq!(output_data.features, 1);
+                assert!(output_data.is_mine);
+                assert_eq!(output_data.amount, Some(1000));
+                assert_eq!(output_data.key_index, Some(5));
+
+                // Test block info
+                assert_eq!(block_info.height, 12345);
+                assert_eq!(block_info.hash, "0xabcdef1234567890");
+                assert_eq!(block_info.timestamp, 1697123456);
+                assert_eq!(block_info.output_index, 2);
+                assert_eq!(block_info.transaction_index, Some(1));
+
+                // Test address info
+                assert_eq!(address_info.address, "tari1xyz123...");
+                assert_eq!(address_info.address_type, "stealth");
+                assert_eq!(address_info.network, "mainnet");
+                assert_eq!(
+                    address_info.derivation_path,
+                    Some("m/44'/0'/0'/0/5".to_string())
+                );
+            }
+            _ => panic!("Expected OutputFound event"),
+        }
+    }
+
+    #[test]
+    fn test_output_found_event_traits() {
+        let output_data = OutputData::new(
+            "0xcommitment123".to_string(),
+            "proof_data".to_string(),
+            0,
+            false, // not mine
+        );
+
+        let block_info = BlockInfo::new(98765, "0xblockhash456".to_string(), 1697999999, 0);
+
+        let address_info = AddressInfo::new(
+            "tari1abc456...".to_string(),
+            "standard".to_string(),
+            "testnet".to_string(),
+        );
+
+        let event = WalletScanEvent::output_found(output_data, block_info, address_info);
+
+        // Test EventType trait
+        assert_eq!(event.event_type(), "OutputFound");
+        assert!(event.debug_data().is_some());
+        let debug_data = event.debug_data().unwrap();
+        assert!(debug_data.contains("block: 98765"));
+        assert!(debug_data.contains("mine: false"));
+        assert!(debug_data.contains("amount: unknown"));
+
+        // Test SerializableEvent trait
+        let summary = event.summary();
+        assert!(summary.contains("Found output at block 98765"));
+        assert!(summary.contains("not mine"));
+        assert!(summary.contains("tari1abc456..."));
+
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("\"type\":\"OutputFound\""));
+        assert!(json.contains("\"block_height\":98765"));
+        assert!(json.contains("\"is_mine\":false"));
+        assert!(json.contains("\"address\":\"tari1abc456...\""));
+        assert!(json.contains("\"commitment\":\"0xcommitment123\""));
+    }
+
+    #[test]
+    fn test_output_data_builder_pattern() {
+        let output_data = OutputData::new("commitment".to_string(), "proof".to_string(), 1, true)
+            .with_amount(500)
+            .with_key_index(10)
+            .with_maturity_height(1000)
+            .with_script("script".to_string())
+            .with_encrypted_value(vec![1, 2, 3]);
+
+        assert_eq!(output_data.commitment, "commitment");
+        assert_eq!(output_data.range_proof, "proof");
+        assert_eq!(output_data.features, 1);
+        assert!(output_data.is_mine);
+        assert_eq!(output_data.amount, Some(500));
+        assert_eq!(output_data.key_index, Some(10));
+        assert_eq!(output_data.maturity_height, Some(1000));
+        assert_eq!(output_data.script, Some("script".to_string()));
+        assert_eq!(output_data.encrypted_value, Some(vec![1, 2, 3]));
+    }
 }
 
 /// Helper functions for creating events with proper metadata
@@ -657,11 +977,15 @@ impl WalletScanEvent {
     }
 
     /// Create a new OutputFound event
-    pub fn output_found(output_data: String, block_height: u64, address_info: String) -> Self {
+    pub fn output_found(
+        output_data: OutputData,
+        block_info: BlockInfo,
+        address_info: AddressInfo,
+    ) -> Self {
         Self::OutputFound {
             metadata: EventMetadata::new("wallet_scanner"),
             output_data,
-            block_height,
+            block_info,
             address_info,
         }
     }
