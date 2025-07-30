@@ -793,8 +793,8 @@ impl Default for EventDispatcher {
     }
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod native_tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
@@ -1315,5 +1315,156 @@ mod tests {
         assert_eq!(config.max_stats_map_entries, 5);
         assert_eq!(config.auto_cleanup_threshold, 25);
         assert_eq!(config.cleanup_retention_ratio, 0.7);
+    }
+}
+
+// WASM-compatible tests - these run on both native and WASM
+#[cfg(test)]
+mod cross_platform_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::*;
+
+    // Test listener that records events (WASM compatible)
+    struct WasmTestListener {
+        events: Arc<Mutex<Vec<String>>>,
+        name: &'static str,
+        should_fail: bool,
+    }
+
+    impl WasmTestListener {
+        fn new(name: &'static str) -> Self {
+            Self {
+                events: Arc::new(Mutex::new(Vec::new())),
+                name,
+                should_fail: false,
+            }
+        }
+
+        fn new_failing(name: &'static str) -> Self {
+            Self {
+                events: Arc::new(Mutex::new(Vec::new())),
+                name,
+                should_fail: true,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl EventListener for WasmTestListener {
+        async fn handle_event(
+            &mut self,
+            event: &WalletScanEvent,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            if self.should_fail {
+                return Err("Test listener failure".into());
+            }
+
+            let event_name = match event {
+                WalletScanEvent::ScanStarted { .. } => "ScanStarted",
+                WalletScanEvent::BlockProcessed { .. } => "BlockProcessed",
+                WalletScanEvent::OutputFound { .. } => "OutputFound",
+                WalletScanEvent::ScanProgress { .. } => "ScanProgress",
+                WalletScanEvent::ScanCompleted { .. } => "ScanCompleted",
+                WalletScanEvent::ScanError { .. } => "ScanError",
+                WalletScanEvent::ScanCancelled { .. } => "ScanCancelled",
+            };
+
+            self.events.lock().unwrap().push(event_name.to_string());
+            Ok(())
+        }
+
+        fn name(&self) -> &'static str {
+            self.name
+        }
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    async fn test_cross_platform_event_dispatch() {
+        let mut dispatcher = EventDispatcher::new_with_debug();
+        let listener = WasmTestListener::new("cross_platform_listener");
+        dispatcher.register(Box::new(listener)).unwrap();
+
+        let event = WalletScanEvent::ScanStarted {
+            config: ScanConfig::default(),
+            block_range: (0, 100),
+            wallet_context: "cross_platform_test".to_string(),
+        };
+
+        // This should work identically on native and WASM
+        dispatcher.dispatch(event).await;
+
+        let traces = dispatcher.get_traces();
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].event_type, "ScanStarted");
+        assert!(traces[0].success);
+        assert!(traces[0].processing_duration > std::time::Duration::ZERO);
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    async fn test_cross_platform_error_handling() {
+        let mut dispatcher = EventDispatcher::new_with_debug();
+
+        let working_listener = WasmTestListener::new("working_listener");
+        let failing_listener = WasmTestListener::new_failing("failing_listener");
+        let another_working_listener = WasmTestListener::new("another_working_listener");
+
+        dispatcher.register(Box::new(working_listener)).unwrap();
+        dispatcher.register(Box::new(failing_listener)).unwrap();
+        dispatcher
+            .register(Box::new(another_working_listener))
+            .unwrap();
+
+        let event = WalletScanEvent::ScanStarted {
+            config: ScanConfig::default(),
+            block_range: (0, 100),
+            wallet_context: "error_test".to_string(),
+        };
+
+        // Error isolation should work the same on both platforms
+        dispatcher.dispatch(event).await;
+
+        let traces = dispatcher.get_traces();
+        assert_eq!(traces.len(), 3);
+
+        // Verify error isolation worked
+        assert!(traces[0].success); // working_listener
+        assert!(!traces[1].success); // failing_listener
+        assert!(traces[2].success); // another_working_listener
+
+        assert!(traces[1].error_message.is_some());
+        assert_eq!(
+            traces[1].error_message.as_ref().unwrap(),
+            "Test listener failure"
+        );
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    async fn test_cross_platform_basic_functionality() {
+        let mut dispatcher = EventDispatcher::new();
+        assert_eq!(dispatcher.listener_count(), 0);
+
+        let listener = WasmTestListener::new("basic_test");
+        dispatcher.register(Box::new(listener)).unwrap();
+        assert_eq!(dispatcher.listener_count(), 1);
+
+        let event = WalletScanEvent::ScanStarted {
+            config: ScanConfig::default(),
+            block_range: (0, 100),
+            wallet_context: "basic_test".to_string(),
+        };
+
+        dispatcher.dispatch(event).await;
+
+        // Basic functionality should work the same on both platforms
+        let stats = dispatcher.get_stats();
+        assert_eq!(stats.total_events_dispatched, 1);
+        assert_eq!(stats.total_listener_calls, 1);
+        assert_eq!(stats.total_listener_errors, 0);
     }
 }

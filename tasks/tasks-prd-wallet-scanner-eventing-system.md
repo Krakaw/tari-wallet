@@ -24,7 +24,7 @@
 
 ## Tasks
 
-- [ ] 1.0 Design and Implement Core Event System
+- [x] 1.0 Design and Implement Core Event System
   - [x] 1.1 Create `src/events/mod.rs` with public module exports and documentation
   - [x] 1.2 Define `EventListener` trait with async `handle_event` method for cross-platform compatibility
   - [x] 1.3 Implement `EventDispatcher` struct that maintains ordered list of listeners
@@ -32,7 +32,7 @@
   - [x] 1.5 Implement registration validation at construction time (Req #24)
   - [x] 1.6 Add debugging capabilities for event flow tracing (Req #26)
   - [x] 1.7 Ensure bounded memory usage with proper cleanup (Req #27)
-  - [ ] 1.8 Test cross-platform compatibility (native vs WASM) (Req #2)
+  - [x] 1.8 Test cross-platform compatibility (native vs WASM) (Req #2)
 
 - [ ] 2.0 Create Event Types and Data Structures
   - [ ] 2.1 Create `src/events/types.rs` with base event enum and shared traits
