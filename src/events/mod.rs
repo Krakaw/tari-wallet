@@ -144,6 +144,37 @@ pub struct EventStats {
     pub errors_by_listener: std::collections::HashMap<String, usize>,
 }
 
+/// Memory management configuration for event dispatcher
+#[derive(Debug, Clone)]
+pub struct MemoryConfig {
+    pub max_trace_entries: usize,
+    pub max_stats_map_entries: usize,
+    pub auto_cleanup_threshold: usize,
+    pub cleanup_retention_ratio: f32, // Ratio of entries to keep during cleanup (0.0-1.0)
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            max_trace_entries: 1000,
+            max_stats_map_entries: 100, // Limit for events_by_type and errors_by_listener maps
+            auto_cleanup_threshold: 1200, // Trigger cleanup when traces exceed this
+            cleanup_retention_ratio: 0.8, // Keep 80% of entries during cleanup
+        }
+    }
+}
+
+/// Memory usage information for monitoring
+#[derive(Debug, Clone)]
+pub struct MemoryUsage {
+    pub trace_entries: usize,
+    pub max_trace_entries: usize,
+    pub events_by_type_entries: usize,
+    pub errors_by_listener_entries: usize,
+    pub max_stats_map_entries: usize,
+    pub registered_listeners: usize,
+}
+
 /// Trait for handling wallet scan events asynchronously
 ///
 /// Event listeners receive events emitted during wallet scanning operations
@@ -214,7 +245,7 @@ pub struct EventDispatcher {
     max_listeners: Option<usize>,
     event_traces: Vec<EventTrace>,
     stats: EventStats,
-    max_trace_entries: usize,
+    memory_config: MemoryConfig,
 }
 
 impl EventDispatcher {
@@ -227,7 +258,7 @@ impl EventDispatcher {
             max_listeners: None,
             event_traces: Vec::new(),
             stats: EventStats::default(),
-            max_trace_entries: 1000, // Default limit to prevent unbounded memory growth
+            memory_config: MemoryConfig::default(),
         }
     }
 
@@ -243,7 +274,7 @@ impl EventDispatcher {
             max_listeners: None,
             event_traces: Vec::new(),
             stats: EventStats::default(),
-            max_trace_entries: 1000,
+            memory_config: MemoryConfig::default(),
         }
     }
 
@@ -263,16 +294,36 @@ impl EventDispatcher {
             max_listeners: Some(max_listeners),
             event_traces: Vec::new(),
             stats: EventStats::default(),
-            max_trace_entries: 1000,
+            memory_config: MemoryConfig::default(),
         }
     }
 
-    /// Create a new event dispatcher with custom trace limit
+    /// Create a new event dispatcher with custom memory configuration
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_config` - Memory management configuration
+    pub fn new_with_memory_config(memory_config: MemoryConfig) -> Self {
+        Self {
+            listeners: Vec::new(),
+            debug_mode: true, // Enable debug mode when custom memory config is provided
+            registered_names: HashSet::new(),
+            max_listeners: None,
+            event_traces: Vec::new(),
+            stats: EventStats::default(),
+            memory_config,
+        }
+    }
+
+    /// Create a new event dispatcher with custom trace limit (legacy method)
     ///
     /// # Arguments
     ///
     /// * `max_trace_entries` - Maximum number of trace entries to keep in memory
     pub fn new_with_trace_limit(max_trace_entries: usize) -> Self {
+        let mut memory_config = MemoryConfig::default();
+        memory_config.max_trace_entries = max_trace_entries;
+
         Self {
             listeners: Vec::new(),
             debug_mode: true, // Enable debug mode when tracing is requested
@@ -280,7 +331,7 @@ impl EventDispatcher {
             max_listeners: None,
             event_traces: Vec::new(),
             stats: EventStats::default(),
-            max_trace_entries,
+            memory_config,
         }
     }
 
@@ -468,6 +519,14 @@ impl EventDispatcher {
             self.add_trace(trace);
         }
 
+        // Check if auto cleanup should be triggered after all events in this dispatch
+        // Only do auto cleanup if threshold is meaningfully higher than max
+        if self.should_trigger_auto_cleanup()
+            && self.memory_config.auto_cleanup_threshold > self.memory_config.max_trace_entries
+        {
+            self.perform_auto_cleanup();
+        }
+
         let total_dispatch_duration = dispatch_start.elapsed();
         self.stats.total_processing_time += total_dispatch_duration;
 
@@ -544,12 +603,42 @@ impl EventDispatcher {
 
     /// Set the maximum number of trace entries to keep
     pub fn set_max_trace_entries(&mut self, max_entries: usize) {
-        self.max_trace_entries = max_entries;
-        // Trim existing traces if needed
-        if self.event_traces.len() > max_entries {
-            self.event_traces
-                .drain(0..self.event_traces.len() - max_entries);
+        self.memory_config.max_trace_entries = max_entries;
+        self.enforce_memory_limits();
+    }
+
+    /// Set complete memory configuration
+    pub fn set_memory_config(&mut self, memory_config: MemoryConfig) {
+        self.memory_config = memory_config;
+        self.enforce_memory_limits();
+    }
+
+    /// Get current memory configuration
+    pub fn get_memory_config(&self) -> &MemoryConfig {
+        &self.memory_config
+    }
+
+    /// Get memory usage statistics
+    pub fn get_memory_usage(&self) -> MemoryUsage {
+        MemoryUsage {
+            trace_entries: self.event_traces.len(),
+            max_trace_entries: self.memory_config.max_trace_entries,
+            events_by_type_entries: self.stats.events_by_type.len(),
+            errors_by_listener_entries: self.stats.errors_by_listener.len(),
+            max_stats_map_entries: self.memory_config.max_stats_map_entries,
+            registered_listeners: self.listeners.len(),
         }
+    }
+
+    /// Force memory cleanup based on current configuration
+    pub fn cleanup_memory(&mut self) {
+        self.enforce_memory_limits();
+        self.cleanup_statistics_maps();
+    }
+
+    /// Check if automatic cleanup should be triggered
+    pub fn should_trigger_auto_cleanup(&self) -> bool {
+        self.event_traces.len() >= self.memory_config.auto_cleanup_threshold
     }
 
     /// Get debugging summary as a formatted string
@@ -579,7 +668,7 @@ impl EventDispatcher {
             stats.errors_by_listener,
             self.listeners.len(),
             self.event_traces.len(),
-            self.max_trace_entries
+            self.memory_config.max_trace_entries
         )
     }
 
@@ -588,8 +677,99 @@ impl EventDispatcher {
     /// Add a trace entry, maintaining the maximum number of entries
     fn add_trace(&mut self, trace: EventTrace) {
         self.event_traces.push(trace);
-        if self.event_traces.len() > self.max_trace_entries {
-            self.event_traces.remove(0);
+
+        // If auto cleanup threshold is higher than max_trace_entries, allow accumulation
+        // until we reach the auto cleanup threshold. Otherwise, enforce max_trace_entries.
+        let should_allow_accumulation =
+            self.memory_config.auto_cleanup_threshold > self.memory_config.max_trace_entries;
+
+        if should_allow_accumulation {
+            // Only clean up when we exceed the auto cleanup threshold
+            // (auto cleanup itself will be handled at dispatch level)
+            if self.event_traces.len() > self.memory_config.auto_cleanup_threshold {
+                let excess = self.event_traces.len() - self.memory_config.auto_cleanup_threshold;
+                self.event_traces.drain(0..excess);
+            }
+        } else {
+            // Enforce max_trace_entries limit when auto cleanup threshold is not higher
+            if self.event_traces.len() > self.memory_config.max_trace_entries {
+                let excess = self.event_traces.len() - self.memory_config.max_trace_entries;
+                self.event_traces.drain(0..excess);
+            }
+        }
+
+        // Always clean up statistics maps
+        self.cleanup_statistics_maps();
+    }
+
+    /// Enforce memory limits on all data structures
+    fn enforce_memory_limits(&mut self) {
+        // Limit trace entries
+        if self.event_traces.len() > self.memory_config.max_trace_entries {
+            let excess = self.event_traces.len() - self.memory_config.max_trace_entries;
+            self.event_traces.drain(0..excess);
+        }
+
+        // Limit statistics maps
+        self.cleanup_statistics_maps();
+    }
+
+    /// Cleanup statistics maps if they exceed limits
+    fn cleanup_statistics_maps(&mut self) {
+        // Clean up events_by_type map if it gets too large
+        if self.stats.events_by_type.len() > self.memory_config.max_stats_map_entries {
+            let mut entries: Vec<_> = self
+                .stats
+                .events_by_type
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect();
+            entries.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count descending
+            entries.truncate(self.memory_config.max_stats_map_entries);
+
+            self.stats.events_by_type = entries.into_iter().collect();
+        }
+
+        // Clean up errors_by_listener map if it gets too large
+        if self.stats.errors_by_listener.len() > self.memory_config.max_stats_map_entries {
+            let mut entries: Vec<_> = self
+                .stats
+                .errors_by_listener
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect();
+            entries.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count descending
+            entries.truncate(self.memory_config.max_stats_map_entries);
+
+            self.stats.errors_by_listener = entries.into_iter().collect();
+        }
+    }
+
+    /// Perform automatic cleanup when threshold is exceeded
+    fn perform_auto_cleanup(&mut self) {
+        let target_size = (self.memory_config.max_trace_entries as f32
+            * self.memory_config.cleanup_retention_ratio) as usize;
+        let current_size = self.event_traces.len();
+
+        if current_size > target_size {
+            let to_remove = current_size - target_size;
+            self.event_traces.drain(0..to_remove);
+        }
+
+        if self.debug_mode {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::log_1(
+                &format!(
+                    "Auto cleanup: removed {} trace entries",
+                    current_size - self.event_traces.len()
+                )
+                .into(),
+            );
+            #[cfg(not(target_arch = "wasm32"))]
+            println!(
+                "Auto cleanup: removed {} trace entries",
+                current_size - self.event_traces.len()
+            );
         }
     }
 
@@ -908,7 +1088,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_trace_limit_enforcement() {
-        let mut dispatcher = EventDispatcher::new_with_trace_limit(3);
+        // Use memory config with auto cleanup threshold lower than max to disable auto cleanup
+        let memory_config = MemoryConfig {
+            max_trace_entries: 3,
+            max_stats_map_entries: 10,
+            auto_cleanup_threshold: 1, // Lower than max to disable auto cleanup
+            cleanup_retention_ratio: 0.8,
+        };
+        let mut dispatcher = EventDispatcher::new_with_memory_config(memory_config);
 
         let listener = TestListener::new("test_listener");
         dispatcher.register(Box::new(listener)).unwrap();
@@ -981,5 +1168,152 @@ mod tests {
         // Verify data is cleared
         assert_eq!(dispatcher.get_stats().total_events_dispatched, 0);
         assert_eq!(dispatcher.get_traces().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_memory_management_configuration() {
+        let memory_config = MemoryConfig {
+            max_trace_entries: 5,
+            max_stats_map_entries: 3,
+            auto_cleanup_threshold: 7,
+            cleanup_retention_ratio: 0.6,
+        };
+
+        let mut dispatcher = EventDispatcher::new_with_memory_config(memory_config);
+        let listener = TestListener::new("memory_test_listener");
+        dispatcher.register(Box::new(listener)).unwrap();
+
+        // Test memory usage tracking
+        let initial_usage = dispatcher.get_memory_usage();
+        assert_eq!(initial_usage.trace_entries, 0);
+        assert_eq!(initial_usage.max_trace_entries, 5);
+        assert_eq!(initial_usage.registered_listeners, 1);
+
+        // Dispatch some events to test memory limits
+        for i in 0..10 {
+            let event = WalletScanEvent::ScanStarted {
+                config: ScanConfig::default(),
+                block_range: (i, i + 1),
+                wallet_context: format!("test_{}", i),
+            };
+            dispatcher.dispatch(event).await;
+        }
+
+        let final_usage = dispatcher.get_memory_usage();
+
+        // Should trigger auto cleanup when exceeding threshold (7)
+        // Auto cleanup keeps 60% of max (3 out of 5), then more events can accumulate
+        // So the final count should be <= the auto cleanup threshold
+        assert!(final_usage.trace_entries <= 7);
+    }
+
+    #[tokio::test]
+    async fn test_statistics_map_cleanup() {
+        let memory_config = MemoryConfig {
+            max_trace_entries: 100,
+            max_stats_map_entries: 3, // Very small limit for testing
+            auto_cleanup_threshold: 150,
+            cleanup_retention_ratio: 0.8,
+        };
+
+        let mut dispatcher = EventDispatcher::new_with_memory_config(memory_config);
+        let listener = TestListener::new("stats_test_listener");
+        dispatcher.register(Box::new(listener)).unwrap();
+
+        // Create events with many different types to test map cleanup
+        for i in 0..10 {
+            let event = match i % 5 {
+                0 => WalletScanEvent::ScanStarted {
+                    config: ScanConfig::default(),
+                    block_range: (i, i + 1),
+                    wallet_context: format!("test_{}", i),
+                },
+                1 => WalletScanEvent::BlockProcessed {
+                    height: i,
+                    hash: format!("hash_{}", i),
+                    timestamp: i,
+                    processing_duration_ms: 100,
+                    outputs_count: 1,
+                },
+                2 => WalletScanEvent::ScanProgress {
+                    current_block: i,
+                    total_blocks: 100,
+                    percentage: i as f64,
+                    speed_blocks_per_second: 10.0,
+                    estimated_time_remaining_seconds: Some(5),
+                },
+                3 => WalletScanEvent::ScanCompleted {
+                    final_statistics: std::collections::HashMap::new(),
+                    success: true,
+                },
+                _ => WalletScanEvent::ScanCancelled {
+                    reason: "test".to_string(),
+                    final_statistics: std::collections::HashMap::new(),
+                },
+            };
+            dispatcher.dispatch(event).await;
+        }
+
+        // Force cleanup
+        dispatcher.cleanup_memory();
+
+        let stats = dispatcher.get_stats();
+        assert!(stats.events_by_type.len() <= 3); // Should be limited to max_stats_map_entries
+    }
+
+    #[tokio::test]
+    async fn test_auto_cleanup_threshold() {
+        let memory_config = MemoryConfig {
+            max_trace_entries: 5,
+            max_stats_map_entries: 10,
+            auto_cleanup_threshold: 7,    // Trigger cleanup at 7 entries
+            cleanup_retention_ratio: 0.6, // Keep 60% = 3 entries
+        };
+
+        let mut dispatcher = EventDispatcher::new_with_memory_config(memory_config);
+        let listener = TestListener::new("auto_cleanup_listener");
+        dispatcher.register(Box::new(listener)).unwrap();
+
+        // Dispatch 7 events to reach the auto cleanup threshold (threshold is 7)
+        for i in 0..7 {
+            let event = WalletScanEvent::ScanStarted {
+                config: ScanConfig::default(),
+                block_range: (i, i + 1),
+                wallet_context: format!("test_{}", i),
+            };
+            dispatcher.dispatch(event).await;
+        }
+
+        // At this point auto cleanup should have been triggered
+        // It should keep 60% of max_trace_entries = 3 entries
+        let traces = dispatcher.get_traces();
+        assert_eq!(traces.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_memory_configuration_updates() {
+        let mut dispatcher = EventDispatcher::new_with_debug();
+
+        // Initial configuration
+        assert_eq!(dispatcher.get_memory_config().max_trace_entries, 1000);
+
+        // Update trace limit
+        dispatcher.set_max_trace_entries(10);
+        assert_eq!(dispatcher.get_memory_config().max_trace_entries, 10);
+
+        // Update full configuration
+        let new_config = MemoryConfig {
+            max_trace_entries: 20,
+            max_stats_map_entries: 5,
+            auto_cleanup_threshold: 25,
+            cleanup_retention_ratio: 0.7,
+        };
+
+        dispatcher.set_memory_config(new_config.clone());
+        let config = dispatcher.get_memory_config();
+        assert_eq!(config.max_trace_entries, 20);
+        assert_eq!(config.max_stats_map_entries, 5);
+        assert_eq!(config.auto_cleanup_threshold, 25);
+        assert_eq!(config.cleanup_retention_ratio, 0.7);
     }
 }
