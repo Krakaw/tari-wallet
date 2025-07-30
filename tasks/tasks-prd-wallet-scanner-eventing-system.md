@@ -31,7 +31,7 @@
   - [x] 1.7 Ensure bounded memory usage with proper cleanup (Req #27)
   - [x] 1.8 Test cross-platform compatibility (native vs WASM) (Req #2)
 
-- [ ] 2.0 Create Event Types and Data Structures
+- [x] 2.0 Create Event Types and Data Structures
   - [x] 2.1 Create `src/events/types.rs` with base event enum and shared traits
   - [x] 2.2 Implement `ScanStarted` event with scan config, block range, wallet context (Req #8)
   - [x] 2.3 Implement `BlockProcessed` event with height, hash, timestamp, duration, outputs count (Req #9)
@@ -41,7 +41,7 @@
   - [x] 2.7 Implement `ScanError` event with error details, block height, retry info (Req #13)
   - [x] 2.8 Implement `ScanCancelled` event with cancellation reason and final stats (Req #14)
   - [x] 2.9 Use `Arc<Event>` for efficient sharing between listeners (Design consideration)
-  - [ ] 2.10 Add serialization support for debugging (Open question #1)
+  - [x] 2.10 Add serialization support for debugging (Open question #1)
 
 - [ ] 3.0 Implement Built-in Event Listeners
   - [ ] 3.1 Create `src/events/listeners/mod.rs` with public exports

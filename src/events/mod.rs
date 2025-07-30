@@ -77,6 +77,7 @@
 //! ```
 
 use async_trait::async_trait;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
@@ -123,18 +124,19 @@ impl fmt::Display for EventDispatcherError {
 impl Error for EventDispatcherError {}
 
 /// Debug information about event processing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EventTrace {
     pub event_type: String,
     pub listener_name: String,
     pub processing_duration: Duration,
     pub success: bool,
     pub error_message: Option<String>,
+    #[serde(skip)]
     pub timestamp: Instant,
 }
 
 /// Statistics about event processing
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct EventStats {
     pub total_events_dispatched: usize,
     pub total_listener_calls: usize,
@@ -642,6 +644,16 @@ impl EventDispatcher {
         self.event_traces.len() >= self.memory_config.auto_cleanup_threshold
     }
 
+    /// Export all traces to JSON for external analysis
+    pub fn export_traces_json(&self) -> Result<String, String> {
+        serde_json::to_string_pretty(&self.event_traces).map_err(|e| e.to_string())
+    }
+
+    /// Export statistics to JSON for external analysis
+    pub fn export_stats_json(&self) -> Result<String, String> {
+        serde_json::to_string_pretty(&self.stats).map_err(|e| e.to_string())
+    }
+
     /// Get debugging summary as a formatted string
     pub fn get_debug_summary(&self) -> String {
         let stats = &self.stats;
@@ -1113,6 +1125,38 @@ mod native_tests {
         assert_eq!(traces[0].event_type, "ScanStarted");
         assert_eq!(traces[1].event_type, "ScanStarted");
         assert_eq!(traces[2].event_type, "ScanStarted");
+    }
+
+    #[tokio::test]
+    async fn test_json_export_functionality() {
+        let mut dispatcher = EventDispatcher::new_with_debug();
+
+        let listener = TestListener::new("json_test_listener");
+        dispatcher.register(Box::new(listener)).unwrap();
+
+        // Create and dispatch a test event
+        let event = WalletScanEvent::scan_started(
+            ScanConfig::default(),
+            (1000, 2000),
+            "json_export_test".to_string(),
+        );
+        dispatcher.dispatch(event).await;
+
+        // Test traces JSON export
+        let traces_json = dispatcher.export_traces_json().unwrap();
+        assert!(traces_json.contains("ScanStarted"));
+        assert!(traces_json.contains("json_test_listener"));
+        assert!(traces_json.contains("processing_duration"));
+
+        // Test stats JSON export
+        let stats_json = dispatcher.export_stats_json().unwrap();
+        assert!(stats_json.contains("total_events_dispatched"));
+        assert!(stats_json.contains("total_listener_calls"));
+        assert!(stats_json.contains("events_by_type"));
+
+        // Verify JSON is valid by parsing it back
+        let _: serde_json::Value = serde_json::from_str(&traces_json).unwrap();
+        let _: serde_json::Value = serde_json::from_str(&stats_json).unwrap();
     }
 
     #[tokio::test]

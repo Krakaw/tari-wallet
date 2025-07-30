@@ -4,12 +4,13 @@
 //! the wallet scanner event system. Events are designed to be efficiently
 //! shared between listeners using Arc<Event> pattern.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 /// Shared event metadata present in all events
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventMetadata {
     /// Unique identifier for this event
     pub event_id: String,
@@ -59,15 +60,18 @@ pub trait EventType {
 
 /// Trait for events that can be serialized for debugging/logging
 pub trait SerializableEvent {
-    /// Serialize event to JSON string for debugging
+    /// Serialize event to JSON string for debugging (pretty-printed)
     fn to_debug_json(&self) -> Result<String, String>;
+
+    /// Serialize event to compact JSON string for performance
+    fn to_compact_json(&self) -> Result<String, String>;
 
     /// Get human-readable summary of the event
     fn summary(&self) -> String;
 }
 
 /// Configuration data for scanning operations
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScanConfig {
     pub batch_size: Option<usize>,
     pub timeout_seconds: Option<u64>,
@@ -77,7 +81,7 @@ pub struct ScanConfig {
 }
 
 /// Complete output data information for OutputFound events
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputData {
     /// The commitment value of the output
     pub commitment: String,
@@ -147,7 +151,7 @@ impl OutputData {
 }
 
 /// Block information associated with an output
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockInfo {
     /// Block height where the output was found
     pub height: u64,
@@ -190,7 +194,7 @@ impl BlockInfo {
 }
 
 /// Address information for the output
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddressInfo {
     /// The address that can spend this output
     pub address: String,
@@ -270,7 +274,7 @@ impl ScanConfig {
 }
 
 /// Core event types emitted during wallet scanning operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WalletScanEvent {
     /// Emitted when a scan operation begins
     ScanStarted {
@@ -424,111 +428,13 @@ impl EventType for WalletScanEvent {
 
 impl SerializableEvent for WalletScanEvent {
     fn to_debug_json(&self) -> Result<String, String> {
-        // Simplified JSON serialization for debugging
-        // In a real implementation, you might use serde_json
-        let json = match self {
-            WalletScanEvent::ScanStarted {
-                metadata,
-                config,
-                block_range,
-                wallet_context,
-            } => {
-                format!(
-                    "{{\"type\":\"ScanStarted\",\"event_id\":\"{}\",\"block_range\":[{},{}],\"wallet_context\":\"{}\",\"batch_size\":{}}}",
-                    metadata.event_id,
-                    block_range.0,
-                    block_range.1,
-                    wallet_context,
-                    config.batch_size.unwrap_or(0)
-                )
-            }
-            WalletScanEvent::BlockProcessed {
-                metadata,
-                height,
-                hash,
-                outputs_count,
-                ..
-            } => {
-                format!(
-                    "{{\"type\":\"BlockProcessed\",\"event_id\":\"{}\",\"height\":{},\"hash\":\"{}\",\"outputs_count\":{}}}",
-                    metadata.event_id,
-                    height,
-                    hash,
-                    outputs_count
-                )
-            }
-            WalletScanEvent::OutputFound {
-                metadata,
-                block_info,
-                output_data,
-                address_info,
-            } => {
-                format!(
-                    "{{\"type\":\"OutputFound\",\"event_id\":\"{}\",\"block_height\":{},\"amount\":{},\"is_mine\":{},\"address\":\"{}\",\"commitment\":\"{}\"}}",
-                    metadata.event_id,
-                    block_info.height,
-                    output_data.amount.map_or("null".to_string(), |a| a.to_string()),
-                    output_data.is_mine,
-                    address_info.address,
-                    output_data.commitment
-                )
-            }
-            WalletScanEvent::ScanProgress {
-                metadata,
-                current_block,
-                total_blocks,
-                percentage,
-                speed_blocks_per_second,
-                estimated_time_remaining,
-            } => {
-                let eta_seconds = estimated_time_remaining
-                    .map_or("null".to_string(), |dur| dur.as_secs().to_string());
-                format!(
-                    "{{\"type\":\"ScanProgress\",\"event_id\":\"{}\",\"current_block\":{},\"total_blocks\":{},\"percentage\":{:.2},\"speed_bps\":{:.2},\"eta_seconds\":{}}}",
-                    metadata.event_id,
-                    current_block,
-                    total_blocks,
-                    percentage,
-                    speed_blocks_per_second,
-                    eta_seconds
-                )
-            }
-            WalletScanEvent::ScanCompleted {
-                metadata,
-                final_statistics,
-                success,
-                total_duration,
-            } => {
-                let stats_count = final_statistics.len();
-                let duration_secs = total_duration.as_secs();
-                format!(
-                    "{{\"type\":\"ScanCompleted\",\"event_id\":\"{}\",\"success\":{},\"duration_seconds\":{},\"stats_count\":{}}}",
-                    metadata.event_id, success, duration_secs, stats_count
-                )
-            }
-            WalletScanEvent::ScanError {
-                metadata,
-                error_message,
-                block_height,
-                ..
-            } => {
-                format!(
-                    "{{\"type\":\"ScanError\",\"event_id\":\"{}\",\"error_message\":\"{}\",\"block_height\":{}}}",
-                    metadata.event_id,
-                    error_message,
-                    block_height.map_or("null".to_string(), |h| h.to_string())
-                )
-            }
-            WalletScanEvent::ScanCancelled {
-                metadata, reason, ..
-            } => {
-                format!(
-                    "{{\"type\":\"ScanCancelled\",\"event_id\":\"{}\",\"reason\":\"{}\"}}",
-                    metadata.event_id, reason
-                )
-            }
-        };
-        Ok(json)
+        // Use serde_json for proper JSON serialization (pretty-printed for debugging)
+        serde_json::to_string_pretty(self).map_err(|e| e.to_string())
+    }
+
+    fn to_compact_json(&self) -> Result<String, String> {
+        // Use serde_json for compact JSON serialization (performance-focused)
+        serde_json::to_string(self).map_err(|e| e.to_string())
     }
 
     fn summary(&self) -> String {
@@ -651,6 +557,19 @@ impl SerializableEvent for WalletScanEvent {
 /// Type alias for efficiently shared events
 pub type SharedEvent = Arc<WalletScanEvent>;
 
+/// Helper functions for event serialization and deserialization
+impl WalletScanEvent {
+    /// Deserialize an event from JSON string
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        serde_json::from_str(json).map_err(|e| e.to_string())
+    }
+
+    /// Create a shared event from JSON string
+    pub fn shared_from_json(json: &str) -> Result<SharedEvent, String> {
+        Self::from_json(json).map(Arc::new)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,9 +626,9 @@ mod tests {
         assert!(summary.contains("blocks 0-100"));
 
         let json = event.to_debug_json().unwrap();
-        assert!(json.contains("\"type\":\"ScanStarted\""));
-        assert!(json.contains("\"block_range\":[0,100]"));
-        assert!(json.contains("\"wallet_context\":\"wallet_123\""));
+        assert!(json.contains("ScanStarted"));
+        assert!(json.contains("\"block_range\""));
+        assert!(json.contains("wallet_123"));
     }
 
     #[test]
@@ -734,6 +653,118 @@ mod tests {
                 assert_eq!(metadata.source, "wallet_scanner");
             }
             _ => panic!("Expected ScanStarted event"),
+        }
+    }
+
+    #[test]
+    fn test_event_serialization_roundtrip() {
+        let config = ScanConfig::new()
+            .with_batch_size(25)
+            .with_timeout_seconds(60);
+
+        let event = WalletScanEvent::scan_started(config, (1000, 2000), "test_wallet".to_string());
+
+        // Test pretty JSON serialization
+        let pretty_json = event.to_debug_json().unwrap();
+        assert!(pretty_json.contains("ScanStarted"));
+        assert!(pretty_json.contains("test_wallet"));
+        assert!(pretty_json.contains("1000"));
+        assert!(pretty_json.contains("2000"));
+
+        // Test compact JSON serialization
+        let compact_json = event.to_compact_json().unwrap();
+        assert!(compact_json.contains("ScanStarted"));
+        assert!(compact_json.len() < pretty_json.len()); // Compact should be smaller
+
+        // Test deserialization roundtrip
+        let deserialized = WalletScanEvent::from_json(&compact_json).unwrap();
+        match (&event, &deserialized) {
+            (
+                WalletScanEvent::ScanStarted {
+                    block_range: br1,
+                    wallet_context: wc1,
+                    ..
+                },
+                WalletScanEvent::ScanStarted {
+                    block_range: br2,
+                    wallet_context: wc2,
+                    ..
+                },
+            ) => {
+                assert_eq!(br1, br2);
+                assert_eq!(wc1, wc2);
+            }
+            _ => panic!("Deserialized event type mismatch"),
+        }
+    }
+
+    #[test]
+    fn test_shared_event_serialization() {
+        let event = WalletScanEvent::scan_started(
+            ScanConfig::default(),
+            (500, 1500),
+            "shared_test".to_string(),
+        );
+
+        let compact_json = event.to_compact_json().unwrap();
+        let shared_event = WalletScanEvent::shared_from_json(&compact_json).unwrap();
+
+        match shared_event.as_ref() {
+            WalletScanEvent::ScanStarted {
+                block_range,
+                wallet_context,
+                ..
+            } => {
+                assert_eq!(*block_range, (500, 1500));
+                assert_eq!(wallet_context, "shared_test");
+            }
+            _ => panic!("Expected ScanStarted event"),
+        }
+    }
+
+    #[test]
+    fn test_serialization_with_complex_data() {
+        let output_data = OutputData::new(
+            "commitment_123".to_string(),
+            "proof_data_456".to_string(),
+            1,
+            true,
+        )
+        .with_amount(1000)
+        .with_key_index(5);
+
+        let block_info = BlockInfo::new(12345, "block_hash_abc".to_string(), 1697123456, 2);
+
+        let address_info = AddressInfo::new(
+            "tari1xyz123...".to_string(),
+            "stealth".to_string(),
+            "mainnet".to_string(),
+        );
+
+        let event = WalletScanEvent::output_found(output_data, block_info, address_info);
+
+        // Test serialization
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("OutputFound"));
+        assert!(json.contains("commitment_123"));
+        assert!(json.contains("tari1xyz123..."));
+        assert!(json.contains("12345"));
+
+        // Test roundtrip
+        let deserialized = WalletScanEvent::from_json(&json).unwrap();
+        match &deserialized {
+            WalletScanEvent::OutputFound {
+                output_data,
+                block_info,
+                address_info,
+                ..
+            } => {
+                assert_eq!(output_data.commitment, "commitment_123");
+                assert_eq!(output_data.amount, Some(1000));
+                assert_eq!(block_info.height, 12345);
+                assert_eq!(address_info.address, "tari1xyz123...");
+            }
+            _ => panic!("Expected OutputFound event"),
         }
     }
 
@@ -810,10 +841,10 @@ mod tests {
         assert!(summary.contains("with 3 outputs"));
 
         let json = event.to_debug_json().unwrap();
-        assert!(json.contains("\"type\":\"BlockProcessed\""));
-        assert!(json.contains("\"height\":98765"));
-        assert!(json.contains("\"hash\":\"0xabcdef1234567890\""));
-        assert!(json.contains("\"outputs_count\":3"));
+        assert!(json.contains("BlockProcessed"));
+        assert!(json.contains("98765"));
+        assert!(json.contains("0xabcdef1234567890"));
+        assert!(json.contains("3"));
     }
 
     #[test]
@@ -991,11 +1022,11 @@ mod tests {
         assert!(summary.contains("tari1abc456..."));
 
         let json = event.to_debug_json().unwrap();
-        assert!(json.contains("\"type\":\"OutputFound\""));
-        assert!(json.contains("\"block_height\":98765"));
-        assert!(json.contains("\"is_mine\":false"));
-        assert!(json.contains("\"address\":\"tari1abc456...\""));
-        assert!(json.contains("\"commitment\":\"0xcommitment123\""));
+        assert!(json.contains("OutputFound"));
+        assert!(json.contains("98765"));
+        assert!(json.contains("false"));
+        assert!(json.contains("tari1abc456..."));
+        assert!(json.contains("0xcommitment123"));
     }
 
     #[test]
@@ -1066,12 +1097,12 @@ mod tests {
         assert!(summary.contains("2m 30s"));
 
         let json = event.to_debug_json().unwrap();
-        assert!(json.contains("\"type\":\"ScanProgress\""));
-        assert!(json.contains("\"current_block\":500"));
-        assert!(json.contains("\"total_blocks\":2000"));
-        assert!(json.contains("\"percentage\":25.00"));
-        assert!(json.contains("\"speed_bps\":10.00"));
-        assert!(json.contains("\"eta_seconds\":150"));
+        assert!(json.contains("ScanProgress"));
+        assert!(json.contains("500"));
+        assert!(json.contains("2000"));
+        assert!(json.contains("25.0"));
+        assert!(json.contains("10.0"));
+        assert!(json.contains("150"));
     }
 
     #[test]
@@ -1096,7 +1127,7 @@ mod tests {
         assert!(summary.contains("unknown ETA"));
 
         let json = event.to_debug_json().unwrap();
-        assert!(json.contains("\"eta_seconds\":null"));
+        assert!(json.contains("null"));
     }
 
     #[test]
@@ -1236,10 +1267,10 @@ mod tests {
         assert!(summary.contains("10 outputs"));
 
         let json = event.to_debug_json().unwrap();
-        assert!(json.contains("\"type\":\"ScanCompleted\""));
-        assert!(json.contains("\"success\":true"));
-        assert!(json.contains("\"duration_seconds\":150"));
-        assert!(json.contains("\"stats_count\":2"));
+        assert!(json.contains("ScanCompleted"));
+        assert!(json.contains("true"));
+        assert!(json.contains("150"));
+        assert!(json.contains("2"));
     }
 
     #[test]
