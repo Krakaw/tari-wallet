@@ -8,7 +8,7 @@
 use async_trait::async_trait;
 use std::error::Error;
 
-use crate::events::{EventListener, SharedEvent, WalletScanEvent};
+use crate::events::{EventListener, SharedEvent};
 
 #[cfg(feature = "storage")]
 use crate::{
@@ -748,6 +748,7 @@ impl Default for DatabaseStorageListenerBuilder {
 
 // Stub implementation for when storage feature is not enabled
 #[cfg(not(feature = "storage"))]
+#[derive(Debug)]
 pub struct DatabaseStorageListener;
 
 #[cfg(not(feature = "storage"))]
