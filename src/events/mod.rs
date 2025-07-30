@@ -77,7 +77,9 @@
 //! ```
 
 use async_trait::async_trait;
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::error::Error;
+use std::fmt;
 
 // Public module exports
 pub mod listeners;
@@ -85,6 +87,39 @@ pub mod types;
 
 // Re-export core types for convenience
 pub use types::*;
+
+/// Errors that can occur during event dispatcher operations
+#[derive(Debug, Clone)]
+pub enum EventDispatcherError {
+    /// Attempted to register a listener with a duplicate name
+    DuplicateListener(String),
+    /// Attempted to register more listeners than the configured maximum
+    TooManyListeners { current: usize, max: usize },
+    /// Listener name is invalid (empty or contains invalid characters)
+    InvalidListenerName(String),
+}
+
+impl fmt::Display for EventDispatcherError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EventDispatcherError::DuplicateListener(name) => {
+                write!(f, "Listener with name '{}' is already registered", name)
+            }
+            EventDispatcherError::TooManyListeners { current, max } => {
+                write!(
+                    f,
+                    "Cannot register listener: maximum of {} listeners allowed, currently have {}",
+                    max, current
+                )
+            }
+            EventDispatcherError::InvalidListenerName(name) => {
+                write!(f, "Invalid listener name: '{}'", name)
+            }
+        }
+    }
+}
+
+impl Error for EventDispatcherError {}
 
 /// Trait for handling wallet scan events asynchronously
 ///
@@ -152,6 +187,8 @@ pub trait EventListener: Send + Sync {
 pub struct EventDispatcher {
     listeners: Vec<Box<dyn EventListener>>,
     debug_mode: bool,
+    registered_names: HashSet<String>,
+    max_listeners: Option<usize>,
 }
 
 impl EventDispatcher {
@@ -160,6 +197,8 @@ impl EventDispatcher {
         Self {
             listeners: Vec::new(),
             debug_mode: false,
+            registered_names: HashSet::new(),
+            max_listeners: None,
         }
     }
 
@@ -171,26 +210,108 @@ impl EventDispatcher {
         Self {
             listeners: Vec::new(),
             debug_mode: true,
+            registered_names: HashSet::new(),
+            max_listeners: None,
         }
     }
 
-    /// Register an event listener
+    /// Create a new event dispatcher with a maximum listener limit
+    ///
+    /// This prevents accidental registration of too many listeners which could
+    /// impact performance or indicate a configuration error.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_listeners` - Maximum number of listeners allowed
+    pub fn new_with_limit(max_listeners: usize) -> Self {
+        Self {
+            listeners: Vec::new(),
+            debug_mode: false,
+            registered_names: HashSet::new(),
+            max_listeners: Some(max_listeners),
+        }
+    }
+
+    /// Register an event listener with validation
     ///
     /// Listeners are called in the order they are registered. The dispatcher
-    /// takes ownership of the listener.
+    /// takes ownership of the listener and validates the registration.
     ///
     /// # Arguments
     ///
     /// * `listener` - The event listener to register
-    pub fn register(&mut self, listener: Box<dyn EventListener>) {
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on successful registration, or an error if validation fails.
+    ///
+    /// # Errors
+    ///
+    /// * `DuplicateListener` - If a listener with the same name is already registered
+    /// * `TooManyListeners` - If the maximum listener limit would be exceeded
+    /// * `InvalidListenerName` - If the listener name is invalid
+    pub fn register(
+        &mut self,
+        listener: Box<dyn EventListener>,
+    ) -> Result<(), EventDispatcherError> {
+        let listener_name = listener.name().to_string();
+
+        // Validate listener name
+        if listener_name.is_empty() || listener_name.trim().is_empty() {
+            return Err(EventDispatcherError::InvalidListenerName(listener_name));
+        }
+
+        // Check for duplicate names
+        if self.registered_names.contains(&listener_name) {
+            return Err(EventDispatcherError::DuplicateListener(listener_name));
+        }
+
+        // Check listener limit
+        if let Some(max) = self.max_listeners {
+            if self.listeners.len() >= max {
+                return Err(EventDispatcherError::TooManyListeners {
+                    current: self.listeners.len(),
+                    max,
+                });
+            }
+        }
+
+        // Registration is valid, proceed
         if self.debug_mode {
             #[cfg(target_arch = "wasm32")]
             web_sys::console::log_1(
-                &format!("Registering event listener: {}", listener.name()).into(),
+                &format!("Registering event listener: {}", listener_name).into(),
             );
             #[cfg(not(target_arch = "wasm32"))]
-            println!("Registering event listener: {}", listener.name());
+            println!("Registering event listener: {}", listener_name);
         }
+
+        self.registered_names.insert(listener_name);
+        self.listeners.push(listener);
+        Ok(())
+    }
+
+    /// Register an event listener without validation (for backwards compatibility)
+    ///
+    /// This method bypasses validation and should only be used when validation
+    /// is not needed or when migrating existing code.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener` - The event listener to register
+    pub fn register_unchecked(&mut self, listener: Box<dyn EventListener>) {
+        let listener_name = listener.name().to_string();
+
+        if self.debug_mode {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::log_1(
+                &format!("Registering event listener (unchecked): {}", listener_name).into(),
+            );
+            #[cfg(not(target_arch = "wasm32"))]
+            println!("Registering event listener (unchecked): {}", listener_name);
+        }
+
+        self.registered_names.insert(listener_name);
         self.listeners.push(listener);
     }
 
@@ -281,6 +402,7 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         fn get_events(&self) -> Vec<String> {
             self.events.lock().unwrap().clone()
         }
@@ -321,7 +443,7 @@ mod tests {
         assert_eq!(dispatcher.listener_count(), 0);
 
         let listener = TestListener::new("test1");
-        dispatcher.register(Box::new(listener));
+        dispatcher.register(Box::new(listener)).unwrap();
         assert_eq!(dispatcher.listener_count(), 1);
     }
 
@@ -345,9 +467,9 @@ mod tests {
         let events1 = listener1.events.clone();
         let events3 = listener3.events.clone();
 
-        dispatcher.register(Box::new(listener1));
-        dispatcher.register(Box::new(listener2));
-        dispatcher.register(Box::new(listener3));
+        dispatcher.register(Box::new(listener1)).unwrap();
+        dispatcher.register(Box::new(listener2)).unwrap();
+        dispatcher.register(Box::new(listener3)).unwrap();
 
         // Create a test event
         let event = WalletScanEvent::ScanStarted {
@@ -371,5 +493,117 @@ mod tests {
         let dispatcher = EventDispatcher::default();
         assert_eq!(dispatcher.listener_count(), 0);
         assert!(!dispatcher.is_debug_enabled());
+    }
+
+    #[tokio::test]
+    async fn test_registration_validation_duplicate_names() {
+        let mut dispatcher = EventDispatcher::new();
+
+        let listener1 = TestListener::new("duplicate_name");
+        let listener2 = TestListener::new("duplicate_name");
+
+        // First registration should succeed
+        assert!(dispatcher.register(Box::new(listener1)).is_ok());
+        assert_eq!(dispatcher.listener_count(), 1);
+
+        // Second registration with same name should fail
+        let result = dispatcher.register(Box::new(listener2));
+        assert!(result.is_err());
+        if let Err(EventDispatcherError::DuplicateListener(name)) = result {
+            assert_eq!(name, "duplicate_name");
+        } else {
+            panic!("Expected DuplicateListener error");
+        }
+        assert_eq!(dispatcher.listener_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_registration_validation_listener_limit() {
+        let mut dispatcher = EventDispatcher::new_with_limit(2);
+
+        let listener1 = TestListener::new("listener1");
+        let listener2 = TestListener::new("listener2");
+        let listener3 = TestListener::new("listener3");
+
+        // First two registrations should succeed
+        assert!(dispatcher.register(Box::new(listener1)).is_ok());
+        assert!(dispatcher.register(Box::new(listener2)).is_ok());
+        assert_eq!(dispatcher.listener_count(), 2);
+
+        // Third registration should fail due to limit
+        let result = dispatcher.register(Box::new(listener3));
+        assert!(result.is_err());
+        if let Err(EventDispatcherError::TooManyListeners { current, max }) = result {
+            assert_eq!(current, 2);
+            assert_eq!(max, 2);
+        } else {
+            panic!("Expected TooManyListeners error");
+        }
+        assert_eq!(dispatcher.listener_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_registration_validation_invalid_names() {
+        let mut dispatcher = EventDispatcher::new();
+
+        // Test empty name
+        struct EmptyNameListener;
+        #[async_trait]
+        impl EventListener for EmptyNameListener {
+            async fn handle_event(
+                &mut self,
+                _event: &WalletScanEvent,
+            ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                Ok(())
+            }
+            fn name(&self) -> &'static str {
+                ""
+            }
+        }
+
+        let result = dispatcher.register(Box::new(EmptyNameListener));
+        assert!(result.is_err());
+        if let Err(EventDispatcherError::InvalidListenerName(name)) = result {
+            assert_eq!(name, "");
+        } else {
+            panic!("Expected InvalidListenerName error");
+        }
+
+        // Test whitespace-only name
+        struct WhitespaceNameListener;
+        #[async_trait]
+        impl EventListener for WhitespaceNameListener {
+            async fn handle_event(
+                &mut self,
+                _event: &WalletScanEvent,
+            ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                Ok(())
+            }
+            fn name(&self) -> &'static str {
+                "   "
+            }
+        }
+
+        let result = dispatcher.register(Box::new(WhitespaceNameListener));
+        assert!(result.is_err());
+        if let Err(EventDispatcherError::InvalidListenerName(name)) = result {
+            assert_eq!(name, "   ");
+        } else {
+            panic!("Expected InvalidListenerName error");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_register_unchecked() {
+        let mut dispatcher = EventDispatcher::new_with_limit(1);
+
+        let listener1 = TestListener::new("test1");
+        let listener2 = TestListener::new("test1"); // Duplicate name
+
+        // Use unchecked registration to bypass validation
+        dispatcher.register_unchecked(Box::new(listener1));
+        dispatcher.register_unchecked(Box::new(listener2)); // Should work despite duplicate name and limit
+
+        assert_eq!(dispatcher.listener_count(), 2);
     }
 }
