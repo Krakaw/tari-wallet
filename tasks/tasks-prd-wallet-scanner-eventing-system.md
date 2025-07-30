@@ -44,7 +44,7 @@
   - [x] 2.10 Add serialization support for debugging (Open question #1)
 
 - [ ] 3.0 Implement Built-in Event Listeners
-  - [ ] 3.1 Create `src/events/listeners/mod.rs` with public exports
+  - [x] 3.1 Create `src/events/listeners/mod.rs` with public exports
   - [ ] 3.2 Implement `DatabaseStorageListener` replicating current storage_backend (Req #15)
   - [ ] 3.3 Implement `ProgressTrackingListener` replicating current progress_tracker (Req #16)
   - [ ] 3.4 Implement `ConsoleLoggingListener` for development and debugging (Req #17)
