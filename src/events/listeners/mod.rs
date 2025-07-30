@@ -94,14 +94,14 @@
 //! # }
 //! ```
 
-// Module exports will be added as listeners are implemented
-// pub mod database_storage;
+// Module exports
+pub mod database_storage;
 // pub mod progress_tracking;
 // pub mod console_logging;
 // pub mod mock_listener;
 
 // Re-exports for convenience
-// pub use database_storage::DatabaseStorageListener;
+pub use database_storage::DatabaseStorageListener;
 // pub use progress_tracking::ProgressTrackingListener;
 // pub use console_logging::ConsoleLoggingListener;
 // pub use mock_listener::MockEventListener;
