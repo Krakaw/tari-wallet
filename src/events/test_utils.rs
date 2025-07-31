@@ -625,6 +625,7 @@ impl TestScenario {
 }
 
 /// Event capture utilities for advanced testing
+#[derive(Clone)]
 pub struct EventCapture {
     mock: MockEventListener,
     start_time: Instant,
@@ -658,17 +659,34 @@ impl EventCapture {
     }
 
     /// Wait for a specific event pattern with timeout
+    ///
+    /// This method supports deterministic async testing by using Tokio's time
+    /// infrastructure when available (in tests with `tokio::test(start_paused = true)`).
     pub async fn wait_for_pattern(
         &self,
         pattern: EventPattern,
         timeout: Duration,
     ) -> EventTestResult<()> {
-        let start = Instant::now();
+        self.wait_for_pattern_with_interval(pattern, timeout, Duration::from_millis(10))
+            .await
+    }
+
+    /// Wait for a specific event pattern with configurable polling interval
+    ///
+    /// This allows for deterministic testing by controlling the polling interval.
+    /// In tests, use a larger interval or control time with `tokio::time::advance()`.
+    pub async fn wait_for_pattern_with_interval(
+        &self,
+        pattern: EventPattern,
+        timeout: Duration,
+        poll_interval: Duration,
+    ) -> EventTestResult<()> {
+        let start = tokio::time::Instant::now();
         while start.elapsed() < timeout {
             if pattern.verify(&self.mock).is_ok() {
                 return Ok(());
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(poll_interval).await;
         }
         Err(EventTestError::Timeout(format!(
             "Pattern not matched within {:?}",
@@ -676,9 +694,47 @@ impl EventCapture {
         )))
     }
 
+    /// Wait for a specific event pattern without timeout (deterministic testing)
+    ///
+    /// This method is designed for deterministic async testing where time is controlled.
+    /// It polls continuously until the pattern matches without any timeout.
+    /// Use with `tokio::test(start_paused = true)` and `tokio::time::advance()`.
+    pub async fn wait_for_pattern_deterministic(
+        &self,
+        pattern: EventPattern,
+        max_iterations: usize,
+    ) -> EventTestResult<()> {
+        for _iteration in 0..max_iterations {
+            if pattern.verify(&self.mock).is_ok() {
+                return Ok(());
+            }
+            // Use a fixed interval that can be controlled by tokio test time
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        Err(EventTestError::Timeout(format!(
+            "Pattern not matched within {} iterations",
+            max_iterations
+        )))
+    }
+
     /// Capture events for a specific duration and return results
+    ///
+    /// This method supports deterministic async testing by using Tokio's time
+    /// infrastructure when available (in tests with `tokio::test(start_paused = true)`).
     pub async fn capture_for_duration(&self, duration: Duration) -> Vec<CapturedEvent> {
         tokio::time::sleep(duration).await;
+        self.mock.get_captured_events().lock().unwrap().clone()
+    }
+
+    /// Capture events by yielding control a specific number of times (deterministic testing)
+    ///
+    /// This method is designed for deterministic async testing where you want to allow
+    /// async tasks to progress without advancing real time. It yields control the specified
+    /// number of times and then returns the captured events.
+    pub async fn capture_with_yields(&self, yield_count: usize) -> Vec<CapturedEvent> {
+        for _ in 0..yield_count {
+            tokio::task::yield_now().await;
+        }
         self.mock.get_captured_events().lock().unwrap().clone()
     }
 
@@ -1009,5 +1065,133 @@ mod tests {
             error.to_string(),
             "Content 'test content' not found in any events"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_deterministic_event_pattern_waiting() {
+        use crate::events::types::WalletScanEvent;
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let test_capture = EventCapture::new();
+        let mut dispatcher = crate::events::EventDispatcher::new();
+
+        // Register the mock listener
+        dispatcher
+            .register(Box::new(test_capture.mock_listener().clone()))
+            .unwrap();
+
+        // Spawn a task that dispatches events at controlled intervals
+        let dispatcher = Arc::new(Mutex::new(dispatcher));
+        tokio::spawn({
+            let dispatcher = dispatcher.clone();
+            async move {
+                for i in 0..3 {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+
+                    let event = WalletScanEvent::block_processed(
+                        i + 1,
+                        format!("0x{:x}", i),
+                        1697123456 + i as u64,
+                        Duration::from_millis(50),
+                        2,
+                    );
+                    {
+                        let mut dispatcher_guard = dispatcher.lock().await;
+                        dispatcher_guard.dispatch(event).await;
+                    }
+                }
+            }
+        });
+
+        // Test deterministic pattern waiting
+        let pattern = EventPattern::sequence().exactly(3);
+        let wait_task = tokio::spawn({
+            let test_capture = test_capture.clone();
+            async move {
+                test_capture
+                    .wait_for_pattern_deterministic(pattern, 1000)
+                    .await
+            }
+        });
+
+        // Advance time in controlled chunks
+        for _ in 0..3 {
+            tokio::time::advance(Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
+        }
+
+        // The pattern should match
+        let result = wait_task.await.unwrap();
+        assert!(result.is_ok());
+        assert_eq!(test_capture.mock_listener().event_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_capture_with_yields() {
+        use crate::events::types::WalletScanEvent;
+
+        let test_capture = EventCapture::new();
+        let mut dispatcher = crate::events::EventDispatcher::new();
+
+        // Register the mock listener
+        dispatcher
+            .register(Box::new(test_capture.mock_listener().clone()))
+            .unwrap();
+
+        // Add events directly to demonstrate yield-based capturing
+        for i in 0..5 {
+            let event = WalletScanEvent::block_processed(
+                i + 1,
+                format!("0x{:x}", i),
+                1697123456 + i as u64,
+                Duration::from_millis(10),
+                1,
+            );
+            dispatcher.dispatch(event).await;
+        }
+
+        // Capture events using yield-based approach
+        let events = test_capture.capture_with_yields(10).await;
+        assert_eq!(events.len(), 5);
+
+        // Verify all events are BlockProcessed
+        for event in events {
+            assert_eq!(event.event_type, "BlockProcessed");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_deterministic_polling_intervals() {
+        use crate::events::types::{ScanConfig, WalletScanEvent};
+
+        let test_capture = EventCapture::new();
+        let mut dispatcher = crate::events::EventDispatcher::new();
+
+        // Register the mock listener
+        dispatcher
+            .register(Box::new(test_capture.mock_listener().clone()))
+            .unwrap();
+
+        // Add an event immediately
+        let event = WalletScanEvent::scan_started(
+            ScanConfig::default(),
+            (0, 100),
+            "test_wallet".to_string(),
+        );
+        dispatcher.dispatch(event).await;
+
+        // Test waiting with custom polling interval
+        let pattern = EventPattern::sequence().exactly(1);
+        let result = test_capture
+            .wait_for_pattern_with_interval(
+                pattern,
+                Duration::from_secs(1),
+                Duration::from_millis(50), // Custom polling interval
+            )
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(test_capture.mock_listener().event_count(), 1);
     }
 }

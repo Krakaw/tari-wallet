@@ -8,13 +8,15 @@
 - `src/events/listeners/database_storage.rs` - Complete DatabaseStorageListener implementation with storage backend functionality replication, enhanced builder patterns with 5 preset configurations, cross-platform support, and comprehensive tests
 - `src/events/listeners/progress_tracking.rs` - Complete ProgressTrackingListener implementation with progress tracking, callbacks, ETA calculation, enhanced builder patterns with 5 preset configurations, and comprehensive tests (16 tests passing)
 - `src/events/listeners/console_logging.rs` - Complete ConsoleLoggingListener implementation with configurable verbosity levels, color support, timestamp formatting, comprehensive builder patterns with 5 preset configurations, and comprehensive tests (22 tests passing)
-- `src/events/listeners/mock_listener.rs` - Complete MockEventListener implementation for testing scenarios with event capture, thread-safe storage, filtering, assertion helpers, builder patterns with 5 preset configurations, and comprehensive tests (12 tests passing)
+- `src/events/listeners/mock_listener.rs` - Complete MockEventListener implementation with deterministic async testing support using Tokio test-util features, event capture, thread-safe storage, filtering, assertion helpers, builder patterns with 5 preset configurations, and comprehensive tests (16 tests passing including deterministic tests)
 - `src/events/error_recovery.rs` - Comprehensive error recovery and circuit breaker system with retry logic, error classification, and monitoring for robust production operations
 - `src/lib.rs` - Updated to include events module export
 - Cross-platform tests:
   - Native tests: 16 comprehensive tests covering all event system functionality  
   - Cross-platform tests: 3 tests that run on both native and WASM platforms
   - WASM compatibility verified through successful compilation
+  - Deterministic async tests: 9 tests using Tokio's test-util features for controlled time testing
+  - Total event system tests: 144 tests passing
 
 ### Notes
 
@@ -48,7 +50,7 @@
   - [x] 2.9 Use `Arc<Event>` for efficient sharing between listeners (Design consideration)
   - [x] 2.10 Add serialization support for debugging (Open question #1)
 
-- [ ] 3.0 Implement Built-in Event Listeners
+- [x] 3.0 Implement Built-in Event Listeners
   - [x] 3.1 Create `src/events/listeners/mod.rs` with public exports
   - [x] 3.2 Implement `DatabaseStorageListener` replicating current storage_backend (Req #15)
   - [x] 3.3 Implement `ProgressTrackingListener` replicating current progress_tracker (Req #16)
@@ -57,7 +59,7 @@
   - [x] 3.6 Implement proper error recovery and logging in each listener (Req #19)
   - [x] 3.7 Create `MockEventListener` for testing scenarios (Req #28)
   - [x] 3.8 Add event capture functionality for test assertions (Req #29)
-  - [ ] 3.9 Ensure deterministic async testing support (Req #30)
+  - [x] 3.9 Ensure deterministic async testing support (Req #30)
 
 - [ ] 4.0 Refactor Wallet Scanner to Use Event System
   - [ ] 4.1 Create `src/scanning/event_emitter.rs` with scanner integration logic

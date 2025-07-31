@@ -11,7 +11,7 @@
 //! - **Event Filtering**: Can be configured to capture only specific event types
 //! - **Flexible Assertions**: Supports both count-based and content-based assertions
 //! - **Builder Pattern**: Easy configuration with preset test scenarios
-//! - **Deterministic Testing**: Supports deterministic async testing patterns
+//! - **Deterministic Testing**: Full support for deterministic async testing with controlled time
 //!
 //! # Usage Examples
 //!
@@ -101,6 +101,42 @@
 //! let mock = MockEventListener::builder()
 //!     .error_testing_preset()
 //!     .build();
+//! ```
+//!
+//! ## Deterministic Async Testing
+//! ```rust,ignore
+//! #[tokio::test(start_paused = true)]
+//! async fn test_deterministic_scanning() {
+//!     let mock = MockEventListener::new();
+//!     
+//!     // Spawn event producer with controlled timing
+//!     tokio::spawn(async move {
+//!         tokio::time::sleep(Duration::from_millis(100)).await;
+//!         // ... dispatch events ...
+//!     });
+//!     
+//!     // Wait deterministically without real time delays
+//!     let result = mock.wait_for_event_count_deterministic(5, 1000).await;
+//!     
+//!     // Advance time in controlled increments
+//!     tokio::time::advance(Duration::from_millis(100)).await;
+//!     tokio::task::yield_now().await;
+//!     
+//!     assert!(result.is_ok());
+//! }
+//! ```
+//!
+//! ## Custom Polling Intervals
+//! ```rust,ignore
+//! // Wait with custom polling interval for better control
+//! let result = mock.wait_for_event_type_with_interval(
+//!     "ScanCompleted",
+//!     Duration::from_secs(5),
+//!     Duration::from_millis(100), // Poll every 100ms instead of 10ms
+//! ).await;
+//!
+//! // Yield control without time advancement
+//! mock.yield_now().await;
 //! ```
 
 use async_trait::async_trait;
@@ -349,6 +385,7 @@ impl Default for MockListenerBuilder {
 }
 
 /// Mock event listener that captures events for testing
+#[derive(Clone)]
 pub struct MockEventListener {
     /// Configuration for the listener
     config: MockListenerConfig,
@@ -444,17 +481,34 @@ impl MockEventListener {
     }
 
     /// Wait for a specific number of events with timeout
+    ///
+    /// This method supports deterministic async testing by using Tokio's time
+    /// infrastructure when available (in tests with `tokio::test(start_paused = true)`).
     pub async fn wait_for_event_count(
         &self,
         expected_count: usize,
         timeout: Duration,
     ) -> Result<(), String> {
-        let start = Instant::now();
+        self.wait_for_event_count_with_interval(expected_count, timeout, Duration::from_millis(10))
+            .await
+    }
+
+    /// Wait for a specific number of events with configurable polling interval
+    ///
+    /// This allows for deterministic testing by controlling the polling interval.
+    /// In tests, use a larger interval or control time with `tokio::time::advance()`.
+    pub async fn wait_for_event_count_with_interval(
+        &self,
+        expected_count: usize,
+        timeout: Duration,
+        poll_interval: Duration,
+    ) -> Result<(), String> {
+        let start = tokio::time::Instant::now();
         while start.elapsed() < timeout {
             if self.event_count() >= expected_count {
                 return Ok(());
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(poll_interval).await;
         }
         Err(format!(
             "Timeout waiting for {} events, got {}",
@@ -464,12 +518,29 @@ impl MockEventListener {
     }
 
     /// Wait for an event of a specific type with timeout
+    ///
+    /// This method supports deterministic async testing by using Tokio's time
+    /// infrastructure when available (in tests with `tokio::test(start_paused = true)`).
     pub async fn wait_for_event_type(
         &self,
         event_type: &str,
         timeout: Duration,
     ) -> Result<CapturedEvent, String> {
-        let start = Instant::now();
+        self.wait_for_event_type_with_interval(event_type, timeout, Duration::from_millis(10))
+            .await
+    }
+
+    /// Wait for an event of a specific type with configurable polling interval
+    ///
+    /// This allows for deterministic testing by controlling the polling interval.
+    /// In tests, use a larger interval or control time with `tokio::time::advance()`.
+    pub async fn wait_for_event_type_with_interval(
+        &self,
+        event_type: &str,
+        timeout: Duration,
+        poll_interval: Duration,
+    ) -> Result<CapturedEvent, String> {
+        let start = tokio::time::Instant::now();
         while start.elapsed() < timeout {
             if let Some(event) = self
                 .captured_events
@@ -481,13 +552,79 @@ impl MockEventListener {
             {
                 return Ok(event);
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(poll_interval).await;
         }
         Err(format!(
             "Timeout waiting for event type '{}', got {} total events",
             event_type,
             self.event_count()
         ))
+    }
+
+    /// Wait for a specific number of events without timeout (deterministic testing)
+    ///
+    /// This method is designed for deterministic async testing where time is controlled.
+    /// It polls continuously until the expected count is reached without any timeout.
+    /// Use with `tokio::test(start_paused = true)` and `tokio::time::advance()`.
+    pub async fn wait_for_event_count_deterministic(
+        &self,
+        expected_count: usize,
+        max_iterations: usize,
+    ) -> Result<(), String> {
+        for _iteration in 0..max_iterations {
+            if self.event_count() >= expected_count {
+                return Ok(());
+            }
+            // Use a fixed interval that can be controlled by tokio test time
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        Err(format!(
+            "Maximum iterations ({}) reached waiting for {} events, got {}",
+            max_iterations,
+            expected_count,
+            self.event_count()
+        ))
+    }
+
+    /// Wait for an event type without timeout (deterministic testing)
+    ///
+    /// This method is designed for deterministic async testing where time is controlled.
+    /// It polls continuously until the event type is found without any timeout.
+    /// Use with `tokio::test(start_paused = true)` and `tokio::time::advance()`.
+    pub async fn wait_for_event_type_deterministic(
+        &self,
+        event_type: &str,
+        max_iterations: usize,
+    ) -> Result<CapturedEvent, String> {
+        for _iteration in 0..max_iterations {
+            if let Some(event) = self
+                .captured_events
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|e| e.event_type == event_type)
+                .cloned()
+            {
+                return Ok(event);
+            }
+            // Use a fixed interval that can be controlled by tokio test time
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        Err(format!(
+            "Maximum iterations ({}) reached waiting for event type '{}', got {} total events",
+            max_iterations,
+            event_type,
+            self.event_count()
+        ))
+    }
+
+    /// Yield control to allow async tasks to progress (deterministic testing)
+    ///
+    /// This method yields control to the async runtime without advancing real time.
+    /// Useful for deterministic tests where you want to allow tasks to process
+    /// without introducing real time delays.
+    pub async fn yield_now(&self) {
+        tokio::task::yield_now().await;
     }
 
     // Assertion helpers
@@ -945,6 +1082,175 @@ mod tests {
             .wait_for_event_type("NonExistent", Duration::from_millis(10))
             .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_deterministic_async_wait_for_event_count() {
+        let mock = MockEventListener::new();
+        let captured_events = mock.get_captured_events();
+
+        // Spawn a task that adds events at controlled time intervals
+        let captured_events_clone = captured_events.clone();
+        tokio::spawn(async move {
+            for i in 0..3 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                captured_events_clone
+                    .lock()
+                    .unwrap()
+                    .push(CapturedEvent::new(
+                        format!("Event{}", i),
+                        None,
+                        format!("id-{}", i),
+                        "test_source".to_string(),
+                        None,
+                    ));
+            }
+        });
+
+        // Test deterministic waiting
+        let wait_task = tokio::spawn({
+            let mock = mock.clone();
+            async move { mock.wait_for_event_count_deterministic(3, 1000).await }
+        });
+
+        // Advance time in controlled chunks to allow events to be added
+        for _ in 0..3 {
+            tokio::time::advance(Duration::from_millis(100)).await;
+            tokio::task::yield_now().await; // Allow the spawned task to run
+        }
+
+        // The wait should complete successfully
+        let result = wait_task.await.unwrap();
+        assert!(result.is_ok());
+        assert_eq!(mock.event_count(), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_deterministic_async_wait_for_event_type() {
+        let mock = MockEventListener::new();
+        let captured_events = mock.get_captured_events();
+
+        // Spawn a task that adds different event types at controlled intervals
+        let captured_events_clone = captured_events.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            captured_events_clone
+                .lock()
+                .unwrap()
+                .push(CapturedEvent::new(
+                    "Event1".to_string(),
+                    None,
+                    "id-1".to_string(),
+                    "test_source".to_string(),
+                    None,
+                ));
+
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            captured_events_clone
+                .lock()
+                .unwrap()
+                .push(CapturedEvent::new(
+                    "ScanStarted".to_string(),
+                    None,
+                    "id-2".to_string(),
+                    "test_source".to_string(),
+                    None,
+                ));
+        });
+
+        // Test deterministic waiting for specific event type
+        let wait_task = tokio::spawn({
+            let mock = mock.clone();
+            async move {
+                mock.wait_for_event_type_deterministic("ScanStarted", 1000)
+                    .await
+            }
+        });
+
+        // Advance time to trigger event additions
+        tokio::time::advance(Duration::from_millis(100)).await;
+        tokio::task::yield_now().await;
+
+        // The wait should complete successfully and return the correct event
+        let result = wait_task.await.unwrap();
+        assert!(result.is_ok());
+        let event = result.unwrap();
+        assert_eq!(event.event_type, "ScanStarted");
+        assert_eq!(mock.event_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_yield_now_functionality() {
+        let mock = MockEventListener::new();
+        let captured_events = mock.get_captured_events();
+
+        // Spawn a task that adds an event immediately
+        let captured_events_clone = captured_events.clone();
+        tokio::spawn(async move {
+            captured_events_clone
+                .lock()
+                .unwrap()
+                .push(CapturedEvent::new(
+                    "InstantEvent".to_string(),
+                    None,
+                    "instant-id".to_string(),
+                    "test_source".to_string(),
+                    None,
+                ));
+        });
+
+        // Before yielding, the event might not be there yet
+        assert_eq!(mock.event_count(), 0);
+
+        // Yield control to allow the task to run
+        mock.yield_now().await;
+
+        // After yielding, the event should be there
+        assert_eq!(mock.event_count(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_configurable_polling_intervals() {
+        let mock = MockEventListener::new();
+        let captured_events = mock.get_captured_events();
+
+        // Add an event after a specific time
+        let captured_events_clone = captured_events.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            captured_events_clone
+                .lock()
+                .unwrap()
+                .push(CapturedEvent::new(
+                    "DelayedEvent".to_string(),
+                    None,
+                    "delayed-id".to_string(),
+                    "test_source".to_string(),
+                    None,
+                ));
+        });
+
+        // Test waiting with custom polling interval
+        let wait_task = tokio::spawn({
+            let mock = mock.clone();
+            async move {
+                mock.wait_for_event_count_with_interval(
+                    1,
+                    Duration::from_secs(2),
+                    Duration::from_millis(100), // Custom polling interval
+                )
+                .await
+            }
+        });
+
+        // Advance time to trigger the event
+        tokio::time::advance(Duration::from_millis(600)).await;
+        tokio::task::yield_now().await;
+
+        // The wait should complete successfully
+        let result = wait_task.await.unwrap();
+        assert!(result.is_ok());
+        assert_eq!(mock.event_count(), 1);
     }
 
     #[test]
