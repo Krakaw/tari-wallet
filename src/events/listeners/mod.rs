@@ -193,14 +193,14 @@
 // Module exports
 pub mod console_logging;
 pub mod database_storage;
+pub mod mock_listener;
 pub mod progress_tracking;
-// pub mod mock_listener;
 
 // Re-exports for convenience
 pub use console_logging::ConsoleLoggingListener;
 pub use database_storage::DatabaseStorageListener;
+pub use mock_listener::MockEventListener;
 pub use progress_tracking::ProgressTrackingListener;
-// pub use mock_listener::MockEventListener;
 
 #[cfg(test)]
 mod tests {
