@@ -1524,6 +1524,13 @@ impl WalletScanner {
             _ => false,
         }
     }
+
+    /// Start building a scanner with custom configuration
+    ///
+    /// This returns a ScannerBuilder that allows for fluent configuration.
+    pub fn builder() -> ScannerBuilder {
+        ScannerBuilder::new()
+    }
 }
 
 impl Default for WalletScanner {
@@ -2281,6 +2288,325 @@ fn display_summary_results(wallet_state: &WalletState, config: &BinaryScanConfig
     println!("Spent outputs: {}", format_number(spent_count));
 }
 
+// =============================================================================
+// Scanner Builder Pattern Implementation
+// =============================================================================
+
+/// Builder for configuring WalletScanner with different preset configurations
+///
+/// This builder provides a fluent interface for setting up scanners with various
+/// combinations of event listeners and configurations. It includes preset methods
+/// similar to the event listeners for common use cases.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use lightweight_wallet_libs::scanning::wallet_scanner::ScannerBuilder;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Basic scanner with default events
+/// let scanner = ScannerBuilder::new()
+///     .with_default_events("my_scanner".to_string())?
+///     .with_batch_size(25)
+///     .build();
+///
+/// // Production scanner with database storage
+/// let scanner = ScannerBuilder::new()
+///     .with_database_events("production_scanner".to_string(), Some("wallet.db".to_string()))?
+///     .with_performance_preset()
+///     .build();
+///
+/// // Development scanner with verbose logging
+/// let scanner = ScannerBuilder::new()
+///     .with_development_preset()?
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct ScannerBuilder {
+    config: WalletScannerConfig,
+    event_emitter: Option<super::event_emitter::ScanEventEmitter>,
+}
+
+impl ScannerBuilder {
+    /// Create a new scanner builder with default configuration
+    pub fn new() -> Self {
+        Self {
+            config: WalletScannerConfig::default(),
+            event_emitter: None,
+        }
+    }
+
+    /// Set an event emitter for scanner operations
+    pub fn with_event_emitter(
+        mut self,
+        event_emitter: super::event_emitter::ScanEventEmitter,
+    ) -> Self {
+        self.event_emitter = Some(event_emitter);
+        self
+    }
+
+    /// Configure with default event listeners (progress tracking + console logging)
+    pub fn with_default_events(mut self, source: String) -> Result<Self, LightweightWalletError> {
+        let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
+        self.event_emitter = Some(event_emitter);
+        Ok(self)
+    }
+
+    /// Configure with database event listeners (storage + progress + console)
+    #[cfg(feature = "storage")]
+    pub fn with_database_events(
+        mut self,
+        source: String,
+        database_path: Option<String>,
+    ) -> Result<Self, LightweightWalletError> {
+        let event_emitter =
+            super::event_emitter::create_database_event_emitter(source, None, database_path)?;
+        self.event_emitter = Some(event_emitter);
+        Ok(self)
+    }
+
+    /// Set the batch size for block processing
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.config.batch_size = batch_size.clamp(1, 1000);
+        self
+    }
+
+    /// Set the timeout duration for blockchain operations
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.timeout = Some(timeout.clamp(
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(300),
+        ));
+        self
+    }
+
+    /// Enable or disable verbose logging
+    pub fn with_verbose_logging(mut self, verbose: bool) -> Self {
+        self.config.verbose_logging = verbose;
+        self
+    }
+
+    /// Set retry configuration
+    pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
+        self.config.retry_config = retry_config;
+        self
+    }
+
+    // =============================================================================
+    // Preset Configurations (similar to event listener presets)
+    // =============================================================================
+
+    /// Apply performance optimization preset
+    ///
+    /// - Large batch size (50)
+    /// - Extended timeout (60s)
+    /// - Disabled verbose logging
+    /// - Conservative retry policy
+    pub fn with_performance_preset(mut self) -> Self {
+        self.config.batch_size = 50;
+        self.config.timeout = Some(std::time::Duration::from_secs(60));
+        self.config.verbose_logging = false;
+        self.config.retry_config = RetryConfig {
+            max_retries: 2,
+            base_delay: std::time::Duration::from_millis(500),
+            max_delay: std::time::Duration::from_secs(10),
+            exponential_backoff: true,
+        };
+        self
+    }
+
+    /// Apply reliability optimization preset
+    ///
+    /// - Small batch size (5)
+    /// - Conservative timeout (45s)
+    /// - Enabled verbose logging
+    /// - Aggressive retry policy
+    pub fn with_reliability_preset(mut self) -> Self {
+        self.config.batch_size = 5;
+        self.config.timeout = Some(std::time::Duration::from_secs(45));
+        self.config.verbose_logging = true;
+        self.config.retry_config = RetryConfig {
+            max_retries: 5,
+            base_delay: std::time::Duration::from_millis(1000),
+            max_delay: std::time::Duration::from_secs(30),
+            exponential_backoff: true,
+        };
+        self
+    }
+
+    /// Apply development preset with default events
+    ///
+    /// - Medium batch size (10)
+    /// - Standard timeout (30s)
+    /// - Enabled verbose logging
+    /// - Default retry policy
+    /// - Default event listeners
+    pub fn with_development_preset(mut self) -> Result<Self, LightweightWalletError> {
+        self.config.batch_size = 10;
+        self.config.timeout = Some(std::time::Duration::from_secs(30));
+        self.config.verbose_logging = true;
+        self.config.retry_config = RetryConfig::default();
+
+        // Add default event emitter if not already configured
+        if self.event_emitter.is_none() {
+            let event_emitter = super::event_emitter::create_default_event_emitter(
+                "development_scanner".to_string(),
+                None,
+            )?;
+            self.event_emitter = Some(event_emitter);
+        }
+
+        Ok(self)
+    }
+
+    /// Apply production preset with database events
+    ///
+    /// - Large batch size (30)
+    /// - Extended timeout (60s)
+    /// - Minimal verbose logging
+    /// - Balanced retry policy
+    /// - Database event listeners
+    #[cfg(feature = "storage")]
+    pub fn with_production_preset(
+        mut self,
+        database_path: Option<String>,
+    ) -> Result<Self, LightweightWalletError> {
+        self.config.batch_size = 30;
+        self.config.timeout = Some(std::time::Duration::from_secs(60));
+        self.config.verbose_logging = false;
+        self.config.retry_config = RetryConfig {
+            max_retries: 3,
+            base_delay: std::time::Duration::from_millis(1000),
+            max_delay: std::time::Duration::from_secs(20),
+            exponential_backoff: true,
+        };
+
+        // Add database event emitter if not already configured
+        if self.event_emitter.is_none() {
+            let event_emitter = super::event_emitter::create_database_event_emitter(
+                "production_scanner".to_string(),
+                None,
+                database_path,
+            )?;
+            self.event_emitter = Some(event_emitter);
+        }
+
+        Ok(self)
+    }
+
+    /// Apply testing preset (optimized for unit tests)
+    ///
+    /// - Small batch size (3)
+    /// - Short timeout (10s)
+    /// - Disabled verbose logging
+    /// - No retries
+    /// - Mock event listeners
+    pub fn with_testing_preset(mut self) -> Result<Self, LightweightWalletError> {
+        use crate::events::{listeners::MockEventListener, EventDispatcher};
+
+        self.config.batch_size = 3;
+        self.config.timeout = Some(std::time::Duration::from_secs(10));
+        self.config.verbose_logging = false;
+        self.config.retry_config = RetryConfig {
+            max_retries: 0,
+            base_delay: std::time::Duration::from_millis(100),
+            max_delay: std::time::Duration::from_millis(100),
+            exponential_backoff: false,
+        };
+
+        // Add mock event emitter for testing
+        if self.event_emitter.is_none() {
+            let mut dispatcher = EventDispatcher::new();
+            let mock_listener = MockEventListener::new();
+            dispatcher.register(Box::new(mock_listener));
+            let event_emitter =
+                super::event_emitter::ScanEventEmitter::new(dispatcher, "test_scanner".to_string());
+            self.event_emitter = Some(event_emitter);
+        }
+
+        Ok(self)
+    }
+
+    /// Apply quiet preset (minimal output)
+    ///
+    /// - Medium batch size (15)
+    /// - Standard timeout (30s)
+    /// - Disabled verbose logging
+    /// - Conservative retry policy
+    /// - Progress tracking only (no console logging)
+    pub fn with_quiet_preset(mut self) -> Result<Self, LightweightWalletError> {
+        use crate::events::{listeners::ProgressTrackingListener, EventDispatcher};
+
+        self.config.batch_size = 15;
+        self.config.timeout = Some(std::time::Duration::from_secs(30));
+        self.config.verbose_logging = false;
+        self.config.retry_config = RetryConfig {
+            max_retries: 2,
+            base_delay: std::time::Duration::from_millis(500),
+            max_delay: std::time::Duration::from_secs(10),
+            exponential_backoff: true,
+        };
+
+        // Add only progress tracking, no console logging
+        if self.event_emitter.is_none() {
+            let mut dispatcher = EventDispatcher::new();
+            let progress_listener = ProgressTrackingListener::new();
+            dispatcher.register(Box::new(progress_listener));
+            let event_emitter = super::event_emitter::ScanEventEmitter::new(
+                dispatcher,
+                "quiet_scanner".to_string(),
+            );
+            self.event_emitter = Some(event_emitter);
+        }
+
+        Ok(self)
+    }
+
+    /// Validate the current configuration
+    pub fn validate(&self) -> Result<(), ScannerConfigError> {
+        self.config.validate()?;
+
+        if self.event_emitter.is_none() {
+            return Err(ScannerConfigError::ValidationError {
+                field: "event_emitter".to_string(),
+                reason: "Event emitter must be configured before building scanner".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Build the final WalletScanner
+    ///
+    /// This consumes the builder and returns a configured WalletScanner.
+    /// The scanner will be validated before creation.
+    pub fn build(mut self) -> Result<WalletScanner, ScannerConfigError> {
+        self.validate()?;
+
+        // Move event_emitter into config
+        self.config.event_emitter = self.event_emitter.take();
+
+        Ok(WalletScanner::from_config(self.config))
+    }
+
+    /// Build the final WalletScanner without validation
+    ///
+    /// This skips validation and may result in a scanner that fails at runtime.
+    /// Only use this for testing or when you're certain the configuration is valid.
+    pub fn build_unchecked(mut self) -> WalletScanner {
+        self.config.event_emitter = self.event_emitter.take();
+        WalletScanner::from_config(self.config)
+    }
+}
+
+impl Default for ScannerBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2829,6 +3155,225 @@ mod tests {
         assert_eq!(inbound_count, 0);
         assert_eq!(outbound_count, 0);
         assert_eq!(total_count, 0);
+    }
+
+    // =============================================================================
+    // ScannerBuilder Tests
+    // =============================================================================
+
+    #[test]
+    fn test_scanner_builder_new() {
+        let builder = ScannerBuilder::new();
+        assert_eq!(builder.config.batch_size, 10);
+        assert!(builder.event_emitter.is_none());
+    }
+
+    #[test]
+    fn test_scanner_builder_basic_configuration() {
+        let builder = ScannerBuilder::new()
+            .with_batch_size(25)
+            .with_timeout(std::time::Duration::from_secs(45))
+            .with_verbose_logging(true);
+
+        assert_eq!(builder.config.batch_size, 25);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(45))
+        );
+        assert!(builder.config.verbose_logging);
+    }
+
+    #[test]
+    fn test_scanner_builder_batch_size_clamping() {
+        let builder = ScannerBuilder::new().with_batch_size(2000);
+        assert_eq!(builder.config.batch_size, 1000); // Should be clamped to max
+
+        let builder = ScannerBuilder::new().with_batch_size(0);
+        assert_eq!(builder.config.batch_size, 1); // Should be clamped to min
+    }
+
+    #[test]
+    fn test_scanner_builder_timeout_clamping() {
+        let builder = ScannerBuilder::new().with_timeout(std::time::Duration::from_secs(500));
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(300))
+        ); // Should be clamped to max
+
+        let builder = ScannerBuilder::new().with_timeout(std::time::Duration::from_millis(50));
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_millis(100))
+        ); // Should be clamped to min
+    }
+
+    #[test]
+    fn test_scanner_builder_performance_preset() {
+        let builder = ScannerBuilder::new().with_performance_preset();
+
+        assert_eq!(builder.config.batch_size, 50);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(60))
+        );
+        assert!(!builder.config.verbose_logging);
+        assert_eq!(builder.config.retry_config.max_retries, 2);
+    }
+
+    #[test]
+    fn test_scanner_builder_reliability_preset() {
+        let builder = ScannerBuilder::new().with_reliability_preset();
+
+        assert_eq!(builder.config.batch_size, 5);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(45))
+        );
+        assert!(builder.config.verbose_logging);
+        assert_eq!(builder.config.retry_config.max_retries, 5);
+    }
+
+    #[test]
+    fn test_scanner_builder_development_preset() {
+        let builder = ScannerBuilder::new()
+            .with_development_preset()
+            .expect("Failed to create development preset");
+
+        assert_eq!(builder.config.batch_size, 10);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(30))
+        );
+        assert!(builder.config.verbose_logging);
+        assert!(builder.event_emitter.is_some());
+    }
+
+    #[test]
+    fn test_scanner_builder_testing_preset() {
+        let builder = ScannerBuilder::new()
+            .with_testing_preset()
+            .expect("Failed to create testing preset");
+
+        assert_eq!(builder.config.batch_size, 3);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(10))
+        );
+        assert!(!builder.config.verbose_logging);
+        assert_eq!(builder.config.retry_config.max_retries, 0);
+        assert!(builder.event_emitter.is_some());
+    }
+
+    #[test]
+    fn test_scanner_builder_quiet_preset() {
+        let builder = ScannerBuilder::new()
+            .with_quiet_preset()
+            .expect("Failed to create quiet preset");
+
+        assert_eq!(builder.config.batch_size, 15);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(30))
+        );
+        assert!(!builder.config.verbose_logging);
+        assert_eq!(builder.config.retry_config.max_retries, 2);
+        assert!(builder.event_emitter.is_some());
+    }
+
+    #[test]
+    fn test_scanner_builder_validation_fails_without_event_emitter() {
+        let builder = ScannerBuilder::new().with_batch_size(25);
+
+        let result = builder.validate();
+        assert!(result.is_err());
+
+        if let Err(ScannerConfigError::ValidationError { field, reason: _ }) = result {
+            assert_eq!(field, "event_emitter");
+        } else {
+            panic!("Expected ValidationError for missing event_emitter");
+        }
+    }
+
+    #[test]
+    fn test_scanner_builder_validation_succeeds_with_event_emitter() {
+        let builder = ScannerBuilder::new()
+            .with_testing_preset()
+            .expect("Failed to create testing preset");
+
+        let result = builder.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_scanner_builder_build_success() {
+        let scanner = ScannerBuilder::new()
+            .with_testing_preset()
+            .expect("Failed to create testing preset")
+            .build()
+            .expect("Failed to build scanner");
+
+        assert_eq!(scanner.config.batch_size, 3);
+        assert!(scanner.config.event_emitter.is_some());
+    }
+
+    #[test]
+    fn test_scanner_builder_build_failure_without_event_emitter() {
+        let result = ScannerBuilder::new().with_batch_size(25).build();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scanner_builder_build_unchecked() {
+        let scanner = ScannerBuilder::new().with_batch_size(25).build_unchecked(); // Should succeed even without event emitter
+
+        assert_eq!(scanner.config.batch_size, 25);
+        assert!(scanner.config.event_emitter.is_none());
+    }
+
+    #[test]
+    fn test_scanner_builder_fluent_interface() {
+        let scanner = ScannerBuilder::new()
+            .with_batch_size(20)
+            .with_timeout(std::time::Duration::from_secs(50))
+            .with_verbose_logging(true)
+            .with_testing_preset()
+            .expect("Failed to create testing preset")
+            .with_batch_size(30) // Should override the testing preset batch size
+            .build()
+            .expect("Failed to build scanner");
+
+        assert_eq!(scanner.config.batch_size, 30);
+        assert_eq!(
+            scanner.config.timeout,
+            Some(std::time::Duration::from_secs(10))
+        ); // From testing preset
+        assert!(!scanner.config.verbose_logging); // From testing preset (overrides earlier setting)
+        assert!(scanner.config.event_emitter.is_some());
+    }
+
+    #[cfg(feature = "storage")]
+    #[test]
+    fn test_scanner_builder_production_preset() {
+        let builder = ScannerBuilder::new()
+            .with_production_preset(Some("test.db".to_string()))
+            .expect("Failed to create production preset");
+
+        assert_eq!(builder.config.batch_size, 30);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(60))
+        );
+        assert!(!builder.config.verbose_logging);
+        assert_eq!(builder.config.retry_config.max_retries, 3);
+        assert!(builder.event_emitter.is_some());
+    }
+
+    #[test]
+    fn test_scanner_builder_default_implementation() {
+        let builder = ScannerBuilder::default();
+        assert_eq!(builder.config.batch_size, 10);
+        assert!(builder.event_emitter.is_none());
     }
 }
 

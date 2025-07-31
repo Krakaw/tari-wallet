@@ -66,7 +66,7 @@
   - [x] 4.1 Create `src/scanning/event_emitter.rs` with scanner integration logic
   - [x] 4.2 Update `scan_wallet_across_blocks_with_cancellation` signature - remove storage_backend and progress_tracker (Req #20)
   - [x] 4.3 Add event dispatcher parameter to scanner construction (Req #21)
-  - [ ] 4.4 Implement scanner builder pattern with default listeners (Req #22)
+  - [x] 4.4 Implement scanner builder pattern with default listeners (Req #22)
   - [ ] 4.5 Add event emission at each scanning stage (start, block processing, output found, progress, completion)
   - [ ] 4.6 Integrate cancellation mechanism with event system (Req #7)
   - [ ] 4.7 Ensure fire-and-forget async event emission doesn't block scanning (Req #3)
