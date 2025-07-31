@@ -6,9 +6,13 @@
 //! management and transaction storage.
 
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::error::Error;
 
-use crate::events::{EventListener, SharedEvent, WalletScanEvent};
+use crate::events::{
+    ErrorRecord, ErrorRecoveryConfig, ErrorRecoveryManager, EventListener, SharedEvent,
+    WalletScanEvent,
+};
 
 #[cfg(feature = "storage")]
 use crate::{
@@ -76,6 +80,10 @@ pub struct DatabaseStorageListener {
     batch_size: usize,
     /// Whether to enable verbose logging
     verbose: bool,
+    /// Error recovery manager for database operations
+    error_recovery: ErrorRecoveryManager,
+    /// Operation metrics for monitoring
+    operation_metrics: HashMap<String, usize>,
 
     /// Background writer for non-WASM32 architectures
     #[cfg(all(feature = "grpc", not(target_arch = "wasm32")))]
@@ -107,6 +115,8 @@ impl DatabaseStorageListener {
             database_path: database_path.to_string(),
             batch_size: 50, // Default batch size
             verbose: false,
+            error_recovery: ErrorRecoveryManager::with_config(ErrorRecoveryConfig::production()),
+            operation_metrics: HashMap::new(),
             #[cfg(all(feature = "grpc", not(target_arch = "wasm32")))]
             background_writer: None,
         })
@@ -147,6 +157,30 @@ impl DatabaseStorageListener {
     /// * `batch_size` - Number of items to process in each batch
     pub fn set_batch_size(&mut self, batch_size: usize) {
         self.batch_size = batch_size;
+    }
+
+    /// Configure error recovery behavior
+    ///
+    /// # Arguments
+    /// * `config` - Error recovery configuration
+    pub fn set_error_recovery_config(&mut self, config: ErrorRecoveryConfig) {
+        self.error_recovery = ErrorRecoveryManager::with_config(config);
+    }
+
+    /// Get error recovery statistics
+    pub fn get_error_stats(&self) -> crate::events::ErrorStats {
+        self.error_recovery.get_error_stats()
+    }
+
+    /// Get operation metrics
+    pub fn get_operation_metrics(&self) -> &HashMap<String, usize> {
+        &self.operation_metrics
+    }
+
+    /// Clear error recovery history (useful for testing)
+    pub fn clear_error_history(&mut self) {
+        self.error_recovery.clear_error_history();
+        self.operation_metrics.clear();
     }
 
     /// Enable or disable verbose logging
@@ -273,18 +307,26 @@ impl DatabaseStorageListener {
         address_info: &AddressInfo,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         if let Some(wallet_id) = self.wallet_id {
-            // Convert event data to StoredOutput
-            let stored_output =
-                self.convert_to_stored_output(wallet_id, output_data, block_info, address_info)?;
+            let result = self
+                .save_output_with_recovery(wallet_id, output_data, block_info, address_info)
+                .await;
 
-            // Save the output to database
-            let output_ids = self.save_outputs(&[stored_output]).await?;
-
-            if self.verbose {
-                self.log(&format!(
-                    "Saved output at block {}: commitment={}, amount={:?}, output_ids={:?}",
-                    block_info.height, output_data.commitment, output_data.amount, output_ids
-                ));
+            match result {
+                Ok(_) => {
+                    if self.verbose {
+                        self.log(&format!(
+                            "Successfully saved output at block {}: commitment={}",
+                            block_info.height, output_data.commitment
+                        ));
+                    }
+                }
+                Err(e) => {
+                    self.log(&format!(
+                        "Failed to save output at block {} after retries: {}",
+                        block_info.height, e
+                    ));
+                    return Err(e);
+                }
             }
         }
 
@@ -551,6 +593,147 @@ impl DatabaseStorageListener {
     /// Get the database path
     pub fn database_path(&self) -> &str {
         &self.database_path
+    }
+
+    /// Determine if an error is recoverable
+    fn is_error_recoverable(&self, error_message: &str) -> bool {
+        // Database lock errors are usually temporary
+        if error_message.contains("database is locked") {
+            return true;
+        }
+
+        // Connection errors may be temporary
+        if error_message.contains("connection") || error_message.contains("timeout") {
+            return true;
+        }
+
+        // I/O errors may be temporary
+        if error_message.contains("I/O") || error_message.contains("disk") {
+            return true;
+        }
+
+        // Constraint violations are usually permanent
+        if error_message.contains("constraint") || error_message.contains("UNIQUE") {
+            return false;
+        }
+
+        // Type errors are usually permanent
+        if error_message.contains("type") || error_message.contains("parse") {
+            return false;
+        }
+
+        // By default, consider errors recoverable
+        true
+    }
+
+    /// Save an output with error recovery
+    async fn save_output_with_recovery(
+        &mut self,
+        wallet_id: u32,
+        output_data: &OutputData,
+        block_info: &BlockInfo,
+        address_info: &AddressInfo,
+    ) -> Result<Vec<u32>, Box<dyn Error + Send + Sync>> {
+        let mut attempt = 0;
+        let max_attempts = self.error_recovery.get_config().max_retry_attempts;
+
+        loop {
+            // Check circuit breaker
+            if !self.error_recovery.is_operation_allowed() {
+                let error_record = ErrorRecord::new(
+                    "Output save operation blocked by circuit breaker".to_string(),
+                    false,
+                )
+                .with_error_code("CIRCUIT_BREAKER_OPEN".to_string());
+
+                self.error_recovery.record_error(error_record);
+                return Err("Circuit breaker is open for database operations".into());
+            }
+
+            // Attempt the operation
+            match self
+                .try_save_output(wallet_id, output_data, block_info, address_info)
+                .await
+            {
+                Ok(result) => {
+                    self.error_recovery.record_success();
+                    if self.verbose && attempt > 0 {
+                        self.log(&format!("Output save succeeded on attempt {}", attempt + 1));
+                    }
+                    return Ok(result);
+                }
+                Err(e) => {
+                    let error_message = e.to_string();
+                    let is_recoverable = self.is_error_recoverable(&error_message);
+
+                    let mut error_record = ErrorRecord::new(error_message.clone(), is_recoverable)
+                        .with_retry_attempt(attempt)
+                        .with_context("operation".to_string(), "save_output".to_string())
+                        .with_context("block_height".to_string(), block_info.height.to_string())
+                        .with_context("commitment".to_string(), output_data.commitment.clone());
+
+                    // Categorize the error
+                    if error_message.contains("database is locked") {
+                        error_record = error_record.with_error_code("DATABASE_LOCKED".to_string());
+                    } else if error_message.contains("UNIQUE constraint") {
+                        error_record = error_record.with_error_code("DUPLICATE_OUTPUT".to_string());
+                    } else {
+                        error_record = error_record.with_error_code("SAVE_FAILED".to_string());
+                    }
+
+                    let should_retry = self.error_recovery.record_error(error_record);
+
+                    if !should_retry
+                        || !self.error_recovery.should_retry(attempt, is_recoverable)
+                        || attempt >= max_attempts
+                    {
+                        if self.verbose {
+                            self.log(&format!(
+                                "Output save failed after {} attempts: {}",
+                                attempt + 1,
+                                error_message
+                            ));
+                        }
+                        return Err(e);
+                    }
+
+                    // Calculate retry delay
+                    let delay = self.error_recovery.calculate_retry_delay(attempt);
+                    if self.verbose {
+                        self.log(&format!(
+                            "Output save failed on attempt {}, retrying in {:?}: {}",
+                            attempt + 1,
+                            delay,
+                            error_message
+                        ));
+                    }
+
+                    // Wait before retry
+                    #[cfg(not(target_arch = "wasm32"))]
+                    tokio::time::sleep(delay).await;
+
+                    attempt += 1;
+                }
+            }
+        }
+    }
+
+    /// Try to save an output (single attempt)
+    async fn try_save_output(
+        &mut self,
+        wallet_id: u32,
+        output_data: &OutputData,
+        block_info: &BlockInfo,
+        address_info: &AddressInfo,
+    ) -> Result<Vec<u32>, Box<dyn Error + Send + Sync>> {
+        // Convert event data to StoredOutput
+        let stored_output =
+            self.convert_to_stored_output(wallet_id, output_data, block_info, address_info)?;
+
+        // Save the output to database
+        self.save_outputs(&[stored_output])
+            .await
+            .map_err(|e| e.into())
     }
 }
 
@@ -1147,6 +1330,52 @@ mod tests {
             assert_eq!(listener.batch_size, 75);
             assert!(listener.verbose);
             assert_eq!(listener.name(), "DatabaseStorageListener");
+        }
+
+        #[tokio::test]
+        async fn test_error_recovery_functionality() {
+            let mut listener = DatabaseStorageListener::new_in_memory().await.unwrap();
+
+            // Test initial error stats
+            let stats = listener.get_error_stats();
+            assert_eq!(stats.total_errors, 0);
+            assert_eq!(stats.consecutive_errors, 0);
+            assert_eq!(stats.total_recoveries, 0);
+
+            // Test operation metrics
+            let metrics = listener.get_operation_metrics();
+            assert!(metrics.is_empty());
+
+            // Test error recovery configuration
+            listener.set_error_recovery_config(ErrorRecoveryConfig::development());
+            let stats = listener.get_error_stats();
+            assert_eq!(stats.total_errors, 0); // Should still be 0 after config change
+
+            // Test clearing error history
+            listener.clear_error_history();
+            let stats = listener.get_error_stats();
+            assert_eq!(stats.total_errors, 0);
+            assert_eq!(stats.consecutive_errors, 0);
+        }
+
+        #[tokio::test]
+        async fn test_error_recoverability_classification() {
+            let listener = DatabaseStorageListener::new_in_memory().await.unwrap();
+
+            // Test recoverable errors
+            assert!(listener.is_error_recoverable("database is locked"));
+            assert!(listener.is_error_recoverable("connection timeout"));
+            assert!(listener.is_error_recoverable("I/O error"));
+            assert!(listener.is_error_recoverable("disk full"));
+
+            // Test non-recoverable errors
+            assert!(!listener.is_error_recoverable("UNIQUE constraint failed"));
+            assert!(!listener.is_error_recoverable("constraint violation"));
+            assert!(!listener.is_error_recoverable("type mismatch"));
+            assert!(!listener.is_error_recoverable("parse error"));
+
+            // Test default case (should be recoverable)
+            assert!(listener.is_error_recoverable("unknown error"));
         }
     }
 
