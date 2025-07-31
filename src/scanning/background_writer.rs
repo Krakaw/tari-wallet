@@ -569,6 +569,14 @@ mod tests {
         async fn get_output_count(&self, _wallet_id: u32) -> LightweightWalletResult<usize> {
             Ok(0)
         }
+        async fn mark_spent_outputs_from_inputs(
+            &self,
+            _wallet_id: u32,
+            _from_block: u64,
+            _to_block: u64,
+        ) -> LightweightWalletResult<usize> {
+            Ok(0)
+        }
     }
 
     #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]

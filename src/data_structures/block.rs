@@ -332,6 +332,8 @@ impl Block {
         let mut spent_outputs = Vec::new();
 
         for (input_index, input) in self.inputs.iter().enumerate() {
+            let mut found_match = false;
+
             // Try to match by output hash first (for HTTP API)
             if !input.output_hash.iter().all(|&b| b == 0) {
                 // Look through all transactions to find matching output hash
@@ -348,12 +350,15 @@ impl Block {
                                     original_block_height: transaction.block_height,
                                 });
                             }
+                            found_match = true;
                             break; // Found match, no need to continue searching
                         }
                     }
                 }
-            } else if !input.commitment.iter().all(|&b| b == 0) {
-                // Try commitment matching (for GRPC API)
+            }
+
+            // If no output hash match found, try commitment matching (for GRPC API and fallback)
+            if !found_match && !input.commitment.iter().all(|&b| b == 0) {
                 use crate::data_structures::types::CompressedCommitment;
                 let commitment = CompressedCommitment::new(input.commitment);
                 // Look through all transactions to find matching commitment

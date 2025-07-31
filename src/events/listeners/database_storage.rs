@@ -406,6 +406,20 @@ impl DatabaseStorageListener {
                     // Don't return error here as the output marking succeeded
                 }
 
+                // Create an outbound transaction record for the spending transaction
+                if let Err(e) = self
+                    .create_outbound_transaction(
+                        &spent_output_data.spent_commitment,
+                        spending_block_info.height,
+                        spent_output_data.input_index,
+                        spent_output_data.spent_amount.unwrap_or(0),
+                    )
+                    .await
+                {
+                    self.log(&format!("Failed to create outbound transaction: {}", e));
+                    // Don't return error here as the spent marking succeeded
+                }
+
                 self.log(&format!(
                     "Successfully marked output as spent: {} at block {}",
                     spent_output_data.spent_commitment, spending_block_info.height
@@ -470,6 +484,58 @@ impl DatabaseStorageListener {
                 Err(e.into())
             }
         }
+    }
+
+    /// Create an outbound transaction record for a spent output
+    async fn create_outbound_transaction(
+        &self,
+        commitment_hex: &str,
+        spending_block: u64,
+        input_index: usize,
+        value: u64,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        use crate::data_structures::{
+            payment_id::PaymentId,
+            transaction::{TransactionDirection, TransactionStatus},
+            types::CompressedCommitment,
+            wallet_transaction::WalletTransaction,
+        };
+
+        if let Some(wallet_id) = self.wallet_id {
+            // Parse the commitment
+            let commitment = CompressedCommitment::from_hex(commitment_hex)
+                .map_err(|e| format!("Invalid commitment hex: {}", e))?;
+
+            // Create an outbound transaction record
+            let outbound_transaction = WalletTransaction::new(
+                spending_block,
+                None, // No output_index for spending transaction
+                Some(input_index),
+                commitment,
+                None, // No output hash for outbound transaction
+                value,
+                PaymentId::Empty, // No payment ID for spending transaction
+                TransactionStatus::MinedConfirmed, // Spending is confirmed since it's in a block
+                TransactionDirection::Outbound, // This is an outbound transaction (spending)
+                true,             // Always mature for spending transactions
+            );
+
+            // Save the outbound transaction to the database
+            if let Err(e) = self
+                .database
+                .save_transaction(wallet_id, &outbound_transaction)
+                .await
+            {
+                return Err(format!("Failed to save outbound transaction: {}", e).into());
+            }
+
+            self.log(&format!(
+                "✅ Created outbound transaction for spent output: {} (value: {}, block: {})",
+                commitment_hex, value, spending_block
+            ));
+        }
+
+        Ok(())
     }
 
     /// Mark a transaction as spent in the wallet_transactions table
@@ -1049,6 +1115,7 @@ impl DatabaseStorageListener {
             transaction::{TransactionDirection, TransactionStatus},
             types::CompressedCommitment,
         };
+        use crate::hex_utils::HexEncodable;
 
         // Parse the commitment from hex
         let commitment = CompressedCommitment::from_hex(&output_data.commitment)
@@ -1071,8 +1138,17 @@ impl DatabaseStorageListener {
             _ => TransactionStatus::MinedConfirmed, // Default for found outputs
         };
 
-        // Create payment ID (use default for now)
-        let payment_id = PaymentId::Empty;
+        // Extract payment ID from transaction data
+        let payment_id = if let Some(payment_id_hex) = &transaction_data.payment_id {
+            if payment_id_hex.is_empty() || payment_id_hex == "Empty" {
+                PaymentId::Empty
+            } else {
+                // Try to parse the payment ID from hex
+                PaymentId::from_hex(payment_id_hex).unwrap_or(PaymentId::Empty)
+            }
+        } else {
+            PaymentId::Empty
+        };
 
         Ok(
             crate::data_structures::wallet_transaction::WalletTransaction {

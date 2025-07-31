@@ -4,7 +4,7 @@
 //! to a SQLite database, maintaining compatibility with the existing storage
 //! infrastructure while using the new callback-based approach.
 
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 use crate::{
     errors::LightweightWalletResult,
     scanning::{
@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 use async_trait::async_trait;
 
 /// Database data processor that stores scan results to SQLite
@@ -21,7 +21,7 @@ use async_trait::async_trait;
 /// This processor wraps the existing ScannerStorage functionality and provides
 /// a bridge between the new callback-based scanning approach and the existing
 /// database storage infrastructure.
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 pub struct DatabaseDataProcessor {
     /// The underlying storage backend
     storage: ScannerStorage,
@@ -29,7 +29,7 @@ pub struct DatabaseDataProcessor {
     verbose: bool,
 }
 
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 impl DatabaseDataProcessor {
     /// Create a new database data processor with the given storage backend
     pub fn new(storage: ScannerStorage, verbose: bool) -> Self {
@@ -140,7 +140,7 @@ impl DatabaseDataProcessor {
     }
 }
 
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 #[async_trait]
 impl DataProcessor for DatabaseDataProcessor {
     async fn process_block(&mut self, block_data: BlockData) -> LightweightWalletResult<()> {
@@ -338,7 +338,7 @@ mod tests {
         assert_eq!(processor.get_latest_block(), None);
     }
 
-    #[cfg(feature = "storage")]
+    #[cfg(all(feature = "grpc", feature = "storage"))]
     #[tokio::test]
     async fn test_database_processor_memory_only() {
         let processor = DatabaseDataProcessor::new_memory(false);

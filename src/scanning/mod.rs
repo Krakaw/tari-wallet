@@ -64,7 +64,7 @@ pub mod progress;
 pub mod data_processor;
 
 // Database data processor implementation
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 pub mod database_processor;
 
 // Re-export GRPC scanner types
@@ -87,15 +87,15 @@ pub use wallet_scanner::{
 #[cfg(feature = "grpc")]
 pub use wallet_scanner::WalletScanner as WalletScannerStruct;
 
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 pub use wallet_scanner::extract_utxo_outputs_from_wallet_state;
 
 // Re-export background writer types for scanner binary operations
-#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
 pub use background_writer::{BackgroundWriter, BackgroundWriterCommand};
 
 // Re-export storage manager types for scanner binary operations
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 pub use storage_manager::ScannerStorage;
 
 // Re-export progress tracking types for scanner binary operations
@@ -109,7 +109,7 @@ pub use data_processor::{
 };
 
 // Re-export database processor types
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 pub use database_processor::{DatabaseDataProcessor, MemoryStorageProcessor};
 
 // Event emitter module for scanner integration with event system

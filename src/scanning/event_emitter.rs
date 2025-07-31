@@ -57,6 +57,7 @@ use crate::events::{
     },
     EventDispatcher,
 };
+use crate::hex_utils::HexEncodable;
 use crate::scanning::{BinaryScanConfig, ScanContext, ScanMetadata};
 
 /// Event emitter for wallet scanner integration
@@ -226,7 +227,8 @@ impl ScanEventEmitter {
             format!("{:?}", transaction.transaction_direction),
             block_info.timestamp,
         )
-        .with_output_index(transaction.output_index.unwrap_or(0));
+        .with_output_index(transaction.output_index.unwrap_or(0))
+        .with_payment_id(transaction.payment_id.to_hex());
 
         let event = WalletScanEvent::OutputFound {
             metadata,
@@ -251,6 +253,11 @@ impl ScanEventEmitter {
         match_method: &str,
         original_block_info: &BlockInfo,
     ) -> Result<(), LightweightWalletError> {
+        println!(
+            "🚨 DEBUG: emit_spent_output_found called for commitment: {} at block {}",
+            hex::encode(&spent_output.commitment.as_bytes()),
+            spending_block.height
+        );
         let metadata = self.create_metadata();
 
         // Create spent output data
@@ -295,7 +302,8 @@ impl ScanEventEmitter {
             "Outbound".to_string(), // Spending is always outbound
             spending_block.timestamp,
         )
-        .with_output_index(input_index);
+        .with_output_index(input_index)
+        .with_payment_id(spent_output.payment_id.to_hex());
 
         let event = WalletScanEvent::SpentOutputFound {
             metadata,
@@ -499,6 +507,36 @@ impl ScanEventEmitter {
         match &self.correlation_id {
             Some(id) => EventMetadata::with_correlation(&self.source, id.clone()),
             None => EventMetadata::new(&self.source),
+        }
+    }
+
+    /// Try to load existing wallet state from database if database storage is available
+    /// This method checks if a DatabaseStorageListener is registered and attempts to query existing transactions
+    #[cfg(feature = "storage")]
+    pub async fn try_load_existing_wallet_state(
+        &self,
+        database_path: &str,
+        wallet_id: Option<u32>,
+    ) -> Result<Option<WalletState>, LightweightWalletError> {
+        use crate::storage::{SqliteStorage, WalletStorage};
+
+        if let Some(wallet_id) = wallet_id {
+            // Try to connect to the database and load wallet state
+            match SqliteStorage::new(database_path).await {
+                Ok(storage) => match storage.load_wallet_state(wallet_id).await {
+                    Ok(wallet_state) => {
+                        if !wallet_state.transactions.is_empty() {
+                            Ok(Some(wallet_state))
+                        } else {
+                            Ok(None)
+                        }
+                    }
+                    Err(_) => Ok(None),
+                },
+                Err(_) => Ok(None),
+            }
+        } else {
+            Ok(None)
         }
     }
 }

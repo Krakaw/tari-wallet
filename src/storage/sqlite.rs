@@ -1400,7 +1400,7 @@ impl WalletStorage for SqliteStorage {
                         output_ids.push(output_id);
                     }
                 } else {
-                    // Insert new
+                    // Insert new with ON CONFLICT handling to update existing outputs
                     tx.execute(
                         r#"
                         INSERT INTO outputs
@@ -1411,6 +1411,11 @@ impl WalletStorage for SqliteStorage {
                          metadata_signature_u_y, encrypted_data, minimum_value_promise, rangeproof,
                          status, mined_height, spent_in_tx_id)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(wallet_id, commitment) DO UPDATE SET
+                            status = EXCLUDED.status,
+                            mined_height = COALESCE(EXCLUDED.mined_height, mined_height),
+                            spent_in_tx_id = COALESCE(EXCLUDED.spent_in_tx_id, spent_in_tx_id),
+                            updated_at = CURRENT_TIMESTAMP
                         "#,
                         params![
                             output.wallet_id as i64,
@@ -1441,7 +1446,19 @@ impl WalletStorage for SqliteStorage {
                         ],
                     )?;
 
-                    output_ids.push(tx.last_insert_rowid() as u32);
+                    // Get the row ID (either newly inserted or existing)
+                    let row_id = if tx.changes() > 0 {
+                        // New insert
+                        tx.last_insert_rowid() as u32
+                    } else {
+                        // Conflict occurred, get existing ID
+                        let mut stmt = tx.prepare("SELECT id FROM outputs WHERE wallet_id = ? AND commitment = ?")?;
+                        let existing_id: i64 = stmt.query_row(params![output.wallet_id as i64, output.commitment], |row| {
+                            row.get(0)
+                        })?;
+                        existing_id as u32
+                    };
+                    output_ids.push(row_id);
                 }
             }
 
