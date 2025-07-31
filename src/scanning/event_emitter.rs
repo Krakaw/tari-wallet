@@ -34,7 +34,9 @@
 //! ```
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use tokio::sync::Mutex;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures;
@@ -60,8 +62,8 @@ use crate::scanning::{BinaryScanConfig, ScanContext, ScanMetadata};
 /// allowing scanner operations to emit structured events that can be handled
 /// by registered listeners.
 pub struct ScanEventEmitter {
-    /// Event dispatcher for sending events to listeners
-    dispatcher: EventDispatcher,
+    /// Event dispatcher for sending events to listeners (wrapped in Arc<Mutex> for fire-and-forget sharing)
+    dispatcher: Arc<Mutex<EventDispatcher>>,
     /// Source identifier for events emitted by this instance
     source: String,
     /// Optional correlation ID for tracking related events across a scan session
@@ -80,7 +82,7 @@ impl ScanEventEmitter {
     /// Create a new event emitter with the given dispatcher and source identifier
     pub fn new(dispatcher: EventDispatcher, source: String) -> Self {
         Self {
-            dispatcher,
+            dispatcher: Arc::new(Mutex::new(dispatcher)),
             source,
             correlation_id: None,
             scan_start_time: None,
@@ -121,14 +123,9 @@ impl ScanEventEmitter {
         self.current_context = Some(context);
     }
 
-    /// Get a reference to the event dispatcher
-    pub fn dispatcher(&self) -> &EventDispatcher {
-        &self.dispatcher
-    }
-
-    /// Get a mutable reference to the event dispatcher
-    pub fn dispatcher_mut(&mut self) -> &mut EventDispatcher {
-        &mut self.dispatcher
+    /// Get a reference to the event dispatcher (requires locking)
+    pub fn dispatcher(&self) -> Arc<Mutex<EventDispatcher>> {
+        Arc::clone(&self.dispatcher)
     }
 
     /// Emit a scan started event
@@ -383,15 +380,15 @@ impl ScanEventEmitter {
     /// Handle event dispatch based on fire-and-forget mode
     async fn dispatch_event(&mut self, event: WalletScanEvent) {
         if self.fire_and_forget {
-            // For fire-and-forget mode, we'll spawn the dispatch operation
-            // To handle ownership, we temporarily replace the dispatcher with an empty one
-            let mut dispatcher = std::mem::replace(&mut self.dispatcher, EventDispatcher::new());
+            // For fire-and-forget mode, spawn the dispatch operation in the background
+            let dispatcher = Arc::clone(&self.dispatcher);
 
             #[cfg(not(target_arch = "wasm32"))]
             {
                 // Spawn the dispatch in the background and don't wait for it
                 tokio::spawn(async move {
-                    dispatcher.dispatch(event).await;
+                    let mut disp = dispatcher.lock().await;
+                    disp.dispatch(event).await;
                 });
                 // Return immediately without waiting for the spawned task
             }
@@ -400,17 +397,15 @@ impl ScanEventEmitter {
             {
                 // Use spawn_local for WASM
                 wasm_bindgen_futures::spawn_local(async move {
-                    dispatcher.dispatch(event).await;
+                    let mut disp = dispatcher.lock().await;
+                    disp.dispatch(event).await;
                 });
                 // Return immediately without waiting for the spawned task
             }
-
-            // Replace with a new empty dispatcher
-            // Note: This approach loses listener state after each fire-and-forget dispatch
-            // A production implementation would use Arc<Mutex<EventDispatcher>> or channels
         } else {
             // Standard blocking dispatch
-            self.dispatcher.dispatch(event).await;
+            let mut disp = self.dispatcher.lock().await;
+            disp.dispatch(event).await;
         }
     }
 

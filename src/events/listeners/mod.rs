@@ -191,12 +191,14 @@
 //! ```
 
 // Module exports
+pub mod ascii_progress_bar;
 pub mod console_logging;
 pub mod database_storage;
 pub mod mock_listener;
 pub mod progress_tracking;
 
 // Re-exports for convenience
+pub use ascii_progress_bar::{AsciiProgressBarConfig, AsciiProgressBarListener};
 pub use console_logging::ConsoleLoggingListener;
 pub use database_storage::DatabaseStorageListener;
 pub use mock_listener::MockEventListener;

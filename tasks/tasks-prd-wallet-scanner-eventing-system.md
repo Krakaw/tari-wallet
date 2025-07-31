@@ -12,6 +12,8 @@
 - `src/events/error_recovery.rs` - Comprehensive error recovery and circuit breaker system with retry logic, error classification, and monitoring for robust production operations
 - `src/lib.rs` - Updated to include events module export
 - `src/scanning/event_emitter.rs` - Complete ScanEventEmitter implementation with scanner integration logic, helper functions for creating events from scanner data, convenience functions for setting up event emitters with common listeners, and comprehensive tests
+- `src/bin/scanner.rs` - Updated scanner binary to use event system instead of progress callbacks and storage backends. Replaced old progress tracking with AsciiProgressBarListener and ProgressTrackingListener, integrated DatabaseStorageListener for storage operations, and removed deprecated display_progress function
+- `src/events/listeners/ascii_progress_bar.rs` - Complete AsciiProgressBarListener implementation providing real-time ASCII progress bar display using carriage return for same-line updates. Features configurable bar width, update intervals, ETA display, speed tracking, and output counts. Includes comprehensive tests and supports quiet/detailed modes for different CLI scenarios
 - Cross-platform tests:
   - Native tests: 16 comprehensive tests covering all event system functionality  
   - Cross-platform tests: 3 tests that run on both native and WASM platforms
@@ -62,7 +64,7 @@
   - [x] 3.8 Add event capture functionality for test assertions (Req #29)
   - [x] 3.9 Ensure deterministic async testing support (Req #30)
 
-- [ ] 4.0 Refactor Wallet Scanner to Use Event System
+- [x] 4.0 Refactor Wallet Scanner to Use Event System
   - [x] 4.1 Create `src/scanning/event_emitter.rs` with scanner integration logic
   - [x] 4.2 Update `scan_wallet_across_blocks_with_cancellation` signature - remove storage_backend and progress_tracker (Req #20)
   - [x] 4.3 Add event dispatcher parameter to scanner construction (Req #21)
@@ -70,7 +72,7 @@
   - [x] 4.5 Add event emission at each scanning stage (start, block processing, output found, progress, completion)
   - [x] 4.6 Integrate cancellation mechanism with event system (Req #7)
   - [x] 4.7 Ensure fire-and-forget async event emission doesn't block scanning (Req #3)
-  - [ ] 4.8 Convert `src/bin/scanner.rs` to use the event system in place of existing functionality.
+  - [x] 4.8 Convert `src/bin/scanner.rs` to use the event system in place of existing functionality.
 
 - [ ] 5.0 Update Tests and Add Migration Support
   - [ ] 5.1 Write unit tests for core event system components (>95% coverage target)

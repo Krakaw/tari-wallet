@@ -121,9 +121,6 @@ use lightweight_wallet_libs::{
         GrpcScannerBuilder,
         OutputFormat,
 
-        // Progress types
-        ProgressInfo,
-
         WalletScannerConfig,
         WalletScannerStruct,
     },
@@ -312,56 +309,7 @@ async fn display_completion_info(
     Ok(())
 }
 
-/// Enhanced CLI progress display with ASCII progress bar
-///
-/// Maintains identical user experience with real-time updates and consistent formatting.
-/// Critical for user experience: shows visual progress bar, percentage, block info, and scan results.
-#[cfg(feature = "grpc")]
-fn display_progress(progress_info: &ProgressInfo) {
-    // Create ASCII progress bar
-    let bar_width = 40;
-    let progress_fraction = progress_info.progress_percent / 100.0;
-    let filled_width = (progress_fraction * bar_width as f64) as usize;
-    let filled_width = filled_width.min(bar_width); // Ensure we don't exceed bar width
-
-    let progress_bar = format!(
-        "{}{}",
-        "█".repeat(filled_width),
-        "░".repeat(bar_width - filled_width)
-    );
-
-    // Format the time remaining if available
-    let eta_display = if let Some(eta) = progress_info.eta {
-        let eta_secs = eta.as_secs();
-        if eta_secs < 60 {
-            format!(" ETA: {eta_secs}s")
-        } else if eta_secs < 3600 {
-            let minutes = eta_secs / 60;
-            let seconds = eta_secs % 60;
-            format!(" ETA: {minutes}m{seconds}s")
-        } else {
-            let hours = eta_secs / 3600;
-            let minutes = (eta_secs % 3600) / 60;
-            format!(" ETA: {hours}h{minutes}m")
-        }
-    } else {
-        String::new()
-    };
-
-    print!(
-        "\r🔍 [{}] {:.1}% ({}/{}) | Block {} | {:.1} blocks/s | Found: {} outputs, {} spent{}   ",
-        progress_bar,
-        progress_info.progress_percent,
-        format_number(progress_info.blocks_processed),
-        format_number(progress_info.total_blocks),
-        format_number(progress_info.current_block),
-        progress_info.blocks_per_sec,
-        format_number(progress_info.outputs_found),
-        format_number(progress_info.inputs_found),
-        eta_display
-    );
-    std::io::Write::flush(&mut std::io::stdout()).unwrap();
-}
+// Progress display is now handled by the ConsoleLoggingListener in the event system
 
 #[cfg(all(feature = "grpc", feature = "storage"))]
 fn create_scan_config(
@@ -393,7 +341,7 @@ fn create_scan_config(
 #[cfg(feature = "grpc")]
 fn create_wallet_scanner_config(args: &CliArgs) -> WalletScannerConfig {
     WalletScannerConfig {
-        progress_tracker: None, // Will be set separately with callback
+        event_emitter: None, // Will be set separately with event system
         batch_size: args.batch_size,
         timeout: Some(std::time::Duration::from_secs(args.timeout)),
         verbose_logging: !args.quiet,
@@ -719,20 +667,65 @@ async fn main_with_storage() -> LightweightWalletResult<()> {
         let _ = cancel_tx.send(true);
     };
 
-    // Create wallet scanner with config and progress callback
-    let quiet = args.quiet;
-    let wallet_scanner = WalletScannerStruct::from_config(scanner_config).with_progress_callback(
-        move |progress_info| {
-            if !quiet {
-                display_progress(progress_info);
-            }
-        },
-    );
+    // Create wallet scanner with event system instead of progress callback
 
-    // Perform the scan with cancellation support
-    let mut wallet_scanner = wallet_scanner; // Make it mutable for the scan call
+    // Create event emitter with appropriate listeners
+    use lightweight_wallet_libs::events::{
+        listeners::{AsciiProgressBarListener, ProgressTrackingListener},
+        EventDispatcher,
+    };
+    use lightweight_wallet_libs::scanning::event_emitter::ScanEventEmitter;
+
+    let mut event_dispatcher = EventDispatcher::new();
+
+    // Add ASCII progress bar listener for real-time progress display (matches original scanner experience)
+    let progress_bar_listener = if args.quiet {
+        // Use minimal progress bar for quiet mode
+        AsciiProgressBarListener::minimal()
+    } else {
+        // Use detailed progress bar for normal mode
+        AsciiProgressBarListener::detailed()
+    };
+    let _ = event_dispatcher.register(Box::new(progress_bar_listener));
+
+    // Add progress tracking listener for ETA calculations (used by progress bar)
+    let progress_listener = ProgressTrackingListener::new();
+    let _ = event_dispatcher.register(Box::new(progress_listener));
+
+    // Add database storage listener if using database storage
+    #[cfg(feature = "storage")]
+    if !storage_backend.is_memory_only {
+        use lightweight_wallet_libs::events::listeners::DatabaseStorageListener;
+        // Note: DatabaseStorageListener will handle storage operations through events
+        if let Some(db_path) = &config.database_path {
+            match DatabaseStorageListener::new(db_path).await {
+                Ok(db_listener) => {
+                    let _ = event_dispatcher.register(Box::new(db_listener));
+                }
+                Err(e) => {
+                    if !args.quiet {
+                        eprintln!(
+                            "⚠️  Warning: Could not create database event listener: {}",
+                            e
+                        );
+                        eprintln!("   Continuing with memory-only event handling...");
+                    }
+                }
+            }
+        }
+    }
+
+    // Create event emitter with the configured dispatcher
+    let event_emitter = ScanEventEmitter::new(event_dispatcher, "wallet_scanner".to_string())
+        .with_fire_and_forget(true); // Non-blocking event emission for scanning performance
+
+    // Create wallet scanner with event emitter
+    let mut wallet_scanner =
+        WalletScannerStruct::from_config(scanner_config).with_event_emitter(event_emitter);
+
+    // Perform the scan with cancellation support (using event system instead of storage_backend)
     let scan_result = tokio::select! {
-        result = wallet_scanner.scan(&mut scanner, &final_scan_context, &config, &mut storage_backend, &mut cancel_rx) => {
+        result = wallet_scanner.scan(&mut scanner, &final_scan_context, &config, &mut cancel_rx) => {
             Some(result)
         }
         _ = ctrl_c => {
