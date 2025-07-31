@@ -687,8 +687,8 @@ impl ScanResult {
 /// config.timeout = Some(Duration::from_secs(60));
 /// ```
 pub struct WalletScannerConfig {
-    /// Progress tracking configuration
-    pub progress_tracker: Option<ProgressTracker>,
+    /// Event emitter for scanner operations (replaces progress_tracker and storage interactions)
+    pub event_emitter: Option<super::event_emitter::ScanEventEmitter>,
     /// Batch size for block processing (number of blocks to process at once)
     pub batch_size: usize,
     /// Timeout duration for blockchain operations
@@ -900,7 +900,7 @@ impl WalletScannerConfig {
 impl Default for WalletScannerConfig {
     fn default() -> Self {
         Self {
-            progress_tracker: None,
+            event_emitter: None,
             batch_size: 10,
             timeout: Some(std::time::Duration::from_secs(30)),
             verbose_logging: false,
@@ -912,7 +912,7 @@ impl Default for WalletScannerConfig {
 impl Clone for WalletScannerConfig {
     fn clone(&self) -> Self {
         Self {
-            progress_tracker: None, // Progress tracker cannot be cloned due to callback
+            event_emitter: None, // Event emitter cannot be cloned due to internal state
             batch_size: self.batch_size,
             timeout: self.timeout,
             verbose_logging: self.verbose_logging,
@@ -924,7 +924,7 @@ impl Clone for WalletScannerConfig {
 impl std::fmt::Debug for WalletScannerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WalletScannerConfig")
-            .field("progress_tracker", &self.progress_tracker.is_some())
+            .field("event_emitter", &self.event_emitter.is_some())
             .field("batch_size", &self.batch_size)
             .field("timeout", &self.timeout)
             .field("verbose_logging", &self.verbose_logging)
@@ -1005,24 +1005,71 @@ impl WalletScanner {
         Self { config }
     }
 
-    /// Set a progress callback for tracking scan progress
+    /// Create a new wallet scanner with default event listeners (progress + console)
     ///
-    /// The callback will be called periodically during scanning with progress information.
-    /// Note: The total blocks will be set automatically when scanning begins.
-    pub fn with_progress_callback<F>(mut self, callback: F) -> Self
-    where
-        F: Fn(&ProgressInfo) + Send + Sync + 'static,
-    {
-        // Create a progress tracker with total_blocks=0 (will be updated when scanning begins)
-        let progress_tracker = ProgressTracker::new(0).with_callback(Box::new(callback));
-        self.config.progress_tracker = Some(progress_tracker);
+    /// This is a convenience constructor that sets up common event listeners.
+    pub fn new_with_default_events(source: String) -> Result<Self, LightweightWalletError> {
+        let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
+        Ok(Self {
+            config: WalletScannerConfig {
+                event_emitter: Some(event_emitter),
+                ..Default::default()
+            },
+        })
+    }
+
+    /// Create a new wallet scanner with database event listeners (storage + progress + console)
+    ///
+    /// This is a convenience constructor for database-backed scanning.
+    #[cfg(feature = "storage")]
+    pub fn new_with_database_events(
+        source: String,
+        database_path: Option<String>,
+    ) -> Result<Self, LightweightWalletError> {
+        let event_emitter =
+            super::event_emitter::create_database_event_emitter(source, None, database_path)?;
+        Ok(Self {
+            config: WalletScannerConfig {
+                event_emitter: Some(event_emitter),
+                ..Default::default()
+            },
+        })
+    }
+
+    /// Set an event emitter for scanner operations
+    ///
+    /// The event emitter will handle progress tracking, storage operations, and other
+    /// scanner events through registered listeners.
+    pub fn with_event_emitter(
+        mut self,
+        event_emitter: super::event_emitter::ScanEventEmitter,
+    ) -> Self {
+        self.config.event_emitter = Some(event_emitter);
         self
     }
 
-    /// Set a progress tracker for monitoring scan progress
-    pub fn with_progress_tracker(mut self, progress_tracker: ProgressTracker) -> Self {
-        self.config.progress_tracker = Some(progress_tracker);
-        self
+    /// Create scanner with default event emitter (progress tracking and console logging)
+    ///
+    /// This is a convenience method that sets up an event emitter with commonly used listeners.
+    pub fn with_default_events(mut self, source: String) -> Result<Self, LightweightWalletError> {
+        let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
+        self.config.event_emitter = Some(event_emitter);
+        Ok(self)
+    }
+
+    /// Create scanner with database event emitter (storage + progress tracking)
+    ///
+    /// This is a convenience method for setting up an event emitter with database storage.
+    #[cfg(feature = "storage")]
+    pub fn with_database_events(
+        mut self,
+        source: String,
+        database_path: Option<String>,
+    ) -> Result<Self, LightweightWalletError> {
+        let event_emitter =
+            super::event_emitter::create_database_event_emitter(source, None, database_path)?;
+        self.config.event_emitter = Some(event_emitter);
+        Ok(self)
     }
 
     /// Set the batch size for block processing
@@ -1112,23 +1159,12 @@ impl WalletScanner {
         self.config.validate()
     }
 
-    /// Create a quick scanner with simple progress display
+    /// Create a quick scanner with simple progress display (using events)
     ///
-    /// This is a convenience method that creates a scanner with basic progress tracking
-    /// that prints progress to stdout.
-    pub fn with_simple_progress() -> Self {
-        Self::new().with_progress_callback(|info| {
-            print!("\r🔍 Progress: {:.1}% ({}/{}) | Block {} | {:.1} blocks/s | Found: {} outputs, {} spent   ",
-                info.progress_percent,
-                info.blocks_processed,
-                info.total_blocks,
-                info.current_block,
-                info.blocks_per_sec,
-                info.outputs_found,
-                info.inputs_found
-            );
-            std::io::Write::flush(&mut std::io::stdout()).unwrap();
-        })
+    /// This is a convenience method that creates a scanner with basic event-driven
+    /// progress tracking and console logging.
+    pub fn with_simple_progress() -> Result<Self, LightweightWalletError> {
+        Self::new_with_default_events("simple_progress_scanner".to_string())
     }
 
     /// Create a scanner optimized for performance
@@ -1197,8 +1233,8 @@ impl WalletScanner {
                 println!("   • Timeout: {timeout:?}");
             }
             println!(
-                "   • Progress tracking: {}",
-                self.config.progress_tracker.is_some()
+                "   • Event emitter: {}",
+                self.config.event_emitter.is_some()
             );
         }
 
@@ -1279,13 +1315,12 @@ impl WalletScanner {
     ///
     /// This is the main scanning method that processes blockchain blocks to find
     /// wallet outputs and transactions. It supports both specific block scanning
-    /// and range scanning with automatic resume functionality.
+    /// and range scanning with event-driven progress tracking and storage.
     ///
     /// # Arguments
     /// * `scanner` - GRPC blockchain scanner for fetching blocks
     /// * `scan_context` - Wallet scanning context with keys and entropy
     /// * `config` - Binary scan configuration
-    /// * `storage_backend` - Storage backend for persistence
     /// * `cancel_rx` - Channel receiver for cancellation signals
     ///
     /// # Returns
@@ -1295,7 +1330,7 @@ impl WalletScanner {
     /// Returns an error if:
     /// - Blockchain connection fails
     /// - Invalid scan configuration provided
-    /// - Storage operations fail
+    /// - Event emitter is not configured
     /// - Scanning is cancelled by external signal
     #[cfg(all(feature = "grpc", feature = "storage"))]
     pub async fn scan(
@@ -1303,27 +1338,35 @@ impl WalletScanner {
         scanner: &mut GrpcBlockchainScanner,
         scan_context: &ScanContext,
         config: &BinaryScanConfig,
-        storage_backend: &mut ScannerStorage,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
     ) -> LightweightWalletResult<ScanResult> {
+        // Check that event emitter is configured
+        if self.config.event_emitter.is_none() {
+            return Err(LightweightWalletError::InvalidArgument {
+                argument: "event_emitter".to_string(),
+                value: "None".to_string(),
+                message: "Event emitter must be configured before scanning. Use with_event_emitter(), with_default_events(), or with_database_events().".to_string(),
+            });
+        }
+
         // Log scan start if verbose logging is enabled
         if self.config.verbose_logging && !config.quiet {
-            println!("🚀 Starting wallet scan with enhanced scanner");
+            println!("🚀 Starting wallet scan with event-driven scanner");
             println!("   • Batch size: {}", self.config.batch_size);
             if let Some(timeout) = self.config.timeout {
                 println!("   • Timeout: {timeout:?}");
             }
-            println!(
-                "   • Progress tracking: {}",
-                self.config.progress_tracker.is_some()
-            );
+            println!("   • Event emitter: configured");
         }
 
         let start_time = Instant::now();
 
+        // Get mutable reference to event emitter
+        let event_emitter = self.config.event_emitter.as_mut().unwrap();
+
         // Execute the scan with enhanced error handling
         let scan_result = self
-            .execute_scan_with_retry(scanner, scan_context, config, storage_backend, cancel_rx)
+            .execute_scan_with_retry(scanner, scan_context, config, event_emitter, cancel_rx)
             .await;
 
         // Add timing information to the result
@@ -2493,7 +2536,7 @@ mod tests {
         assert_eq!(scanner.config.batch_size, 10);
         assert_eq!(scanner.config.timeout, Some(Duration::from_secs(30)));
         assert!(!scanner.config.verbose_logging);
-        assert!(scanner.config.progress_tracker.is_none());
+        assert!(scanner.config.event_emitter.is_none());
     }
 
     #[test]
@@ -2598,8 +2641,9 @@ mod tests {
 
     #[test]
     fn test_wallet_scanner_presets() {
-        let simple = WalletScanner::with_simple_progress();
-        assert!(simple.config.progress_tracker.is_some());
+        let simple = WalletScanner::with_simple_progress()
+            .expect("Failed to create scanner with simple progress");
+        assert!(simple.config.event_emitter.is_some());
 
         let performance = WalletScanner::performance_optimized();
         assert_eq!(performance.config.batch_size, 50);
