@@ -10,7 +10,7 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::events::types::EventType;
+use crate::events::types::{BlockInfo, EventType, OutputData, SpentOutputData};
 use crate::events::{EventListener, SerializableEvent, SharedEvent, WalletScanEvent};
 
 /// Verbosity levels for console logging
@@ -41,6 +41,7 @@ impl LogLevel {
             (LogLevel::Normal, WalletScanEvent::ScanCancelled { .. }) => true,
             (LogLevel::Normal, WalletScanEvent::ScanProgress { .. }) => true,
             (LogLevel::Normal, WalletScanEvent::OutputFound { .. }) => true,
+            (LogLevel::Normal, WalletScanEvent::SpentOutputFound { .. }) => true,
             (LogLevel::Normal, _) => false,
 
             (LogLevel::Verbose, _) => true,
@@ -538,6 +539,51 @@ impl ConsoleLoggingListener {
             },
             color,
             "OUTPUT",
+            message,
+        );
+    }
+
+    /// Handle SpentOutputFound events
+    ///
+    /// Log information about spent outputs
+    fn handle_spent_output_found(
+        &mut self,
+        spent_output_data: &SpentOutputData,
+        spending_block_info: &BlockInfo,
+    ) {
+        let amount_str = spent_output_data
+            .spent_amount
+            .map_or("unknown".to_string(), |a| format!("{}", a));
+
+        let message = format!(
+            "Spent output {} (amount: {}) at block {} via {} (input #{})",
+            spent_output_data.spent_commitment,
+            amount_str,
+            spending_block_info.height,
+            spent_output_data.match_method,
+            spent_output_data.input_index
+        );
+
+        self.log_message(
+            &WalletScanEvent::SpentOutputFound {
+                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                spent_output_data: spent_output_data.clone(),
+                spending_block_info: spending_block_info.clone(),
+                original_output_info: OutputData::new(
+                    spent_output_data.spent_commitment.clone(),
+                    String::new(),
+                    0,
+                    true,
+                ),
+                spending_transaction_data: crate::events::types::TransactionData::new(
+                    spent_output_data.spent_amount.unwrap_or(0),
+                    "Spent".to_string(),
+                    "Outbound".to_string(),
+                    spending_block_info.timestamp,
+                ),
+            },
+            "",
+            "SPENT",
             message,
         );
     }
@@ -1160,6 +1206,13 @@ impl EventListener for ConsoleLoggingListener {
                 ..
             } => {
                 self.handle_output_found(output_data, block_info, address_info);
+            }
+            WalletScanEvent::SpentOutputFound {
+                spent_output_data,
+                spending_block_info,
+                ..
+            } => {
+                self.handle_spent_output_found(spent_output_data, spending_block_info);
             }
             WalletScanEvent::ScanProgress {
                 current_block,

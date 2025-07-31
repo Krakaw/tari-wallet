@@ -714,6 +714,13 @@ impl EventListener for ProgressTrackingListener {
                 self.handle_output_found(output_data, block_info, address_info)
                     .await
             }
+            WalletScanEvent::SpentOutputFound { .. } => {
+                // Track spent outputs in inputs_found counter
+                if let Ok(mut state) = self.state.lock() {
+                    state.inputs_found += 1;
+                }
+                Ok(())
+            }
             WalletScanEvent::ScanProgress {
                 current_block,
                 total_blocks,
@@ -779,6 +786,7 @@ impl EventListener for ProgressTrackingListener {
             WalletScanEvent::ScanStarted { .. }
             | WalletScanEvent::BlockProcessed { .. }
             | WalletScanEvent::OutputFound { .. }
+            | WalletScanEvent::SpentOutputFound { .. }
             | WalletScanEvent::ScanProgress { .. }
             | WalletScanEvent::ScanCompleted { .. }
             | WalletScanEvent::ScanError { .. }

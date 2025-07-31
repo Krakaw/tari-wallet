@@ -52,8 +52,8 @@ use crate::data_structures::{
 use crate::errors::LightweightWalletError;
 use crate::events::{
     types::{
-        AddressInfo, BlockInfo, EventMetadata, OutputData, ScanConfig, TransactionData,
-        WalletScanEvent,
+        AddressInfo, BlockInfo, EventMetadata, OutputData, ScanConfig, SpentOutputData,
+        TransactionData, WalletScanEvent,
     },
     EventDispatcher,
 };
@@ -234,6 +234,75 @@ impl ScanEventEmitter {
             block_info,
             address_info: address_info.clone(),
             transaction_data,
+        };
+
+        self.dispatch_event(event).await;
+        Ok(())
+    }
+
+    /// Emit a spent output found event
+    ///
+    /// This should be called when a previously found output is detected as spent (input found).
+    pub async fn emit_spent_output_found(
+        &mut self,
+        spent_output: &WalletTransaction,
+        spending_block: &Block,
+        input_index: usize,
+        match_method: &str,
+        original_block_info: &BlockInfo,
+    ) -> Result<(), LightweightWalletError> {
+        let metadata = self.create_metadata();
+
+        // Create spent output data
+        let spent_output_data = SpentOutputData::new(
+            hex::encode(&spent_output.commitment.as_bytes()),
+            input_index,
+            original_block_info.height,
+            spending_block.height,
+            match_method.to_string(),
+        )
+        .with_spent_amount(spent_output.value)
+        .with_output_hash(
+            spent_output
+                .output_hash
+                .as_ref()
+                .map(|h| hex::encode(h))
+                .unwrap_or_default(),
+        );
+
+        // Create spending block info
+        let spending_block_info = BlockInfo::new(
+            spending_block.height,
+            hex::encode(&spending_block.hash),
+            spending_block.timestamp,
+            input_index,
+        );
+
+        // Create original output info
+        let original_output_info = OutputData::new(
+            hex::encode(&spent_output.commitment.as_bytes()),
+            String::new(), // range_proof not needed for spent events
+            0,             // features not needed for spent events
+            true,          // is_mine (we only track our own outputs)
+        )
+        .with_amount(spent_output.value)
+        .with_maturity_height(0); // maturity not relevant for spent outputs
+
+        // Create spending transaction data
+        let spending_transaction_data = TransactionData::new(
+            spent_output.value,
+            format!("{:?}", spent_output.transaction_status),
+            "Outbound".to_string(), // Spending is always outbound
+            spending_block.timestamp,
+        )
+        .with_output_index(input_index);
+
+        let event = WalletScanEvent::SpentOutputFound {
+            metadata,
+            spent_output_data,
+            spending_block_info,
+            original_output_info,
+            spending_transaction_data,
         };
 
         self.dispatch_event(event).await;

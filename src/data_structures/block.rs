@@ -45,6 +45,15 @@ pub struct Block {
     pub inputs: Vec<TransactionInput>,
 }
 
+/// Information about a spent output detected during input processing
+#[derive(Debug, Clone)]
+pub struct SpentOutputInfo {
+    pub spent_transaction: crate::data_structures::wallet_transaction::WalletTransaction,
+    pub input_index: usize,
+    pub match_method: String, // "output_hash" or "commitment"
+    pub original_block_height: u64,
+}
+
 /// Result of processing a single output
 #[derive(Debug, Clone)]
 struct OutputProcessingResult {
@@ -312,6 +321,65 @@ impl Block {
         Ok(spent_outputs)
     }
 
+    /// Process inputs and return detailed information about spent outputs
+    ///
+    /// This method finds spent outputs and returns information about them.
+    /// It works by checking the wallet state before modifications.
+    pub fn process_inputs_with_details(
+        &self,
+        wallet_state: &WalletState,
+    ) -> LightweightWalletResult<Vec<SpentOutputInfo>> {
+        let mut spent_outputs = Vec::new();
+
+        for (input_index, input) in self.inputs.iter().enumerate() {
+            // Try to match by output hash first (for HTTP API)
+            if !input.output_hash.iter().all(|&b| b == 0) {
+                // Look through all transactions to find matching output hash
+                for transaction in &wallet_state.transactions {
+                    if let Some(ref output_hash) = transaction.output_hash {
+                        if output_hash == &input.output_hash && !transaction.is_spent {
+                            // Additional verification: Only include transactions that were properly decrypted wallet outputs
+                            // This filters out any incorrectly added transactions
+                            if transaction.value > 0 && transaction.transaction_direction == crate::data_structures::transaction::TransactionDirection::Inbound {
+                                spent_outputs.push(SpentOutputInfo {
+                                    spent_transaction: transaction.clone(),
+                                    input_index,
+                                    match_method: "output_hash".to_string(),
+                                    original_block_height: transaction.block_height,
+                                });
+                            }
+                            break; // Found match, no need to continue searching
+                        }
+                    }
+                }
+            } else if !input.commitment.iter().all(|&b| b == 0) {
+                // Try commitment matching (for GRPC API)
+                use crate::data_structures::types::CompressedCommitment;
+                let commitment = CompressedCommitment::new(input.commitment);
+                // Look through all transactions to find matching commitment
+                for transaction in &wallet_state.transactions {
+                    if transaction.commitment.as_bytes() == commitment.as_bytes()
+                        && !transaction.is_spent
+                    {
+                        // Additional verification: Only include transactions that were properly decrypted wallet outputs
+                        // This filters out any incorrectly added transactions
+                        if transaction.value > 0 && transaction.transaction_direction == crate::data_structures::transaction::TransactionDirection::Inbound {
+                            spent_outputs.push(SpentOutputInfo {
+                                spent_transaction: transaction.clone(),
+                                input_index,
+                                match_method: "commitment".to_string(),
+                                original_block_height: transaction.block_height,
+                            });
+                        }
+                        break; // Found match, no need to continue searching
+                    }
+                }
+            }
+        }
+
+        Ok(spent_outputs)
+    }
+
     /// Scan this block for all wallet activity (outputs and inputs)
     ///
     /// This is a convenience method that calls both `process_outputs` and `process_inputs`
@@ -324,6 +392,28 @@ impl Block {
         let found_outputs = self.process_outputs(view_key, entropy, wallet_state)?;
         let spent_outputs = self.process_inputs(wallet_state)?;
         Ok((found_outputs, spent_outputs))
+    }
+
+    /// Scan this block for all wallet activity with detailed spent output information
+    ///
+    /// This method processes outputs first, then gets detailed spent output information
+    /// before marking them as spent, allowing for event emission.
+    pub fn scan_for_wallet_activity_with_details(
+        &self,
+        view_key: &PrivateKey,
+        entropy: &[u8; 16],
+        wallet_state: &mut WalletState,
+    ) -> LightweightWalletResult<(usize, Vec<SpentOutputInfo>)> {
+        // First process outputs to find new wallet outputs
+        let found_outputs = self.process_outputs(view_key, entropy, wallet_state)?;
+
+        // Get detailed information about spent outputs BEFORE marking them as spent
+        let spent_output_details = self.process_inputs_with_details(wallet_state)?;
+
+        // Now mark the outputs as spent using the regular process_inputs method
+        let _spent_count = self.process_inputs(wallet_state)?;
+
+        Ok((found_outputs, spent_output_details))
     }
 
     /// Get the number of outputs in this block
@@ -819,5 +909,183 @@ mod tests {
 
         let spent_count2 = block2.process_inputs(&mut wallet_state).unwrap();
         assert_eq!(spent_count2, 0);
+    }
+
+    #[test]
+    fn test_process_inputs_with_details() {
+        let mut wallet_state = WalletState::new();
+        let commitment = CompressedCommitment::new([1u8; 32]);
+        let output_hash = [2u8; 32];
+
+        // Add a received output to wallet state (properly decrypted)
+        wallet_state.add_received_output(
+            100,
+            0,
+            commitment.clone(),
+            Some(output_hash.to_vec()),
+            1000,
+            PaymentId::Empty,
+            TransactionStatus::MinedConfirmed,
+            TransactionDirection::Inbound,
+            true,
+        );
+
+        // Also add a zero-value transaction that should be filtered out
+        let dummy_commitment = CompressedCommitment::new([99u8; 32]);
+        wallet_state.add_received_output(
+            101,
+            0,
+            dummy_commitment.clone(),
+            Some([99u8; 32].to_vec()),
+            0, // Zero amount - should be filtered out
+            PaymentId::Empty,
+            TransactionStatus::MinedConfirmed,
+            TransactionDirection::Inbound,
+            true,
+        );
+
+        println!(
+            "Added transaction to wallet state. Total transactions: {}",
+            wallet_state.transactions.len()
+        );
+        for (i, tx) in wallet_state.transactions.iter().enumerate() {
+            println!(
+                "Transaction {}: commitment={}, output_hash={:?}, is_spent={}",
+                i,
+                hex::encode(tx.commitment.as_bytes()),
+                tx.output_hash,
+                tx.is_spent
+            );
+        }
+
+        // Create inputs: one that spends the valid output and one that spends the zero-value output
+        let input1 = create_test_input(*commitment.as_bytes(), [0u8; 32]); // Should be found
+        let input2 = create_test_input(*dummy_commitment.as_bytes(), [0u8; 32]); // Should be filtered out
+        let block = Block::new(200, vec![1, 2, 3], 123456789, vec![], vec![input1, input2]);
+
+        println!("Created block with {} inputs", block.inputs.len());
+        for (i, input) in block.inputs.iter().enumerate() {
+            println!(
+                "Input {}: commitment={}, output_hash={}",
+                i,
+                hex::encode(input.commitment),
+                hex::encode(input.output_hash)
+            );
+        }
+
+        // Test the detailed spent output detection
+        let spent_outputs = block.process_inputs_with_details(&wallet_state).unwrap();
+        println!(
+            "Found {} spent outputs using process_inputs_with_details",
+            spent_outputs.len()
+        );
+
+        for (i, spent) in spent_outputs.iter().enumerate() {
+            println!(
+                "Spent output {}: match_method={}, original_block={}",
+                i, spent.match_method, spent.original_block_height
+            );
+        }
+
+        assert_eq!(
+            spent_outputs.len(),
+            1,
+            "Should find exactly one spent output (zero-value output should be filtered out)"
+        );
+        assert_eq!(spent_outputs[0].match_method, "commitment");
+        assert_eq!(spent_outputs[0].original_block_height, 100);
+        assert_eq!(spent_outputs[0].input_index, 0);
+        assert_eq!(
+            spent_outputs[0].spent_transaction.value, 1000,
+            "Should only find the non-zero value output"
+        );
+
+        // Verify that the transaction has not been marked as spent yet
+        assert!(
+            !spent_outputs[0].spent_transaction.is_spent,
+            "Transaction should not be marked as spent yet by process_inputs_with_details"
+        );
+
+        // Now test the regular process_inputs to verify it marks things as spent
+        let spent_count = block.process_inputs(&mut wallet_state).unwrap();
+        assert_eq!(spent_count, 2, "Should mark both outputs as spent in wallet state (including zero-value for bookkeeping)");
+
+        // Verify that the transaction is now marked as spent in wallet state
+        let spent_tx = wallet_state
+            .transactions
+            .iter()
+            .find(|tx| tx.commitment.as_bytes() == commitment.as_bytes())
+            .unwrap();
+        assert!(
+            spent_tx.is_spent,
+            "Transaction should now be marked as spent by process_inputs"
+        );
+    }
+
+    #[test]
+    fn test_scan_for_wallet_activity_with_details() {
+        let mut wallet_state = WalletState::new();
+        let commitment = CompressedCommitment::new([1u8; 32]);
+        let output_hash = [2u8; 32];
+
+        // Add a received output to wallet state
+        wallet_state.add_received_output(
+            100,
+            0,
+            commitment.clone(),
+            Some(output_hash.to_vec()),
+            1000,
+            PaymentId::Empty,
+            TransactionStatus::MinedConfirmed,
+            TransactionDirection::Inbound,
+            true,
+        );
+
+        // Create a block with both outputs and inputs
+        let output = create_test_output_with_features(LightweightOutputType::Payment, 0, 2000);
+        let input = create_test_input(*commitment.as_bytes(), [0u8; 32]);
+
+        let block = Block::new(200, vec![1, 2, 3, 4], 1234567890, vec![output], vec![input]);
+
+        let view_key = create_test_private_key();
+        let entropy = [0u8; 16];
+
+        println!("Testing scan_for_wallet_activity_with_details...");
+        let (found_outputs, spent_output_details) = block
+            .scan_for_wallet_activity_with_details(&view_key, &entropy, &mut wallet_state)
+            .unwrap();
+
+        println!(
+            "Found {} new outputs, {} spent outputs",
+            found_outputs,
+            spent_output_details.len()
+        );
+
+        // Should find no new outputs (due to encryption), but should find the spent output
+        assert_eq!(
+            found_outputs, 0,
+            "Should find no new outputs due to test data"
+        );
+        assert_eq!(
+            spent_output_details.len(),
+            1,
+            "Should find exactly one spent output"
+        );
+
+        // Verify spent output details
+        assert_eq!(spent_output_details[0].match_method, "commitment");
+        assert_eq!(spent_output_details[0].original_block_height, 100);
+        assert_eq!(spent_output_details[0].input_index, 0);
+
+        // Verify that the transaction is now marked as spent (process_inputs was called)
+        let spent_tx = wallet_state
+            .transactions
+            .iter()
+            .find(|tx| tx.commitment.as_bytes() == commitment.as_bytes())
+            .unwrap();
+        assert!(
+            spent_tx.is_spent,
+            "Transaction should be marked as spent after scan_for_wallet_activity_with_details"
+        );
     }
 }

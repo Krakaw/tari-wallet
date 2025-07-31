@@ -22,7 +22,7 @@ use crate::{
 };
 
 #[cfg(feature = "storage")]
-use crate::events::types::{AddressInfo, BlockInfo, OutputData};
+use crate::events::types::{AddressInfo, BlockInfo, OutputData, SpentOutputData, TransactionData};
 
 #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
 use crate::scanning::background_writer::{BackgroundWriter, BackgroundWriterCommand};
@@ -350,6 +350,182 @@ impl DatabaseStorageListener {
         }
 
         Ok(())
+    }
+
+    /// Handle SpentOutputFound event
+    ///
+    /// Mark the previously found output as spent in the database
+    async fn handle_spent_output_found(
+        &mut self,
+        spent_output_data: &SpentOutputData,
+        spending_block_info: &BlockInfo,
+        _original_output_info: &OutputData,
+        _spending_transaction_data: &TransactionData,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let storage = &self.database;
+        self.log(&format!(
+            "🔍 SPENT OUTPUT EVENT: commitment={} at block {} (method: {})",
+            spent_output_data.spent_commitment,
+            spending_block_info.height,
+            spent_output_data.match_method
+        ));
+
+        // Mark the output as spent in the database
+        // First, we need to find the output by commitment to get its database ID
+        self.log(&format!(
+            "🔍 Searching for output with commitment: {}",
+            spent_output_data.spent_commitment
+        ));
+        match self
+            .find_output_by_commitment(&spent_output_data.spent_commitment)
+            .await
+        {
+            Ok(Some(output_id)) => {
+                self.log(&format!("✅ Found output with ID: {}", output_id));
+                // Mark the output as spent using the database ID
+                // Note: Using block height as pseudo-transaction ID since we don't have actual spending transaction IDs
+                // This will set outputs.status=1 and outputs.spent_in_tx_id=block_height
+                if let Err(e) = storage
+                    .mark_output_spent(output_id, spending_block_info.height)
+                    .await
+                {
+                    self.log(&format!("Failed to mark output as spent: {}", e));
+                    return Err(e.into());
+                }
+
+                // Also update the corresponding wallet transaction to mark it as spent
+                if let Err(e) = self
+                    .mark_transaction_as_spent(
+                        &spent_output_data.spent_commitment,
+                        spending_block_info.height,
+                        spent_output_data.input_index,
+                    )
+                    .await
+                {
+                    self.log(&format!("Failed to update transaction spent status: {}", e));
+                    // Don't return error here as the output marking succeeded
+                }
+
+                self.log(&format!(
+                    "Successfully marked output as spent: {} at block {}",
+                    spent_output_data.spent_commitment, spending_block_info.height
+                ));
+            }
+            Ok(None) => {
+                self.log(&format!(
+                    "❌ Output not found in database: {} (may not be our output)",
+                    spent_output_data.spent_commitment
+                ));
+            }
+            Err(e) => {
+                self.log(&format!("Error finding output by commitment: {}", e));
+                return Err(e.into());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Find an output in the database by its commitment
+    async fn find_output_by_commitment(
+        &self,
+        commitment: &str,
+    ) -> Result<Option<u32>, Box<dyn Error + Send + Sync>> {
+        // Convert hex commitment to bytes
+        let commitment_bytes = match hex::decode(commitment) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                self.log(&format!("Invalid hex commitment: {}", e));
+                return Err(format!("Invalid hex commitment: {}", e).into());
+            }
+        };
+
+        // Use the storage method to find the output by commitment
+        match self
+            .database
+            .get_output_by_commitment(&commitment_bytes)
+            .await
+        {
+            Ok(Some(stored_output)) => {
+                if let Some(output_id) = stored_output.id {
+                    self.log(&format!(
+                        "Found output with commitment: {} (ID: {})",
+                        commitment, output_id
+                    ));
+                    Ok(Some(output_id))
+                } else {
+                    self.log(&format!(
+                        "Found output with commitment: {} but no ID (not saved yet?)",
+                        commitment
+                    ));
+                    Ok(None)
+                }
+            }
+            Ok(None) => {
+                self.log(&format!("Output not found with commitment: {}", commitment));
+                Ok(None)
+            }
+            Err(e) => {
+                self.log(&format!("Error searching for output by commitment: {}", e));
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Mark a transaction as spent in the wallet_transactions table
+    async fn mark_transaction_as_spent(
+        &self,
+        commitment: &str,
+        spent_at_block: u64,
+        input_index: usize,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Convert hex commitment to CompressedCommitment
+        let commitment_bytes = match hex::decode(commitment) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                self.log(&format!("Invalid hex commitment for transaction: {}", e));
+                return Err(format!("Invalid hex commitment: {}", e).into());
+            }
+        };
+
+        // Create CompressedCommitment from bytes (assuming 32-byte commitment)
+        if commitment_bytes.len() != 32 {
+            self.log(&format!(
+                "Invalid commitment length: expected 32 bytes, got {}",
+                commitment_bytes.len()
+            ));
+            return Err("Invalid commitment length".into());
+        }
+
+        let mut commitment_array = [0u8; 32];
+        commitment_array.copy_from_slice(&commitment_bytes);
+        let compressed_commitment = CompressedCommitment::new(commitment_array);
+
+        // Mark the transaction as spent using the storage method
+        match self
+            .database
+            .mark_transaction_spent(&compressed_commitment, spent_at_block, input_index)
+            .await
+        {
+            Ok(true) => {
+                self.log(&format!(
+                    "Successfully marked transaction as spent: {} at block {}",
+                    commitment, spent_at_block
+                ));
+                Ok(())
+            }
+            Ok(false) => {
+                self.log(&format!(
+                    "Transaction not found or already spent: {}",
+                    commitment
+                ));
+                Ok(()) // Not an error if transaction doesn't exist or is already spent
+            }
+            Err(e) => {
+                self.log(&format!("Error marking transaction as spent: {}", e));
+                Err(e.into())
+            }
+        }
     }
 
     /// Handle ScanProgress event
@@ -980,6 +1156,21 @@ impl EventListener for DatabaseStorageListener {
                 self.handle_output_found(output_data, block_info, address_info, transaction_data)
                     .await
             }
+            WalletScanEvent::SpentOutputFound {
+                spent_output_data,
+                spending_block_info,
+                original_output_info,
+                spending_transaction_data,
+                ..
+            } => {
+                self.handle_spent_output_found(
+                    spent_output_data,
+                    spending_block_info,
+                    original_output_info,
+                    spending_transaction_data,
+                )
+                .await
+            }
             WalletScanEvent::ScanProgress {
                 current_block,
                 total_blocks,
@@ -1045,6 +1236,7 @@ impl EventListener for DatabaseStorageListener {
             WalletScanEvent::ScanStarted { .. }
             | WalletScanEvent::BlockProcessed { .. }
             | WalletScanEvent::OutputFound { .. }
+            | WalletScanEvent::SpentOutputFound { .. }
             | WalletScanEvent::ScanProgress { .. }
             | WalletScanEvent::ScanCompleted { .. }
             | WalletScanEvent::ScanError { .. }

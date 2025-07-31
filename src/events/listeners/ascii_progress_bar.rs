@@ -410,6 +410,14 @@ impl EventListener for AsciiProgressBarListener {
                     self.display_progress(&state);
                 }
             }
+            WalletScanEvent::SpentOutputFound { .. } => {
+                // Increment spent output count
+                if let Ok(mut state) = self.state.lock() {
+                    state.spent_found += 1;
+                    // Display updated progress with new spent count
+                    self.display_progress(&state);
+                }
+            }
             WalletScanEvent::BlockProcessed { .. } => {
                 // Block processed events might contain output counts
                 // For now, just ensure we display current state
@@ -442,6 +450,7 @@ impl EventListener for AsciiProgressBarListener {
             WalletScanEvent::ScanStarted { .. }
                 | WalletScanEvent::ScanProgress { .. }
                 | WalletScanEvent::OutputFound { .. }
+                | WalletScanEvent::SpentOutputFound { .. }
                 | WalletScanEvent::BlockProcessed { .. }
                 | WalletScanEvent::ScanCompleted { .. }
                 | WalletScanEvent::ScanError { .. }

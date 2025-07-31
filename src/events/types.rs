@@ -103,6 +103,58 @@ pub struct OutputData {
     pub key_index: Option<u64>,
 }
 
+/// Information about a spent output for SpentOutputFound events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpentOutputData {
+    /// The commitment of the spent output
+    pub spent_commitment: String,
+    /// The output hash of the spent output (if available)
+    pub spent_output_hash: Option<String>,
+    /// The input index in the spending transaction
+    pub input_index: usize,
+    /// The amount that was spent (if known)
+    pub spent_amount: Option<u64>,
+    /// The block height where the output was originally found
+    pub original_block_height: u64,
+    /// The block height where the output was spent
+    pub spending_block_height: u64,
+    /// Whether this was matched by output hash or commitment
+    pub match_method: String, // "output_hash" or "commitment"
+}
+
+impl SpentOutputData {
+    /// Create a new SpentOutputData with required fields
+    pub fn new(
+        spent_commitment: String,
+        input_index: usize,
+        original_block_height: u64,
+        spending_block_height: u64,
+        match_method: String,
+    ) -> Self {
+        Self {
+            spent_commitment,
+            spent_output_hash: None,
+            input_index,
+            spent_amount: None,
+            original_block_height,
+            spending_block_height,
+            match_method,
+        }
+    }
+
+    /// Set the output hash for this spent output
+    pub fn with_output_hash(mut self, output_hash: String) -> Self {
+        self.spent_output_hash = Some(output_hash);
+        self
+    }
+
+    /// Set the spent amount for this output
+    pub fn with_spent_amount(mut self, amount: u64) -> Self {
+        self.spent_amount = Some(amount);
+        self
+    }
+}
+
 impl OutputData {
     /// Create a new OutputData with required fields
     pub fn new(commitment: String, range_proof: String, features: u32, is_mine: bool) -> Self {
@@ -361,6 +413,14 @@ pub enum WalletScanEvent {
         address_info: AddressInfo,
         transaction_data: TransactionData,
     },
+    /// Emitted when a previously found output is spent (input detected)
+    SpentOutputFound {
+        metadata: EventMetadata,
+        spent_output_data: SpentOutputData,
+        spending_block_info: BlockInfo,
+        original_output_info: OutputData,
+        spending_transaction_data: TransactionData,
+    },
     /// Emitted periodically to report scan progress
     ScanProgress {
         metadata: EventMetadata,
@@ -401,6 +461,7 @@ impl EventType for WalletScanEvent {
             WalletScanEvent::ScanStarted { .. } => "ScanStarted",
             WalletScanEvent::BlockProcessed { .. } => "BlockProcessed",
             WalletScanEvent::OutputFound { .. } => "OutputFound",
+            WalletScanEvent::SpentOutputFound { .. } => "SpentOutputFound",
             WalletScanEvent::ScanProgress { .. } => "ScanProgress",
             WalletScanEvent::ScanCompleted { .. } => "ScanCompleted",
             WalletScanEvent::ScanError { .. } => "ScanError",
@@ -413,6 +474,7 @@ impl EventType for WalletScanEvent {
             WalletScanEvent::ScanStarted { metadata, .. } => metadata,
             WalletScanEvent::BlockProcessed { metadata, .. } => metadata,
             WalletScanEvent::OutputFound { metadata, .. } => metadata,
+            WalletScanEvent::SpentOutputFound { metadata, .. } => metadata,
             WalletScanEvent::ScanProgress { metadata, .. } => metadata,
             WalletScanEvent::ScanCompleted { metadata, .. } => metadata,
             WalletScanEvent::ScanError { metadata, .. } => metadata,
@@ -447,6 +509,19 @@ impl EventType for WalletScanEvent {
                     .amount
                     .map_or("unknown".to_string(), |a| a.to_string()),
                 output_data.is_mine
+            )),
+            WalletScanEvent::SpentOutputFound {
+                spending_block_info,
+                spent_output_data,
+                ..
+            } => Some(format!(
+                "block: {}, amount: {}, method: {}, input: {}",
+                spending_block_info.height,
+                spent_output_data
+                    .spent_amount
+                    .map_or("unknown".to_string(), |a| a.to_string()),
+                spent_output_data.match_method,
+                spent_output_data.input_index
             )),
             WalletScanEvent::ScanProgress {
                 current_block,
@@ -535,6 +610,24 @@ impl SerializableEvent for WalletScanEvent {
                 format!(
                     "Found output at block {} ({}, {}, addr: {})",
                     block_info.height, amount_str, mine_str, address_info.address
+                )
+            }
+            WalletScanEvent::SpentOutputFound {
+                spending_block_info,
+                spent_output_data,
+                original_output_info,
+                ..
+            } => {
+                let amount_str = spent_output_data
+                    .spent_amount
+                    .or(original_output_info.amount)
+                    .map_or("unknown amount".to_string(), |a| format!("{} units", a));
+                format!(
+                    "Output spent at block {} ({}, method: {}, input index: {})",
+                    spending_block_info.height,
+                    amount_str,
+                    spent_output_data.match_method,
+                    spent_output_data.input_index
                 )
             }
             WalletScanEvent::ScanProgress {
@@ -1697,6 +1790,22 @@ impl WalletScanEvent {
             block_info,
             address_info,
             transaction_data,
+        }
+    }
+
+    /// Create a new SpentOutputFound event
+    pub fn spent_output_found(
+        spent_output_data: SpentOutputData,
+        spending_block_info: BlockInfo,
+        original_output_info: OutputData,
+        spending_transaction_data: TransactionData,
+    ) -> Self {
+        Self::SpentOutputFound {
+            metadata: EventMetadata::new("wallet_scanner"),
+            spent_output_data,
+            spending_block_info,
+            original_output_info,
+            spending_transaction_data,
         }
     }
 
