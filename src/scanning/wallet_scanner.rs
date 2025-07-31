@@ -1703,7 +1703,7 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
     mut progress_tracker: Option<&mut ProgressTracker>,
     batch_size: usize,
     verbose_logging: bool,
-    mut event_emitter: Option<&mut crate::scanning::event_emitter::ScanEventEmitter>,
+    _event_emitter: Option<&mut crate::scanning::event_emitter::ScanEventEmitter>,
 ) -> LightweightWalletResult<ScanResult> {
     // Initialize scanning state
     let (mut wallet_state, _start_time) = initialize_scan_state();
@@ -1771,65 +1771,31 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
                         block_info.inputs.clone(),
                     );
 
-                    // Use the detailed block scanning logic to get spent output information
-                    let (found_outputs, spent_output_details) = block
-                        .scan_for_wallet_activity_with_details(
-                            &scan_context.view_key,
-                            &scan_context.entropy,
-                            &mut wallet_state,
-                        )?;
-                    let spent_outputs = spent_output_details.len();
+                    // Scan for wallet outputs only (spent detection will be done post-processing)
+                    let (found_outputs, _spent_outputs) = block.scan_for_wallet_activity(
+                        &scan_context.view_key,
+                        &scan_context.entropy,
+                        &mut wallet_state,
+                    )?;
 
-                    // Debug logging for spent output detection
-                    if verbose_logging && spent_outputs > 0 {
-                        println!(
-                            "🔍 Block {}: Found {} spent outputs!",
-                            block.height, spent_outputs
+                    // Store blockchain inputs as transactions for post-processing
+                    // This allows us to later match inputs against our outputs to detect spending
+                    for (input_index, input) in block_info.inputs.iter().enumerate() {
+                        let input_transaction = crate::data_structures::wallet_transaction::WalletTransaction::new(
+                            block.height,
+                            None, // No output_index for inputs
+                            Some(input_index),
+                            crate::data_structures::types::CompressedCommitment::new(input.commitment),
+                            Some(input.output_hash.to_vec()),
+                            input.value.as_u64(),
+                            crate::data_structures::payment_id::PaymentId::Empty, // No payment ID for inputs
+                            crate::data_structures::transaction::TransactionStatus::MinedConfirmed, // Inputs are mined
+                            crate::data_structures::transaction::TransactionDirection::Outbound, // Mark as outbound to distinguish from our outputs
+                            true,  // Inputs are always mature
                         );
-                        for (i, spent_info) in spent_output_details.iter().enumerate() {
-                            println!(
-                                "  Spent #{}: {} (method: {}, value: {} MicroMinotari)",
-                                i + 1,
-                                hex::encode(spent_info.spent_transaction.commitment.as_bytes()),
-                                spent_info.match_method,
-                                spent_info.spent_transaction.value
-                            );
-                        }
-                    } else if verbose_logging
-                        && block.inputs.len() > 0
-                        && wallet_state.transactions.len() > 0
-                    {
-                        // Only log when there are inputs and wallet outputs but no spent outputs detected
-                        println!("🔍 Block {}: {} inputs present, {} outputs in wallet state, {} spent outputs detected", 
-                            block.height, block.inputs.len(), wallet_state.transactions.len(), spent_outputs);
-                    }
 
-                    // Emit spent output events if event emitter is available
-                    if let Some(ref mut emitter) = event_emitter {
-                        for spent_info in &spent_output_details {
-                            // Create the necessary data for the event
-                            let original_block_info = crate::events::types::BlockInfo::new(
-                                spent_info.original_block_height,
-                                hex::encode(&block.hash), // We don't have the original block hash, use current
-                                block.timestamp, // We don't have the original timestamp, use current
-                                0,               // output_index not relevant for original block
-                            );
-
-                            if let Err(e) = emitter
-                                .emit_spent_output_found(
-                                    &spent_info.spent_transaction,
-                                    &block,
-                                    spent_info.input_index,
-                                    &spent_info.match_method,
-                                    &original_block_info,
-                                )
-                                .await
-                            {
-                                if verbose_logging {
-                                    println!("⚠️  Failed to emit spent output event: {}", e);
-                                }
-                            }
-                        }
+                        // Add input transaction to wallet state for storage
+                        wallet_state.transactions.push(input_transaction);
                     }
 
                     // Create block data for the processor
@@ -1851,16 +1817,13 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
                     // Send block data to processor
                     data_processor.process_block(block_data).await?;
 
-                    if verbose_logging && (found_outputs > 0 || spent_outputs > 0) {
-                        println!(
-                            "Block {}: found {} outputs, {} spent",
-                            block.height, found_outputs, spent_outputs
-                        );
+                    if verbose_logging && found_outputs > 0 {
+                        println!("Block {}: found {} outputs", block.height, found_outputs);
                     }
 
                     // Update progress with actual wallet activity found
                     if let Some(tracker) = progress_tracker.as_mut() {
-                        tracker.update(block.height, found_outputs, spent_outputs);
+                        tracker.update(block.height, found_outputs, 0); // spent outputs will be calculated in post-processing
                     }
 
                     // Send progress updates to processor
@@ -1915,6 +1878,42 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
             );
         }
         println!(); // Clear progress line
+    }
+
+    // Post-processing step: mark spent outputs using blockchain input data
+    if let Some(database_processor) = data_processor
+        .as_any()
+        .downcast_ref::<crate::scanning::database_processor::DatabaseDataProcessor>(
+    ) {
+        if !database_processor.is_memory_only() {
+            // For database storage, we need to get the wallet_id from the storage
+            if let Some(wallet_id) = database_processor.storage().wallet_id {
+                if verbose_logging {
+                    println!("🔍 Post-processing: marking spent outputs from blockchain inputs...");
+                }
+
+                // Access the underlying database storage to call mark_spent_outputs_from_inputs
+                #[cfg(feature = "storage")]
+                if let Some(ref database) = database_processor.storage().database {
+                    match database
+                        .mark_spent_outputs_from_inputs(wallet_id, from_block, to_block)
+                        .await
+                    {
+                        Ok(spent_count) => {
+                            if verbose_logging && spent_count > 0 {
+                                println!("   Marked {} outputs as spent", spent_count);
+                            }
+                        }
+                        Err(e) => {
+                            if verbose_logging {
+                                eprintln!("⚠️  Warning: Failed to mark spent outputs: {}", e);
+                            }
+                            // Don't fail the scan for this error - it's post-processing
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Create scan metadata
@@ -2043,31 +2042,13 @@ async fn scan_wallet_across_blocks_with_cancellation(
                         block_info.inputs.clone(),
                     );
 
-                    // Use the detailed block scanning logic to get spent output information
-                    let (found_outputs, spent_output_details) = block
-                        .scan_for_wallet_activity_with_details(
-                            &scan_context.view_key,
-                            &scan_context.entropy,
-                            &mut wallet_state,
-                        )?;
-                    let spent_outputs = spent_output_details.len();
+                    // Scan for wallet outputs only (spent detection will be done post-processing)
+                    let (found_outputs, _spent_outputs) = block.scan_for_wallet_activity(
+                        &scan_context.view_key,
+                        &scan_context.entropy,
+                        &mut wallet_state,
+                    )?;
 
-                    // Debug logging for spent output detection
-                    if !config.quiet && spent_outputs > 0 {
-                        println!(
-                            "🔍 Block {}: Found {} spent outputs!",
-                            block.height, spent_outputs
-                        );
-                        for (i, spent_info) in spent_output_details.iter().enumerate() {
-                            println!(
-                                "  Spent #{}: {} (method: {}, value: {} MicroMinotari)",
-                                i + 1,
-                                hex::encode(spent_info.spent_transaction.commitment.as_bytes()),
-                                spent_info.match_method,
-                                spent_info.spent_transaction.value
-                            );
-                        }
-                    }
                     let processing_duration = processing_start.elapsed();
 
                     // Emit block processed event
@@ -2076,15 +2057,12 @@ async fn scan_wallet_across_blocks_with_cancellation(
                             &block,
                             processing_duration,
                             found_outputs,
-                            spent_outputs,
+                            0, // spent outputs will be calculated in post-processing
                         )
                         .await?;
 
-                    if !config.quiet && (found_outputs > 0 || spent_outputs > 0) {
-                        println!(
-                            "Block {}: found {} outputs, {} spent",
-                            block.height, found_outputs, spent_outputs
-                        );
+                    if !config.quiet && found_outputs > 0 {
+                        println!("Block {}: found {} outputs", block.height, found_outputs);
                     }
 
                     // If outputs were found, emit output found events for each
@@ -2123,33 +2101,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
                         }
                     }
 
-                    // Emit spent output events if any were found
-                    if spent_outputs > 0 {
-                        for spent_info in &spent_output_details {
-                            // Create the necessary data for the event
-                            let original_block_info = crate::events::types::BlockInfo::new(
-                                spent_info.original_block_height,
-                                hex::encode(&block.hash), // We don't have the original block hash, use current
-                                block.timestamp, // We don't have the original timestamp, use current
-                                0,               // output_index not relevant for original block
-                            );
-
-                            if let Err(e) = event_emitter
-                                .emit_spent_output_found(
-                                    &spent_info.spent_transaction,
-                                    &block,
-                                    spent_info.input_index,
-                                    &spent_info.match_method,
-                                    &original_block_info,
-                                )
-                                .await
-                            {
-                                if !config.quiet {
-                                    println!("⚠️  Failed to emit spent output event: {}", e);
-                                }
-                            }
-                        }
-                    }
+                    // Spent output detection will be done in post-processing
                 }
 
                 let batch_size = batch_end - current_block + 1;
@@ -2685,7 +2637,7 @@ impl ScannerBuilder {
         if self.event_emitter.is_none() {
             let mut dispatcher = EventDispatcher::new();
             let mock_listener = MockEventListener::new();
-            dispatcher.register(Box::new(mock_listener));
+            let _ = dispatcher.register(Box::new(mock_listener));
             let event_emitter =
                 super::event_emitter::ScanEventEmitter::new(dispatcher, "test_scanner".to_string());
             self.event_emitter = Some(event_emitter);
@@ -2718,7 +2670,7 @@ impl ScannerBuilder {
         if self.event_emitter.is_none() {
             let mut dispatcher = EventDispatcher::new();
             let progress_listener = ProgressTrackingListener::new();
-            dispatcher.register(Box::new(progress_listener));
+            let _ = dispatcher.register(Box::new(progress_listener));
             let event_emitter = super::event_emitter::ScanEventEmitter::new(
                 dispatcher,
                 "quiet_scanner".to_string(),

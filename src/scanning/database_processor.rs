@@ -203,6 +203,10 @@ impl DataProcessor for DatabaseDataProcessor {
         // Any cleanup needed can be done here
         Ok(())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// In-memory data processor that just collects transactions
@@ -291,6 +295,10 @@ impl DataProcessor for MemoryStorageProcessor {
             );
         }
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

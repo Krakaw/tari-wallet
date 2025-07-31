@@ -542,11 +542,19 @@ pub fn create_default_event_emitter(
 
     // Add default progress tracking listener
     let progress_listener = ProgressTrackingListener::new();
-    dispatcher.register(Box::new(progress_listener));
+    dispatcher
+        .register(Box::new(progress_listener))
+        .map_err(|e| {
+            LightweightWalletError::from(format!("Failed to register progress listener: {}", e))
+        })?;
 
     // Add default console logging listener
     let console_listener = ConsoleLoggingListener::new();
-    dispatcher.register(Box::new(console_listener));
+    dispatcher
+        .register(Box::new(console_listener))
+        .map_err(|e| {
+            LightweightWalletError::from(format!("Failed to register console listener: {}", e))
+        })?;
 
     let mut emitter = ScanEventEmitter::new(dispatcher, source).with_fire_and_forget(true); // Enable fire-and-forget by default for scanning performance
 
@@ -574,12 +582,18 @@ pub async fn create_database_event_emitter(
     // Add database storage listener
     if let Some(path) = database_path {
         let db_listener = DatabaseStorageListener::new(&path).await?;
-        dispatcher.register(Box::new(db_listener));
+        dispatcher.register(Box::new(db_listener)).map_err(|e| {
+            LightweightWalletError::from(format!("Failed to register database listener: {}", e))
+        })?;
     }
 
     // Add progress tracking listener
     let progress_listener = ProgressTrackingListener::new();
-    dispatcher.register(Box::new(progress_listener));
+    dispatcher
+        .register(Box::new(progress_listener))
+        .map_err(|e| {
+            LightweightWalletError::from(format!("Failed to register progress listener: {}", e))
+        })?;
 
     let mut emitter = ScanEventEmitter::new(dispatcher, source);
     if let Some(id) = correlation_id {
