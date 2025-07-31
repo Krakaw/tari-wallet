@@ -7,3 +7,4 @@ pub mod wallet_workflow;
 pub mod scanning_workflow;
 pub mod transaction_workflow;
 pub mod multi_network_compatibility;
+pub mod event_listeners_integration;
