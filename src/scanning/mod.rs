@@ -112,6 +112,20 @@ pub use data_processor::{
 #[cfg(feature = "storage")]
 pub use database_processor::{DatabaseDataProcessor, MemoryStorageProcessor};
 
+// Event emitter module for scanner integration with event system
+#[cfg(feature = "grpc")]
+pub mod event_emitter;
+
+// Re-export event emitter types
+#[cfg(feature = "grpc")]
+pub use event_emitter::{
+    create_address_info_from_transaction, create_block_info_from_block,
+    create_default_event_emitter, ScanEventEmitter,
+};
+
+#[cfg(all(feature = "grpc", feature = "storage"))]
+pub use event_emitter::create_database_event_emitter;
+
 /// Legacy progress callback for scanning operations (for compatibility)
 pub type LegacyProgressCallback = Box<dyn Fn(ScanProgress) + Send + Sync>;
 

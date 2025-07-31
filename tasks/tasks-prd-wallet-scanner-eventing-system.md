@@ -11,6 +11,7 @@
 - `src/events/listeners/mock_listener.rs` - Complete MockEventListener implementation with deterministic async testing support using Tokio test-util features, event capture, thread-safe storage, filtering, assertion helpers, builder patterns with 5 preset configurations, and comprehensive tests (16 tests passing including deterministic tests)
 - `src/events/error_recovery.rs` - Comprehensive error recovery and circuit breaker system with retry logic, error classification, and monitoring for robust production operations
 - `src/lib.rs` - Updated to include events module export
+- `src/scanning/event_emitter.rs` - Complete ScanEventEmitter implementation with scanner integration logic, helper functions for creating events from scanner data, convenience functions for setting up event emitters with common listeners, and comprehensive tests
 - Cross-platform tests:
   - Native tests: 16 comprehensive tests covering all event system functionality  
   - Cross-platform tests: 3 tests that run on both native and WASM platforms
@@ -62,7 +63,7 @@
   - [x] 3.9 Ensure deterministic async testing support (Req #30)
 
 - [ ] 4.0 Refactor Wallet Scanner to Use Event System
-  - [ ] 4.1 Create `src/scanning/event_emitter.rs` with scanner integration logic
+  - [x] 4.1 Create `src/scanning/event_emitter.rs` with scanner integration logic
   - [ ] 4.2 Update `scan_wallet_across_blocks_with_cancellation` signature - remove storage_backend and progress_tracker (Req #20)
   - [ ] 4.3 Add event dispatcher parameter to scanner construction (Req #21)
   - [ ] 4.4 Implement scanner builder pattern with default listeners (Req #22)
