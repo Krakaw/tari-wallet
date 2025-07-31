@@ -85,13 +85,16 @@ use std::time::{Duration, Instant};
 
 // Public module exports
 pub mod error_recovery;
+pub mod integration_test_examples;
 pub mod listeners;
+pub mod test_utils;
 pub mod types;
 
 // Re-export core types for convenience
 pub use error_recovery::{
     ErrorRecord, ErrorRecoveryConfig, ErrorRecoveryManager, ErrorStats, RetryableOperation,
 };
+pub use test_utils::{EventCapture, EventPattern, PerformanceAssertion, TestScenario};
 pub use types::*;
 
 /// Errors that can occur during event dispatcher operations

@@ -620,8 +620,8 @@ impl MockEventListener {
             .contains(&event_type.to_string())
     }
 
-    /// Update statistics with a new event
-    fn update_stats(&self, event_type: &str, processing_duration: Option<Duration>) {
+    /// Update statistics with a new event (for testing purposes)
+    pub fn update_stats(&self, event_type: &str, processing_duration: Option<Duration>) {
         let mut stats = self.stats.lock().unwrap();
         stats.total_events += 1;
         *stats

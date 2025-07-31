@@ -56,7 +56,7 @@
   - [x] 3.5 Add builder patterns for easy listener configuration (Req #18)
   - [x] 3.6 Implement proper error recovery and logging in each listener (Req #19)
   - [x] 3.7 Create `MockEventListener` for testing scenarios (Req #28)
-  - [ ] 3.8 Add event capture functionality for test assertions (Req #29)
+  - [x] 3.8 Add event capture functionality for test assertions (Req #29)
   - [ ] 3.9 Ensure deterministic async testing support (Req #30)
 
 - [ ] 4.0 Refactor Wallet Scanner to Use Event System
