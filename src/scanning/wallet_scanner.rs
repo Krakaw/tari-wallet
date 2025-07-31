@@ -2073,9 +2073,9 @@ async fn scan_wallet_across_blocks_with_cancellation(
 
                     event_emitter
                         .emit_scan_progress(
-                            current_block,
+                            blocks_processed,
                             total_blocks,
-                            blocks_processed as usize,
+                            current_block,
                             wallet_state.transactions.len(),
                             Some(processing_rate),
                             estimated_completion,

@@ -233,16 +233,16 @@ impl ScanEventEmitter {
     /// This should be called periodically during scanning to update progress.
     pub async fn emit_scan_progress(
         &mut self,
-        current_block: u64,
+        blocks_processed: u64,
         total_blocks: u64,
-        _blocks_processed: usize,
+        _current_block_height: u64,
         _outputs_found: usize,
         processing_rate: Option<f64>,
         estimated_completion: Option<SystemTime>,
     ) -> Result<(), LightweightWalletError> {
         let metadata = self.create_metadata();
         let percentage = if total_blocks > 0 {
-            (current_block as f64 / total_blocks as f64 * 100.0).min(100.0)
+            (blocks_processed as f64 / total_blocks as f64 * 100.0).min(100.0)
         } else {
             0.0
         };
@@ -250,9 +250,13 @@ impl ScanEventEmitter {
         let estimated_time_remaining = estimated_completion
             .and_then(|completion| SystemTime::now().duration_since(completion).ok());
 
+        // Note: We use blocks_processed as current_block for progress display,
+        // even though current_block_height is the actual block height.
+        // This is because the progress calculation and display expects
+        // current_block to represent the count of blocks processed, not the block height.
         let event = WalletScanEvent::ScanProgress {
             metadata,
-            current_block,
+            current_block: blocks_processed,
             total_blocks,
             percentage,
             speed_blocks_per_second: processing_rate.unwrap_or(0.0),

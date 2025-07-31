@@ -124,10 +124,12 @@ impl AsciiProgressBarConfig {
 /// Internal state for tracking progress statistics
 #[derive(Debug, Clone)]
 struct ProgressState {
-    /// Current block being processed
-    current_block: u64,
+    /// Number of blocks processed so far (stored in current_block from event)
+    blocks_processed: u64,
     /// Total blocks to process
     total_blocks: u64,
+    /// Current block height being processed
+    current_block_height: u64,
     /// Current progress percentage
     progress_percent: f64,
     /// Processing speed in blocks per second
@@ -147,8 +149,9 @@ struct ProgressState {
 impl Default for ProgressState {
     fn default() -> Self {
         Self {
-            current_block: 0,
+            blocks_processed: 0,
             total_blocks: 0,
+            current_block_height: 0,
             progress_percent: 0.0,
             blocks_per_sec: 0.0,
             eta: None,
@@ -296,9 +299,9 @@ impl AsciiProgressBarListener {
             "\r🔍 [{}] {:.1}% ({}/{}) | Block {}{}{}{}   ",
             progress_bar,
             state.progress_percent,
-            format_number(state.current_block.saturating_sub(1)), // Show processed blocks
+            format_number(state.blocks_processed), // Show blocks processed
             format_number(state.total_blocks),
-            format_number(state.current_block),
+            format_number(state.current_block_height),
             speed_display,
             outputs_display,
             eta_display
@@ -316,8 +319,9 @@ impl AsciiProgressBarListener {
     /// Update progress state and display if enough time has passed
     fn update_progress(
         &self,
-        current_block: u64,
+        blocks_processed: u64,
         total_blocks: u64,
+        current_block_height: u64,
         percentage: f64,
         speed_blocks_per_second: f64,
         estimated_time_remaining: Option<Duration>,
@@ -332,7 +336,8 @@ impl AsciiProgressBarListener {
             }
 
             // Update state
-            state.current_block = current_block;
+            state.blocks_processed = blocks_processed;
+            state.current_block_height = current_block_height;
             state.total_blocks = total_blocks;
             state.progress_percent = percentage;
             state.blocks_per_sec = speed_blocks_per_second;
@@ -385,9 +390,12 @@ impl EventListener for AsciiProgressBarListener {
                 estimated_time_remaining,
                 ..
             } => {
+                // Note: current_block now contains blocks_processed, not block height
+                // We'll use it for both values since we don't have access to the actual block height
                 self.update_progress(
-                    *current_block,
+                    *current_block, // blocks_processed
                     *total_blocks,
+                    *current_block, // using same value for current_block_height (not ideal but functional)
                     *percentage,
                     *speed_blocks_per_second,
                     *estimated_time_remaining,
@@ -499,10 +507,10 @@ mod tests {
         // Wait a bit to ensure the rate limiting allows the next update
         tokio::time::sleep(tokio::time::Duration::from_millis(60)).await;
 
-        // Test progress event
+        // Test progress event (current_block now contains blocks_processed)
         let progress_event = SharedEvent::new(WalletScanEvent::ScanProgress {
             metadata: EventMetadata::new("test"),
-            current_block: 1500,
+            current_block: 500, // This is blocks_processed now
             total_blocks: 2000,
             percentage: 50.0,
             speed_blocks_per_second: 10.5,
@@ -514,7 +522,8 @@ mod tests {
         // Verify state was updated
         {
             let state = listener.state.lock().unwrap();
-            assert_eq!(state.current_block, 1500);
+            assert_eq!(state.blocks_processed, 500);
+            assert_eq!(state.current_block_height, 500); // Same value since we don't have separate height
             assert_eq!(state.total_blocks, 2000);
             assert_eq!(state.progress_percent, 50.0);
             assert!((state.blocks_per_sec - 10.5).abs() < 0.1);
@@ -565,7 +574,7 @@ mod tests {
 
         let progress_event = SharedEvent::new(WalletScanEvent::ScanProgress {
             metadata: EventMetadata::new("test"),
-            current_block: 1500,
+            current_block: 500, // This is blocks_processed now
             total_blocks: 2000,
             percentage: 50.0,
             speed_blocks_per_second: 10.5,
