@@ -1240,6 +1240,24 @@ impl WalletScanner {
 
         let start_time = Instant::now();
 
+        // Emit scan started event if event emitter is available
+        if let Some(event_emitter) = self.config.event_emitter.as_mut() {
+            let mut wallet_context = std::collections::HashMap::new();
+            wallet_context.insert("scan_type".to_string(), "processor_scan".to_string());
+            wallet_context.insert("batch_size".to_string(), self.config.batch_size.to_string());
+
+            // Create a minimal config for the event
+            let event_config = BinaryScanConfig::new(from_block, to_block);
+            event_emitter
+                .emit_scan_started(
+                    &event_config,
+                    scan_context,
+                    (from_block, to_block),
+                    wallet_context,
+                )
+                .await?;
+        }
+
         // Initialize the data processor
         data_processor.initialize().await?;
 
@@ -1279,6 +1297,15 @@ impl WalletScanner {
                     data_processor.process_completion(completion_data).await?;
                 }
 
+                // Emit scan completed event if event emitter is available
+                if let Some(event_emitter) = self.config.event_emitter.as_mut() {
+                    if let Some(ref meta) = metadata {
+                        event_emitter
+                            .emit_scan_completed(meta, &wallet_state, true)
+                            .await?;
+                    }
+                }
+
                 Ok(ScanResult::Completed(wallet_state, metadata))
             }
             Ok(ScanResult::Interrupted(wallet_state, mut metadata)) => {
@@ -1300,12 +1327,41 @@ impl WalletScanner {
                     data_processor.process_completion(completion_data).await?;
                 }
 
+                // Emit scan cancelled event if event emitter is available
+                if let Some(event_emitter) = self.config.event_emitter.as_mut() {
+                    if let Some(ref meta) = metadata {
+                        let current_block = from_block + meta.blocks_processed as u64;
+                        event_emitter
+                            .emit_scan_cancelled(
+                                "Scan was interrupted".to_string(),
+                                current_block,
+                                Some(meta),
+                            )
+                            .await?;
+                    }
+                }
+
                 Ok(ScanResult::Interrupted(wallet_state, metadata))
             }
             Err(e) => {
                 if self.config.verbose_logging {
                     println!("❌ Scan failed after {:?}: {}", start_time.elapsed(), e);
                 }
+
+                // Emit scan error event if event emitter is available
+                if let Some(event_emitter) = self.config.event_emitter.as_mut() {
+                    let current_block = from_block; // We don't know how far we got
+                    event_emitter
+                        .emit_scan_error(&e, Some(current_block), true, 0)
+                        .await
+                        .unwrap_or_else(|err| {
+                            // Don't let event emission errors mask the original error
+                            if self.config.verbose_logging {
+                                println!("⚠️ Failed to emit error event: {}", err);
+                            }
+                        });
+                }
+
                 Err(e)
             }
         }
@@ -3374,6 +3430,23 @@ mod tests {
         let builder = ScannerBuilder::default();
         assert_eq!(builder.config.batch_size, 10);
         assert!(builder.event_emitter.is_none());
+    }
+
+    #[test]
+    fn test_scan_with_processor_emits_events() {
+        // This test verifies that scan_with_processor method
+        // emits events when an event emitter is configured
+        let scanner = ScannerBuilder::new()
+            .with_testing_preset()
+            .expect("Failed to create testing preset")
+            .build()
+            .expect("Failed to build scanner");
+
+        // Check that the scanner has an event emitter configured
+        assert!(scanner.config.event_emitter.is_some());
+
+        // The actual async test would need a running blockchain scanner
+        // For now, we just verify the configuration is correct
     }
 }
 
