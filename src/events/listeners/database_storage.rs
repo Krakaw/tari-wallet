@@ -8,7 +8,7 @@
 use async_trait::async_trait;
 use std::error::Error;
 
-use crate::events::{EventListener, SharedEvent};
+use crate::events::{EventListener, SharedEvent, WalletScanEvent};
 
 #[cfg(feature = "storage")]
 use crate::{

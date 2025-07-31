@@ -47,6 +47,7 @@ bs58 = "0.5"                # Base58 encoding (for addresses)
 crc32fast = "1.4"           # CRC32 checksums
 primitive-types = { version = "0.12", features = ["serde"] }  # U256, H256, etc.
 lazy_static = "1.4"         # Static variable initialization
+chrono = { version = "0.4", features = ["serde"] }  # Date and time handling
 
 # === WebAssembly Support ===
 wasm-bindgen = "0.2"

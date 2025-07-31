@@ -7,6 +7,7 @@
 - `src/events/listeners/mod.rs` - Built-in event listeners module with DatabaseStorageListener and ProgressTrackingListener exports
 - `src/events/listeners/database_storage.rs` - Complete DatabaseStorageListener implementation with storage backend functionality replication, cross-platform support, and comprehensive tests
 - `src/events/listeners/progress_tracking.rs` - Complete ProgressTrackingListener implementation with progress tracking, callbacks, ETA calculation, and comprehensive tests (13 tests passing)
+- `src/events/listeners/console_logging.rs` - Complete ConsoleLoggingListener implementation with configurable verbosity levels, color support, timestamp formatting, and comprehensive tests (16 tests passing)
 - `src/lib.rs` - Updated to include events module export
 - Cross-platform tests:
   - Native tests: 16 comprehensive tests covering all event system functionality  
@@ -49,7 +50,7 @@
   - [x] 3.1 Create `src/events/listeners/mod.rs` with public exports
   - [x] 3.2 Implement `DatabaseStorageListener` replicating current storage_backend (Req #15)
   - [x] 3.3 Implement `ProgressTrackingListener` replicating current progress_tracker (Req #16)
-  - [ ] 3.4 Implement `ConsoleLoggingListener` for development and debugging (Req #17)
+  - [x] 3.4 Implement `ConsoleLoggingListener` for development and debugging (Req #17)
   - [ ] 3.5 Add builder patterns for easy listener configuration (Req #18)
   - [ ] 3.6 Implement proper error recovery and logging in each listener (Req #19)
   - [ ] 3.7 Create `MockEventListener` for testing scenarios (Req #28)
