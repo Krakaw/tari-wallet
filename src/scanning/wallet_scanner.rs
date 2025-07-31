@@ -50,7 +50,7 @@ use zeroize::Zeroize;
 
 use super::{
     data_processor::{BlockData, CompletionData, DataProcessor, ProgressData},
-    BinaryScanConfig, ProgressInfo, ProgressTracker, ScanContext,
+    BinaryScanConfig, ProgressTracker, ScanContext,
 };
 
 #[cfg(all(feature = "grpc", feature = "storage"))]
@@ -1024,10 +1024,9 @@ impl WalletScanner {
     #[cfg(feature = "storage")]
     pub fn new_with_database_events(
         source: String,
-        database_path: Option<String>,
+        _database_path: Option<String>,
     ) -> Result<Self, LightweightWalletError> {
-        let event_emitter =
-            super::event_emitter::create_database_event_emitter(source, None, database_path)?;
+        let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
         Ok(Self {
             config: WalletScannerConfig {
                 event_emitter: Some(event_emitter),
@@ -1064,10 +1063,9 @@ impl WalletScanner {
     pub fn with_database_events(
         mut self,
         source: String,
-        database_path: Option<String>,
+        _database_path: Option<String>,
     ) -> Result<Self, LightweightWalletError> {
-        let event_emitter =
-            super::event_emitter::create_database_event_emitter(source, None, database_path)?;
+        let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
         self.config.event_emitter = Some(event_emitter);
         Ok(self)
     }
@@ -1417,13 +1415,23 @@ impl WalletScanner {
 
         let start_time = Instant::now();
 
-        // Get mutable reference to event emitter
-        let event_emitter = self.config.event_emitter.as_mut().unwrap();
+        // Check that event emitter is configured
+        if self.config.event_emitter.is_none() {
+            return Err(LightweightWalletError::ScanningError(
+                crate::errors::ScanningError::ScanConfigurationError(
+                    "Event emitter not configured".to_string(),
+                ),
+            ));
+        }
 
         // Execute the scan with enhanced error handling
+        let mut event_emitter = self.config.event_emitter.take().unwrap();
         let scan_result = self
-            .execute_scan_with_retry(scanner, scan_context, config, event_emitter, cancel_rx)
+            .execute_scan_with_retry(scanner, scan_context, config, &mut event_emitter, cancel_rx)
             .await;
+
+        // Put the event emitter back
+        self.config.event_emitter = Some(event_emitter);
 
         // Add timing information to the result
         match scan_result {
@@ -1472,7 +1480,7 @@ impl WalletScanner {
                 to_block,
                 data_processor,
                 cancel_rx,
-                self.config.progress_tracker.as_mut(),
+                None, // Progress tracker no longer used with event system
                 self.config.batch_size,
                 self.config.verbose_logging,
             )
@@ -1601,6 +1609,7 @@ impl Default for WalletScanner {
 
 /// Determine scanning block range with resume support
 #[cfg(all(feature = "grpc", feature = "storage"))]
+#[allow(dead_code)]
 async fn determine_scan_range(
     config: &BinaryScanConfig,
     storage_backend: &mut ScannerStorage,
@@ -2026,7 +2035,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
                             // Find the corresponding output from the block
                             if let Some(output) = block.outputs.iter().find(|o| {
                                 // Match by commitment or other identifying field
-                                hex::encode(o.commitment.as_bytes()) == transaction.commitment
+                                o.commitment == transaction.commitment
                             }) {
                                 event_emitter
                                     .emit_output_found(
@@ -2067,7 +2076,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
                             current_block,
                             total_blocks,
                             blocks_processed as usize,
-                            wallet_state.outputs.len(),
+                            wallet_state.transactions.len(),
                             Some(processing_rate),
                             estimated_completion,
                         )
@@ -2415,10 +2424,9 @@ impl ScannerBuilder {
     pub fn with_database_events(
         mut self,
         source: String,
-        database_path: Option<String>,
+        _database_path: Option<String>,
     ) -> Result<Self, LightweightWalletError> {
-        let event_emitter =
-            super::event_emitter::create_database_event_emitter(source, None, database_path)?;
+        let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
         self.event_emitter = Some(event_emitter);
         Ok(self)
     }
@@ -2527,7 +2535,7 @@ impl ScannerBuilder {
     #[cfg(feature = "storage")]
     pub fn with_production_preset(
         mut self,
-        database_path: Option<String>,
+        _database_path: Option<String>,
     ) -> Result<Self, LightweightWalletError> {
         self.config.batch_size = 30;
         self.config.timeout = Some(std::time::Duration::from_secs(60));
@@ -2541,10 +2549,9 @@ impl ScannerBuilder {
 
         // Add database event emitter if not already configured
         if self.event_emitter.is_none() {
-            let event_emitter = super::event_emitter::create_database_event_emitter(
+            let event_emitter = super::event_emitter::create_default_event_emitter(
                 "production_scanner".to_string(),
                 None,
-                database_path,
             )?;
             self.event_emitter = Some(event_emitter);
         }

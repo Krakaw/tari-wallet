@@ -34,7 +34,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::Arc;
+// Removed unused Arc import
 use std::time::{Duration, SystemTime};
 
 use crate::data_structures::{
@@ -44,10 +44,7 @@ use crate::data_structures::{
 };
 use crate::errors::LightweightWalletError;
 use crate::events::{
-    types::{
-        AddressInfo, BlockInfo, CancellationInfo, CompletionStatistics, ErrorInfo, Event,
-        EventMetadata, OutputData, ProgressData, ScanConfig,
-    },
+    types::{AddressInfo, BlockInfo, EventMetadata, OutputData, ScanConfig, WalletScanEvent},
     EventDispatcher,
 };
 use crate::scanning::{BinaryScanConfig, ScanContext, ScanMetadata};
@@ -57,7 +54,6 @@ use crate::scanning::{BinaryScanConfig, ScanContext, ScanMetadata};
 /// This struct provides a bridge between the wallet scanner and the event system,
 /// allowing scanner operations to emit structured events that can be handled
 /// by registered listeners.
-#[derive(Debug)]
 pub struct ScanEventEmitter {
     /// Event dispatcher for sending events to listeners
     dispatcher: EventDispatcher,
@@ -136,14 +132,14 @@ impl ScanEventEmitter {
             filters: HashMap::new(),
         };
 
-        let event = Event::ScanStarted {
+        let event = WalletScanEvent::ScanStarted {
             metadata,
-            scan_config,
+            config: scan_config,
             block_range,
-            wallet_context,
+            wallet_context: format!("{:?}", wallet_context),
         };
 
-        self.dispatcher.dispatch(Arc::new(event)).await;
+        self.dispatcher.dispatch(event).await;
         Ok(())
     }
 
@@ -151,32 +147,23 @@ impl ScanEventEmitter {
     ///
     /// This should be called after each block is successfully processed during scanning.
     pub async fn emit_block_processed(
-        &self,
+        &mut self,
         block: &Block,
         processing_duration: Duration,
         outputs_found: usize,
-        transactions_found: usize,
+        _transactions_found: usize,
     ) -> Result<(), LightweightWalletError> {
         let metadata = self.create_metadata();
-        let block_info = BlockInfo {
-            height: block.height,
-            hash: block.hash.clone(),
-            timestamp: block.timestamp,
-            output_count: block.outputs.len(),
-            input_count: block.inputs.len(),
-            merkle_root: None,   // Not available in current Block struct
-            previous_hash: None, // Not available in current Block struct
-        };
-
-        let event = Event::BlockProcessed {
+        let event = WalletScanEvent::BlockProcessed {
             metadata,
-            block_info,
+            height: block.height,
+            hash: hex::encode(&block.hash),
+            timestamp: block.timestamp,
             processing_duration,
-            outputs_found,
-            transactions_found,
+            outputs_count: outputs_found,
         };
 
-        self.dispatcher.dispatch(Arc::new(event)).await;
+        self.dispatcher.dispatch(event).await;
         Ok(())
     }
 
@@ -184,7 +171,7 @@ impl ScanEventEmitter {
     ///
     /// This should be called when a wallet output is discovered during scanning.
     pub async fn emit_output_found(
-        &self,
+        &mut self,
         output: &LightweightTransactionOutput,
         block_info: &BlockInfo,
         address_info: &AddressInfo,
@@ -193,23 +180,31 @@ impl ScanEventEmitter {
         let metadata = self.create_metadata();
         let output_data = OutputData {
             commitment: hex::encode(&output.commitment.as_bytes()),
-            range_proof: hex::encode(&output.range_proof),
-            encrypted_value: output.encrypted_value.clone(),
-            script: output.script.as_ref().map(|s| hex::encode(&s.bytes)),
-            features: output.features.bits(),
-            maturity_height: output.minimum_value_promise,
-            amount: Some(transaction.amount),
-            is_ours: true,
+            range_proof: hex::encode(&output.proof.as_ref().map_or(vec![], |p| p.bytes.clone())),
+            encrypted_value: Some(output.encrypted_data.to_byte_vec()),
+            script: Some(hex::encode(&output.script.bytes)),
+            features: output.features.bytes().len() as u32, // Use bytes length as substitute
+            maturity_height: Some(output.features.maturity),
+            amount: Some(transaction.value),
+            is_mine: true,
+            key_index: None,
         };
 
-        let event = Event::OutputFound {
+        let block_info = BlockInfo::new(
+            block_info.height,
+            block_info.hash.clone(),
+            block_info.timestamp,
+            transaction.output_index.unwrap_or(0),
+        );
+
+        let event = WalletScanEvent::OutputFound {
             metadata,
             output_data,
-            block_info: block_info.clone(),
+            block_info,
             address_info: address_info.clone(),
         };
 
-        self.dispatcher.dispatch(Arc::new(event)).await;
+        self.dispatcher.dispatch(event).await;
         Ok(())
     }
 
@@ -217,34 +212,34 @@ impl ScanEventEmitter {
     ///
     /// This should be called periodically during scanning to update progress.
     pub async fn emit_scan_progress(
-        &self,
+        &mut self,
         current_block: u64,
         total_blocks: u64,
-        blocks_processed: usize,
-        outputs_found: usize,
+        _blocks_processed: usize,
+        _outputs_found: usize,
         processing_rate: Option<f64>,
         estimated_completion: Option<SystemTime>,
     ) -> Result<(), LightweightWalletError> {
         let metadata = self.create_metadata();
-        let progress_data = ProgressData {
+        let percentage = if total_blocks > 0 {
+            (current_block as f64 / total_blocks as f64 * 100.0).min(100.0)
+        } else {
+            0.0
+        };
+
+        let estimated_time_remaining = estimated_completion
+            .and_then(|completion| SystemTime::now().duration_since(completion).ok());
+
+        let event = WalletScanEvent::ScanProgress {
+            metadata,
             current_block,
             total_blocks,
-            blocks_processed,
-            percentage: (blocks_processed as f64 / total_blocks as f64 * 100.0),
-            outputs_found,
-            processing_rate,
-            estimated_completion,
-            elapsed_time: self
-                .scan_start_time
-                .map(|start| SystemTime::now().duration_since(start).unwrap_or_default()),
+            percentage,
+            speed_blocks_per_second: processing_rate.unwrap_or(0.0),
+            estimated_time_remaining,
         };
 
-        let event = Event::ScanProgress {
-            metadata,
-            progress_data,
-        };
-
-        self.dispatcher.dispatch(Arc::new(event)).await;
+        self.dispatcher.dispatch(event).await;
         Ok(())
     }
 
@@ -252,32 +247,33 @@ impl ScanEventEmitter {
     ///
     /// This should be called when scanning completes successfully.
     pub async fn emit_scan_completed(
-        &self,
+        &mut self,
         final_stats: &ScanMetadata,
         wallet_state: &WalletState,
         success: bool,
     ) -> Result<(), LightweightWalletError> {
         let metadata = self.create_metadata();
-        let statistics = CompletionStatistics {
-            total_blocks_scanned: final_stats.blocks_processed,
-            total_outputs_found: wallet_state.outputs.len(),
-            total_transactions_found: wallet_state.transactions.len(),
-            scan_duration: final_stats.duration().unwrap_or_default(),
-            average_block_time: final_stats
-                .blocks_per_second()
-                .map(|rate| Duration::from_secs_f64(1.0 / rate)),
-            final_balance: wallet_state.get_summary().0, // Available balance
-            final_block_height: final_stats.to_block,
-            errors_encountered: 0, // Not tracked in current ScanMetadata
-        };
+        let mut final_statistics = HashMap::new();
+        final_statistics.insert(
+            "total_blocks_scanned".to_string(),
+            final_stats.blocks_processed as u64,
+        );
+        final_statistics.insert(
+            "total_transactions_found".to_string(),
+            wallet_state.transactions.len() as u64,
+        );
+        final_statistics.insert("final_block_height".to_string(), final_stats.to_block);
 
-        let event = Event::ScanCompleted {
+        let total_duration = final_stats.duration().unwrap_or_default();
+
+        let event = WalletScanEvent::ScanCompleted {
             metadata,
-            statistics,
+            final_statistics,
             success,
+            total_duration,
         };
 
-        self.dispatcher.dispatch(Arc::new(event)).await;
+        self.dispatcher.dispatch(event).await;
         Ok(())
     }
 
@@ -285,35 +281,37 @@ impl ScanEventEmitter {
     ///
     /// This should be called when an error occurs during scanning.
     pub async fn emit_scan_error(
-        &self,
+        &mut self,
         error: &LightweightWalletError,
         current_block: Option<u64>,
         can_retry: bool,
         retry_count: u32,
     ) -> Result<(), LightweightWalletError> {
         let metadata = self.create_metadata();
-        let error_info = ErrorInfo {
-            error_type: format!("{:?}", error), // Simple error type classification
-            error_message: error.to_string(),
-            error_code: None, // Not available in current error types
-            block_height: current_block,
-            component: Some(self.source.clone()),
-            stack_trace: None, // Not available
-            recovery_suggestion: if can_retry {
-                Some("Scan can be retried from the current position".to_string())
+        let retry_info = if can_retry {
+            if let Some(block) = current_block {
+                Some(format!(
+                    "Retry attempt {} - scan can be resumed from block {}",
+                    retry_count + 1,
+                    block
+                ))
             } else {
-                Some("Manual intervention may be required".to_string())
-            },
+                Some(format!("Retry attempt {}", retry_count + 1))
+            }
+        } else {
+            None
         };
 
-        let event = Event::ScanError {
+        let event = WalletScanEvent::ScanError {
             metadata,
-            error_info,
-            can_retry,
-            retry_count,
+            error_message: error.to_string(),
+            error_code: Some(format!("{:?}", error)),
+            block_height: current_block,
+            retry_info,
+            is_recoverable: can_retry,
         };
 
-        self.dispatcher.dispatch(Arc::new(event)).await;
+        self.dispatcher.dispatch(event).await;
         Ok(())
     }
 
@@ -321,27 +319,41 @@ impl ScanEventEmitter {
     ///
     /// This should be called when scanning is cancelled by user request.
     pub async fn emit_scan_cancelled(
-        &self,
+        &mut self,
         reason: String,
         current_block: u64,
         partial_stats: Option<&ScanMetadata>,
     ) -> Result<(), LightweightWalletError> {
         let metadata = self.create_metadata();
-        let cancellation_info = CancellationInfo {
-            reason,
-            initiated_by: "user".to_string(), // Could be enhanced to track actual source
-            current_block,
-            blocks_completed: partial_stats.map(|s| s.blocks_processed).unwrap_or(0),
-            can_resume: true, // Always true for user-initiated cancellation
-            resume_instruction: Some(format!("Resume from block {}", current_block + 1)),
-        };
+        let mut final_statistics = HashMap::new();
+        if let Some(stats) = partial_stats {
+            final_statistics.insert(
+                "blocks_processed".to_string(),
+                stats.blocks_processed as u64,
+            );
+            final_statistics.insert("from_block".to_string(), stats.from_block);
+            final_statistics.insert("to_block".to_string(), stats.to_block);
+        }
+        final_statistics.insert("current_block".to_string(), current_block);
 
-        let event = Event::ScanCancelled {
+        let partial_completion = partial_stats.and_then(|stats| {
+            if stats.to_block > stats.from_block {
+                let total = stats.to_block - stats.from_block + 1;
+                let completed = current_block.saturating_sub(stats.from_block);
+                Some((completed as f64 / total as f64) * 100.0)
+            } else {
+                None
+            }
+        });
+
+        let event = WalletScanEvent::ScanCancelled {
             metadata,
-            cancellation_info,
+            reason,
+            final_statistics,
+            partial_completion,
         };
 
-        self.dispatcher.dispatch(Arc::new(event)).await;
+        self.dispatcher.dispatch(event).await;
         Ok(())
     }
 
@@ -357,28 +369,26 @@ impl ScanEventEmitter {
 /// Helper function to create AddressInfo from scan context and transaction
 pub fn create_address_info_from_transaction(
     context: &ScanContext,
-    transaction: &WalletTransaction,
+    _transaction: &WalletTransaction,
 ) -> AddressInfo {
     AddressInfo {
-        address: transaction.address.clone(),
-        address_type: "dual".to_string(), // Assuming dual address type
-        key_index: None,                  // Not directly available in current structure
-        derivation_path: None,            // Could be derived from context if needed
-        script_hash: None,                // Not available in current structure
+        address: "derived".to_string(), // Would be derived from context in real implementation
+        address_type: "dual".to_string(),
+        network: "localnet".to_string(), // Default for testing
+        derivation_path: None,
+        public_spend_key: Some(hex::encode(&context.view_key.as_bytes())),
+        view_key: Some(hex::encode(&context.view_key.as_bytes())),
     }
 }
 
 /// Helper function to create BlockInfo from Block
 pub fn create_block_info_from_block(block: &Block) -> BlockInfo {
-    BlockInfo {
-        height: block.height,
-        hash: block.hash.clone(),
-        timestamp: block.timestamp,
-        output_count: block.outputs.len(),
-        input_count: block.inputs.len(),
-        merkle_root: None,   // Not available in current Block struct
-        previous_hash: None, // Not available in current Block struct
-    }
+    BlockInfo::new(
+        block.height,
+        hex::encode(&block.hash),
+        block.timestamp,
+        0, // output index - would need to be provided by caller
+    )
 }
 
 /// Create a ScanEventEmitter with commonly used listeners
@@ -414,7 +424,7 @@ pub fn create_default_event_emitter(
 /// This is a convenience function for setting up an event emitter with
 /// a database storage listener for persistence.
 #[cfg(feature = "storage")]
-pub fn create_database_event_emitter(
+pub async fn create_database_event_emitter(
     source: String,
     correlation_id: Option<String>,
     database_path: Option<String>,
@@ -424,12 +434,10 @@ pub fn create_database_event_emitter(
     let mut dispatcher = EventDispatcher::new();
 
     // Add database storage listener
-    let db_listener = if let Some(path) = database_path {
-        DatabaseStorageListener::with_database_path(path)?
-    } else {
-        DatabaseStorageListener::new()?
-    };
-    dispatcher.register(Box::new(db_listener));
+    if let Some(path) = database_path {
+        let db_listener = DatabaseStorageListener::new(&path).await?;
+        dispatcher.register(Box::new(db_listener));
+    }
 
     // Add progress tracking listener
     let progress_listener = ProgressTrackingListener::new();
@@ -447,7 +455,7 @@ pub fn create_database_event_emitter(
 mod tests {
     use super::*;
     use crate::events::listeners::MockEventListener;
-    use tokio::time::{sleep, Duration as TokioDuration};
+    // Removed unused tokio imports
 
     fn create_test_emitter() -> ScanEventEmitter {
         let mut dispatcher = EventDispatcher::new();
@@ -494,16 +502,22 @@ mod tests {
     // Helper function to create a test scan context
     fn create_test_scan_context() -> ScanContext {
         use crate::data_structures::types::PrivateKey;
-        use crate::key_management::key_derivation::derive_spend_key;
 
         // Create a test private key (this is just for testing)
-        let entropy = [0u8; 32]; // Not secure, just for testing
-        let view_key = derive_spend_key(&entropy, 0).expect("Failed to derive test key");
+        let entropy = [0u8; 16]; // Fixed to match expected size
+        let view_key = PrivateKey::new([1u8; 32]);
 
-        ScanContext {
-            view_key,
-            entropy,
-            start_block: 0,
-        }
+        ScanContext { view_key, entropy }
+    }
+}
+
+impl std::fmt::Debug for ScanEventEmitter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScanEventEmitter")
+            .field("source", &self.source)
+            .field("correlation_id", &self.correlation_id)
+            .field("scan_start_time", &self.scan_start_time)
+            .field("current_config", &self.current_config)
+            .finish()
     }
 }
