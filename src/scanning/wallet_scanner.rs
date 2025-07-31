@@ -2672,8 +2672,135 @@ impl Default for ScannerBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::events::{EventDispatcher, EventListener, SharedEvent};
+    use crate::scanning::event_emitter::ScanEventEmitter;
     use std::time::Duration;
+
+    struct SlowTestListener {
+        delay: Duration,
+        name: String,
+        static_name: &'static str,
+    }
+
+    impl SlowTestListener {
+        fn new(delay_ms: u64, name: String, static_name: &'static str) -> Self {
+            Self {
+                delay: Duration::from_millis(delay_ms),
+                name,
+                static_name,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl EventListener for SlowTestListener {
+        async fn handle_event(
+            &mut self,
+            _event: &SharedEvent,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            println!(
+                "Listener {} processing event (will take {}ms)",
+                self.name,
+                self.delay.as_millis()
+            );
+
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::time::sleep(self.delay).await;
+
+            println!("Listener {} finished processing", self.name);
+            Ok(())
+        }
+
+        fn name(&self) -> &'static str {
+            self.static_name
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fire_and_forget_event_emission_is_non_blocking() {
+        let mut dispatcher = EventDispatcher::new();
+
+        // Add slow listeners that would normally block scanning
+        let slow_listener_1 =
+            SlowTestListener::new(500, "Database Writer".to_string(), "DatabaseWriter");
+        let slow_listener_2 = SlowTestListener::new(300, "File Logger".to_string(), "FileLogger");
+
+        let _ = dispatcher.register(Box::new(slow_listener_1));
+        let _ = dispatcher.register(Box::new(slow_listener_2));
+
+        // Create event emitter with fire-and-forget enabled
+        let mut emitter = ScanEventEmitter::new(dispatcher, "test_scanner".to_string())
+            .with_fire_and_forget(true);
+
+        // Measure how long it takes to emit events
+        let start = std::time::Instant::now();
+
+        // Emit multiple events quickly
+        for i in 0..3 {
+            // This should return quickly in fire-and-forget mode, not waiting for slow listeners
+            emitter
+                .emit_scan_progress(i, 10, 0, 0, Some(5.0), None)
+                .await
+                .unwrap();
+            println!("Emitted event {} at {:?}", i, start.elapsed());
+        }
+
+        let total_emit_time = start.elapsed();
+        println!(
+            "Total time to emit 3 events with fire-and-forget: {:?}",
+            total_emit_time
+        );
+
+        // In fire-and-forget mode, this should complete much faster than
+        // the combined listener processing time (500ms + 300ms = 800ms per event)
+        // With 3 events, blocking would take ~2400ms, fire-and-forget should be < 100ms
+        assert!(total_emit_time < Duration::from_millis(200),
+               "Fire-and-forget emission took too long: {:?} (should be much less than listener processing time)",
+               total_emit_time);
+
+        println!("✓ Fire-and-forget emission is non-blocking and doesn't wait for slow listeners!");
+
+        // Give a little time for background tasks to complete before test ends
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    #[tokio::test]
+    async fn test_blocking_mode_waits_for_listeners() {
+        let mut dispatcher = EventDispatcher::new();
+
+        // Add a slow listener
+        let slow_listener = SlowTestListener::new(
+            200,
+            "Blocking Test Listener".to_string(),
+            "BlockingTestListener",
+        );
+        dispatcher.register(Box::new(slow_listener)).unwrap();
+
+        // Create event emitter with fire-and-forget DISABLED (blocking mode)
+        let mut emitter = ScanEventEmitter::new(dispatcher, "test_scanner".to_string())
+            .with_fire_and_forget(false);
+
+        let start = std::time::Instant::now();
+
+        // Emit a single event
+        emitter
+            .emit_scan_progress(1, 10, 0, 0, Some(5.0), None)
+            .await
+            .unwrap();
+
+        let total_emit_time = start.elapsed();
+        println!("Blocking mode emission time: {:?}", total_emit_time);
+
+        // In blocking mode, this should take at least as long as the listener processing time
+        assert!(
+            total_emit_time >= Duration::from_millis(150),
+            "Blocking emission completed too quickly: {:?} (should wait for listener)",
+            total_emit_time
+        );
+
+        println!("✓ Blocking mode waits for listeners as expected!");
+    }
+    use super::*;
 
     #[test]
     fn test_scan_metadata_new() {

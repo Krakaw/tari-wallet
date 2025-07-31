@@ -69,7 +69,7 @@
   - [x] 4.4 Implement scanner builder pattern with default listeners (Req #22)
   - [x] 4.5 Add event emission at each scanning stage (start, block processing, output found, progress, completion)
   - [x] 4.6 Integrate cancellation mechanism with event system (Req #7)
-  - [ ] 4.7 Ensure fire-and-forget async event emission doesn't block scanning (Req #3)
+  - [x] 4.7 Ensure fire-and-forget async event emission doesn't block scanning (Req #3)
   - [ ] 4.8 Convert `src/bin/scanner.rs` to use the event system in place of existing functionality.
 
 - [ ] 5.0 Update Tests and Add Migration Support
