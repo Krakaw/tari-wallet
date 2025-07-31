@@ -51,7 +51,10 @@ use crate::data_structures::{
 };
 use crate::errors::LightweightWalletError;
 use crate::events::{
-    types::{AddressInfo, BlockInfo, EventMetadata, OutputData, ScanConfig, WalletScanEvent},
+    types::{
+        AddressInfo, BlockInfo, EventMetadata, OutputData, ScanConfig, TransactionData,
+        WalletScanEvent,
+    },
     EventDispatcher,
 };
 use crate::scanning::{BinaryScanConfig, ScanContext, ScanMetadata};
@@ -217,11 +220,20 @@ impl ScanEventEmitter {
             transaction.output_index.unwrap_or(0),
         );
 
+        let transaction_data = TransactionData::new(
+            transaction.value,
+            format!("{:?}", transaction.transaction_status),
+            format!("{:?}", transaction.transaction_direction),
+            block_info.timestamp,
+        )
+        .with_output_index(transaction.output_index.unwrap_or(0));
+
         let event = WalletScanEvent::OutputFound {
             metadata,
             output_data,
             block_info,
             address_info: address_info.clone(),
+            transaction_data,
         };
 
         self.dispatch_event(event).await;

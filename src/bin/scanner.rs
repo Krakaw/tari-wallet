@@ -699,7 +699,15 @@ async fn main_with_storage() -> LightweightWalletResult<()> {
         // Note: DatabaseStorageListener will handle storage operations through events
         if let Some(db_path) = &config.database_path {
             match DatabaseStorageListener::new(db_path).await {
-                Ok(db_listener) => {
+                Ok(mut db_listener) => {
+                    // Set the wallet_id from the storage_backend so the listener knows which wallet to use
+                    db_listener.set_wallet_id(storage_backend.wallet_id);
+                    if !args.quiet && storage_backend.wallet_id.is_some() {
+                        println!(
+                            "🔗 Database event listener configured for wallet ID: {:?}",
+                            storage_backend.wallet_id
+                        );
+                    }
                     let _ = event_dispatcher.register(Box::new(db_listener));
                 }
                 Err(e) => {

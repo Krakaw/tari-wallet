@@ -529,6 +529,12 @@ impl ConsoleLoggingListener {
                 output_data: output_data.clone(),
                 block_info: block_info.clone(),
                 address_info: address_info.clone(),
+                transaction_data: crate::events::types::TransactionData::new(
+                    output_data.amount.unwrap_or(0),
+                    "Found".to_string(),
+                    "Inbound".to_string(),
+                    block_info.timestamp,
+                ),
             },
             color,
             "OUTPUT",
@@ -1345,11 +1351,19 @@ mod tests {
             "mainnet".to_string(),
         );
 
+        let transaction_data = crate::events::types::TransactionData::new(
+            1000,
+            "MinedConfirmed".to_string(),
+            "Inbound".to_string(),
+            1697123456,
+        );
+
         let event = Arc::new(WalletScanEvent::OutputFound {
             metadata: EventMetadata::new("test"),
             output_data,
             block_info,
             address_info,
+            transaction_data,
         });
 
         let result = listener.handle_event(&event).await;

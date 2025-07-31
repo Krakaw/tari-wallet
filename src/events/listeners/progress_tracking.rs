@@ -1167,10 +1167,18 @@ mod tests {
             "mainnet".to_string(),
         );
 
+        let transaction_data = crate::events::types::TransactionData::new(
+            2000,
+            "MinedConfirmed".to_string(),
+            "Inbound".to_string(),
+            1697123456,
+        );
+
         let output_event = Arc::new(WalletScanEvent::output_found(
             output_data,
             block_info,
             address_info,
+            transaction_data,
         ));
 
         let result = listener_mut.handle_event(&output_event).await;

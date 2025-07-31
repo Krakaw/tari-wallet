@@ -305,24 +305,43 @@ impl DatabaseStorageListener {
         output_data: &OutputData,
         block_info: &BlockInfo,
         address_info: &AddressInfo,
+        transaction_data: &crate::events::types::TransactionData,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         if let Some(wallet_id) = self.wallet_id {
-            let result = self
+            // Save the output
+            let output_result = self
                 .save_output_with_recovery(wallet_id, output_data, block_info, address_info)
                 .await;
 
-            match result {
-                Ok(_) => {
+            // Save the transaction
+            let transaction_result = self
+                .save_transaction_with_recovery(
+                    wallet_id,
+                    transaction_data,
+                    output_data,
+                    block_info,
+                )
+                .await;
+
+            match (output_result, transaction_result) {
+                (Ok(_), Ok(_)) => {
                     if self.verbose {
                         self.log(&format!(
-                            "Successfully saved output at block {}: commitment={}",
+                            "Successfully saved output and transaction at block {}: commitment={}",
                             block_info.height, output_data.commitment
                         ));
                     }
                 }
-                Err(e) => {
+                (Err(e), _) => {
                     self.log(&format!(
                         "Failed to save output at block {} after retries: {}",
+                        block_info.height, e
+                    ));
+                    return Err(e);
+                }
+                (_, Err(e)) => {
+                    self.log(&format!(
+                        "Failed to save transaction at block {} after retries: {}",
                         block_info.height, e
                     ));
                     return Err(e);
@@ -718,6 +737,186 @@ impl DatabaseStorageListener {
         }
     }
 
+    /// Save a transaction with error recovery
+    async fn save_transaction_with_recovery(
+        &mut self,
+        wallet_id: u32,
+        transaction_data: &crate::events::types::TransactionData,
+        output_data: &OutputData,
+        block_info: &BlockInfo,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let mut attempt = 0;
+        let max_attempts = self.error_recovery.get_config().max_retry_attempts;
+
+        loop {
+            // Check circuit breaker
+            if !self.error_recovery.is_operation_allowed() {
+                let error_record = ErrorRecord::new(
+                    "Transaction save operation blocked by circuit breaker".to_string(),
+                    false,
+                )
+                .with_error_code("CIRCUIT_BREAKER_OPEN".to_string());
+
+                self.error_recovery.record_error(error_record);
+                return Err("Circuit breaker is open for database operations".into());
+            }
+
+            // Attempt the operation
+            match self
+                .try_save_transaction(wallet_id, transaction_data, output_data, block_info)
+                .await
+            {
+                Ok(_) => {
+                    self.error_recovery.record_success();
+                    if self.verbose && attempt > 0 {
+                        self.log(&format!(
+                            "Transaction save succeeded on attempt {}",
+                            attempt + 1
+                        ));
+                    }
+                    return Ok(());
+                }
+                Err(e) => {
+                    let error_message = e.to_string();
+                    let is_recoverable = self.is_error_recoverable(&error_message);
+
+                    let mut error_record = ErrorRecord::new(error_message.clone(), is_recoverable)
+                        .with_retry_attempt(attempt)
+                        .with_context("operation".to_string(), "save_transaction".to_string())
+                        .with_context("block_height".to_string(), block_info.height.to_string())
+                        .with_context("commitment".to_string(), output_data.commitment.clone());
+
+                    // Categorize the error
+                    if error_message.contains("database is locked") {
+                        error_record = error_record.with_error_code("DATABASE_LOCKED".to_string());
+                    } else if error_message.contains("UNIQUE constraint") {
+                        error_record =
+                            error_record.with_error_code("DUPLICATE_TRANSACTION".to_string());
+                    } else {
+                        error_record =
+                            error_record.with_error_code("TRANSACTION_SAVE_FAILED".to_string());
+                    }
+
+                    let should_retry = self.error_recovery.record_error(error_record);
+
+                    if !should_retry
+                        || !self.error_recovery.should_retry(attempt, is_recoverable)
+                        || attempt >= max_attempts
+                    {
+                        if self.verbose {
+                            self.log(&format!(
+                                "Transaction save failed after {} attempts: {}",
+                                attempt + 1,
+                                error_message
+                            ));
+                        }
+                        return Err(e);
+                    }
+
+                    // Calculate retry delay
+                    let delay = self.error_recovery.calculate_retry_delay(attempt);
+                    if self.verbose {
+                        self.log(&format!(
+                            "Transaction save failed on attempt {}, retrying in {:?}: {}",
+                            attempt + 1,
+                            delay,
+                            error_message
+                        ));
+                    }
+
+                    // Wait before retry
+                    #[cfg(not(target_arch = "wasm32"))]
+                    tokio::time::sleep(delay).await;
+
+                    attempt += 1;
+                }
+            }
+        }
+    }
+
+    /// Try to save a transaction (single attempt)
+    async fn try_save_transaction(
+        &mut self,
+        wallet_id: u32,
+        transaction_data: &crate::events::types::TransactionData,
+        output_data: &OutputData,
+        block_info: &BlockInfo,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Convert event data to WalletTransaction
+        let wallet_transaction = self.convert_to_wallet_transaction(
+            wallet_id,
+            transaction_data,
+            output_data,
+            block_info,
+        )?;
+
+        // Save the transaction to database
+        self.database
+            .save_transaction(wallet_id, &wallet_transaction)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    /// Convert event data to WalletTransaction
+    fn convert_to_wallet_transaction(
+        &self,
+        _wallet_id: u32,
+        transaction_data: &crate::events::types::TransactionData,
+        output_data: &OutputData,
+        block_info: &BlockInfo,
+    ) -> Result<
+        crate::data_structures::wallet_transaction::WalletTransaction,
+        Box<dyn Error + Send + Sync>,
+    > {
+        use crate::data_structures::{
+            payment_id::PaymentId,
+            transaction::{TransactionDirection, TransactionStatus},
+            types::CompressedCommitment,
+        };
+
+        // Parse the commitment from hex
+        let commitment = CompressedCommitment::from_hex(&output_data.commitment)
+            .map_err(|e| format!("Invalid commitment hex: {}", e))?;
+
+        // Parse direction
+        let direction = match transaction_data.direction.as_str() {
+            "Inbound" => TransactionDirection::Inbound,
+            "Outbound" => TransactionDirection::Outbound,
+            _ => TransactionDirection::Inbound, // Default to inbound
+        };
+
+        // Parse status
+        let status = match transaction_data.status.as_str() {
+            "MinedConfirmed" => TransactionStatus::MinedConfirmed,
+            "MinedUnconfirmed" => TransactionStatus::MinedUnconfirmed,
+            "Pending" => TransactionStatus::Pending,
+            "Completed" => TransactionStatus::Completed,
+            "Imported" => TransactionStatus::Imported,
+            _ => TransactionStatus::MinedConfirmed, // Default for found outputs
+        };
+
+        // Create payment ID (use default for now)
+        let payment_id = PaymentId::Empty;
+
+        Ok(
+            crate::data_structures::wallet_transaction::WalletTransaction {
+                block_height: block_info.height,
+                output_index: transaction_data.output_index,
+                input_index: None,
+                commitment,
+                output_hash: None,
+                value: transaction_data.value,
+                payment_id,
+                is_spent: false, // For new outputs found during scanning
+                spent_in_block: None,
+                spent_in_input: None,
+                transaction_status: status,
+                transaction_direction: direction,
+                is_mature: true, // Assume mature for now
+            },
+        )
+    }
+
     /// Try to save an output (single attempt)
     async fn try_save_output(
         &mut self,
@@ -775,9 +974,10 @@ impl EventListener for DatabaseStorageListener {
                 output_data,
                 block_info,
                 address_info,
+                transaction_data,
                 ..
             } => {
-                self.handle_output_found(output_data, block_info, address_info)
+                self.handle_output_found(output_data, block_info, address_info, transaction_data)
                     .await
             }
             WalletScanEvent::ScanProgress {

@@ -193,6 +193,67 @@ impl BlockInfo {
     }
 }
 
+/// Transaction data information for wallet transaction storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionData {
+    /// Transaction value in microTari
+    pub value: u64,
+    /// Transaction status (e.g., "Unspent", "Spent", "Pending")
+    pub status: String,
+    /// Transaction direction ("Inbound" or "Outbound")
+    pub direction: String,
+    /// Optional output index in the transaction
+    pub output_index: Option<usize>,
+    /// Optional payment ID for tracking
+    pub payment_id: Option<String>,
+    /// Fee paid for the transaction (if outbound)
+    pub fee: Option<u64>,
+    /// Kernel excess for the transaction
+    pub kernel_excess: Option<String>,
+    /// Transaction timestamp
+    pub timestamp: u64,
+}
+
+impl TransactionData {
+    /// Create new transaction data with required fields
+    pub fn new(value: u64, status: String, direction: String, timestamp: u64) -> Self {
+        Self {
+            value,
+            status,
+            direction,
+            output_index: None,
+            payment_id: None,
+            fee: None,
+            kernel_excess: None,
+            timestamp,
+        }
+    }
+
+    /// Set the output index
+    pub fn with_output_index(mut self, output_index: usize) -> Self {
+        self.output_index = Some(output_index);
+        self
+    }
+
+    /// Set the payment ID
+    pub fn with_payment_id(mut self, payment_id: String) -> Self {
+        self.payment_id = Some(payment_id);
+        self
+    }
+
+    /// Set the transaction fee
+    pub fn with_fee(mut self, fee: u64) -> Self {
+        self.fee = Some(fee);
+        self
+    }
+
+    /// Set the kernel excess
+    pub fn with_kernel_excess(mut self, kernel_excess: String) -> Self {
+        self.kernel_excess = Some(kernel_excess);
+        self
+    }
+}
+
 /// Address information for the output
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddressInfo {
@@ -298,6 +359,7 @@ pub enum WalletScanEvent {
         output_data: OutputData,
         block_info: BlockInfo,
         address_info: AddressInfo,
+        transaction_data: TransactionData,
     },
     /// Emitted periodically to report scan progress
     ScanProgress {
@@ -741,7 +803,14 @@ mod tests {
             "mainnet".to_string(),
         );
 
-        let event = WalletScanEvent::output_found(output_data, block_info, address_info);
+        let transaction_data = TransactionData::new(
+            1000,
+            "MinedConfirmed".to_string(),
+            "Inbound".to_string(),
+            1697123456,
+        );
+        let event =
+            WalletScanEvent::output_found(output_data, block_info, address_info, transaction_data);
 
         // Test serialization
         let json = event.to_debug_json().unwrap();
@@ -948,7 +1017,14 @@ mod tests {
         )
         .with_derivation_path("m/44'/0'/0'/0/5".to_string());
 
-        let event = WalletScanEvent::output_found(output_data, block_info, address_info);
+        let transaction_data = TransactionData::new(
+            1000,
+            "MinedConfirmed".to_string(),
+            "Inbound".to_string(),
+            1697123456,
+        );
+        let event =
+            WalletScanEvent::output_found(output_data, block_info, address_info, transaction_data);
 
         match &event {
             WalletScanEvent::OutputFound {
@@ -956,6 +1032,7 @@ mod tests {
                 output_data,
                 block_info,
                 address_info,
+                transaction_data: _,
             } => {
                 assert!(!metadata.event_id.is_empty());
                 assert_eq!(metadata.source, "wallet_scanner");
@@ -1005,7 +1082,14 @@ mod tests {
             "testnet".to_string(),
         );
 
-        let event = WalletScanEvent::output_found(output_data, block_info, address_info);
+        let transaction_data = TransactionData::new(
+            5000,
+            "MinedConfirmed".to_string(),
+            "Inbound".to_string(),
+            1697999999,
+        );
+        let event =
+            WalletScanEvent::output_found(output_data, block_info, address_info, transaction_data);
 
         // Test EventType trait
         assert_eq!(event.event_type(), "OutputFound");
@@ -1382,6 +1466,188 @@ mod tests {
         assert!(!summary.contains("average_block_time_ms"));
         assert!(!summary.contains("total_value_found"));
     }
+
+    #[test]
+    fn test_scan_error_event_creation() {
+        let event = WalletScanEvent::scan_error(
+            "Connection timeout".to_string(),
+            Some("E001".to_string()),
+            Some(12345),
+            Some("Will retry in 5 seconds".to_string()),
+            true,
+        );
+
+        match &event {
+            WalletScanEvent::ScanError {
+                metadata,
+                error_message,
+                error_code,
+                block_height,
+                retry_info,
+                is_recoverable,
+            } => {
+                assert!(!metadata.event_id.is_empty());
+                assert_eq!(metadata.source, "wallet_scanner");
+                assert_eq!(error_message, "Connection timeout");
+                assert_eq!(error_code, &Some("E001".to_string()));
+                assert_eq!(block_height, &Some(12345));
+                assert_eq!(retry_info, &Some("Will retry in 5 seconds".to_string()));
+                assert!(is_recoverable);
+            }
+            _ => panic!("Expected ScanError event"),
+        }
+    }
+
+    #[test]
+    fn test_scan_error_event_traits() {
+        let event = WalletScanEvent::scan_error(
+            "Database connection failed".to_string(),
+            None,
+            None,
+            None,
+            false,
+        );
+
+        // Test EventType trait
+        assert_eq!(event.event_type(), "ScanError");
+        let debug_data = event.debug_data().unwrap();
+        assert!(debug_data.contains("error: Database connection failed"));
+        assert!(debug_data.contains("block: None"));
+
+        // Test SerializableEvent trait
+        let summary = event.summary();
+        assert_eq!(summary, "Scan error: Database connection failed");
+
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("ScanError"));
+        assert!(json.contains("Database connection failed"));
+    }
+
+    #[test]
+    fn test_scan_cancelled_event_creation() {
+        let mut final_stats = HashMap::new();
+        final_stats.insert("blocks_processed".to_string(), 500);
+        final_stats.insert("outputs_found".to_string(), 25);
+
+        let event = WalletScanEvent::scan_cancelled(
+            "User cancelled operation".to_string(),
+            final_stats,
+            Some(0.5), // 50% completion
+        );
+
+        match &event {
+            WalletScanEvent::ScanCancelled {
+                metadata,
+                reason,
+                final_statistics,
+                partial_completion,
+            } => {
+                assert!(!metadata.event_id.is_empty());
+                assert_eq!(metadata.source, "wallet_scanner");
+                assert_eq!(reason, "User cancelled operation");
+                assert_eq!(final_statistics.get("blocks_processed"), Some(&500));
+                assert_eq!(final_statistics.get("outputs_found"), Some(&25));
+                assert_eq!(partial_completion, &Some(0.5));
+            }
+            _ => panic!("Expected ScanCancelled event"),
+        }
+    }
+
+    #[test]
+    fn test_scan_cancelled_event_traits() {
+        let event =
+            WalletScanEvent::scan_cancelled("Network timeout".to_string(), HashMap::new(), None);
+
+        // Test EventType trait
+        assert_eq!(event.event_type(), "ScanCancelled");
+        let debug_data = event.debug_data().unwrap();
+        assert!(debug_data.contains("reason: Network timeout"));
+
+        // Test SerializableEvent trait
+        let summary = event.summary();
+        assert_eq!(summary, "Scan cancelled: Network timeout");
+
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("ScanCancelled"));
+        assert!(json.contains("Network timeout"));
+    }
+
+    #[test]
+    fn test_event_metadata_creation() {
+        let metadata = EventMetadata::new("test_source");
+
+        assert!(!metadata.event_id.is_empty());
+        assert_eq!(metadata.source, "test_source");
+        assert!(metadata.correlation_id.is_none());
+        assert!(metadata.timestamp <= SystemTime::now());
+    }
+
+    #[test]
+    fn test_event_metadata_with_correlation() {
+        let metadata =
+            EventMetadata::with_correlation("test_source", "correlation_123".to_string());
+
+        assert!(!metadata.event_id.is_empty());
+        assert_eq!(metadata.source, "test_source");
+        assert_eq!(metadata.correlation_id, Some("correlation_123".to_string()));
+        assert!(metadata.timestamp <= SystemTime::now());
+    }
+
+    #[test]
+    fn test_block_info_builder_pattern() {
+        let block_info = BlockInfo::new(12345, "0xabc123".to_string(), 1697123456, 5)
+            .with_transaction_index(2)
+            .with_difficulty(98765);
+
+        assert_eq!(block_info.height, 12345);
+        assert_eq!(block_info.hash, "0xabc123");
+        assert_eq!(block_info.timestamp, 1697123456);
+        assert_eq!(block_info.output_index, 5);
+        assert_eq!(block_info.transaction_index, Some(2));
+        assert_eq!(block_info.difficulty, Some(98765));
+    }
+
+    #[test]
+    fn test_address_info_builder_pattern() {
+        let address_info = AddressInfo::new(
+            "tari1abc123".to_string(),
+            "stealth".to_string(),
+            "mainnet".to_string(),
+        )
+        .with_derivation_path("m/44'/0'/0'/0/1".to_string())
+        .with_public_spend_key("public_key_123".to_string())
+        .with_view_key("view_key_456".to_string());
+
+        assert_eq!(address_info.address, "tari1abc123");
+        assert_eq!(address_info.address_type, "stealth");
+        assert_eq!(address_info.network, "mainnet");
+        assert_eq!(
+            address_info.derivation_path,
+            Some("m/44'/0'/0'/0/1".to_string())
+        );
+        assert_eq!(
+            address_info.public_spend_key,
+            Some("public_key_123".to_string())
+        );
+        assert_eq!(address_info.view_key, Some("view_key_456".to_string()));
+    }
+
+    #[test]
+    fn test_json_serialization_error_handling() {
+        // Test that the error handling for JSON serialization works correctly
+        // by creating a valid event and checking error paths
+        let event =
+            WalletScanEvent::scan_started(ScanConfig::default(), (0, 100), "test".to_string());
+
+        // These should succeed
+        assert!(event.to_debug_json().is_ok());
+        assert!(event.to_compact_json().is_ok());
+
+        // Test deserialization with invalid JSON
+        let invalid_json = "{invalid json}";
+        assert!(WalletScanEvent::from_json(invalid_json).is_err());
+        assert!(WalletScanEvent::shared_from_json(invalid_json).is_err());
+    }
 }
 
 /// Helper functions for creating events with proper metadata
@@ -1423,12 +1689,14 @@ impl WalletScanEvent {
         output_data: OutputData,
         block_info: BlockInfo,
         address_info: AddressInfo,
+        transaction_data: TransactionData,
     ) -> Self {
         Self::OutputFound {
             metadata: EventMetadata::new("wallet_scanner"),
             output_data,
             block_info,
             address_info,
+            transaction_data,
         }
     }
 

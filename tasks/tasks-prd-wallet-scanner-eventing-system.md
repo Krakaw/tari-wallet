@@ -75,7 +75,7 @@
   - [x] 4.8 Convert `src/bin/scanner.rs` to use the event system in place of existing functionality.
 
 - [ ] 5.0 Update Tests and Add Migration Support
-  - [ ] 5.1 Write unit tests for core event system components (>95% coverage target)
+  - [x] 5.1 Write unit tests for core event system components (>95% coverage target)
   - [ ] 5.2 Write integration tests for built-in listeners with real database/progress scenarios
   - [ ] 5.3 Write cross-platform tests ensuring identical behavior on native and WASM
   - [ ] 5.4 Create performance benchmarks comparing old vs new implementation
