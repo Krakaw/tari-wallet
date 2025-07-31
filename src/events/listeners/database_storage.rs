@@ -723,6 +723,147 @@ impl DatabaseStorageListenerBuilder {
         self
     }
 
+    /// Apply memory-only preset configuration for testing and development
+    ///
+    /// This preset:
+    /// - Uses in-memory database (":memory:")
+    /// - Sets small batch size (25) for responsive testing
+    /// - Disables verbose logging for cleaner test output
+    /// - Disables WAL mode (not applicable for memory DB)
+    /// - Enables background writer for full feature testing
+    ///
+    /// Perfect for unit tests and development environments.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = DatabaseStorageListener::builder()
+    ///     .memory_preset()
+    ///     .build()
+    ///     .await?;
+    /// ```
+    pub fn memory_preset(mut self) -> Self {
+        self.database_path = ":memory:".to_string();
+        self.batch_size = 25;
+        self.verbose = false;
+        self.enable_wal_mode = false;
+        self.auto_start_background_writer = true;
+        self
+    }
+
+    /// Apply production preset configuration for high-performance persistent storage
+    ///
+    /// This preset:
+    /// - Uses file-based database (user must set path)
+    /// - Sets large batch size (200) for optimal throughput
+    /// - Disables verbose logging for production efficiency
+    /// - Enables WAL mode for better concurrency
+    /// - Enables background writer for asynchronous I/O
+    ///
+    /// Optimized for production wallet scanning with maximum performance.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = DatabaseStorageListener::builder()
+    ///     .production_preset()
+    ///     .database_path("production_wallet.db")
+    ///     .build()
+    ///     .await?;
+    /// ```
+    pub fn production_preset(mut self) -> Self {
+        // Keep current database_path (user should set explicitly)
+        self.batch_size = 200;
+        self.verbose = false;
+        self.enable_wal_mode = true;
+        self.auto_start_background_writer = true;
+        self
+    }
+
+    /// Apply development preset configuration for debugging and analysis
+    ///
+    /// This preset:
+    /// - Uses file-based database (user must set path)
+    /// - Sets small batch size (10) for detailed observation
+    /// - Enables verbose logging for debugging
+    /// - Disables WAL mode for simpler debugging
+    /// - Enables background writer with full logging
+    ///
+    /// Ideal for development, debugging, and detailed analysis scenarios.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = DatabaseStorageListener::builder()
+    ///     .development_preset()
+    ///     .database_path("debug_wallet.db")
+    ///     .build()
+    ///     .await?;
+    /// ```
+    pub fn development_preset(mut self) -> Self {
+        // Keep current database_path (user should set explicitly)
+        self.batch_size = 10;
+        self.verbose = true;
+        self.enable_wal_mode = false;
+        self.auto_start_background_writer = true;
+        self
+    }
+
+    /// Apply testing preset configuration for integration tests
+    ///
+    /// This preset:
+    /// - Uses temporary file database (user should set unique path)
+    /// - Sets medium batch size (50) for balanced testing
+    /// - Enables verbose logging for test debugging
+    /// - Disables WAL mode for test reliability
+    /// - Disables background writer for synchronous testing
+    ///
+    /// Suitable for integration tests that need file persistence but want
+    /// predictable, synchronous behavior.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let temp_path = format!("test_wallet_{}.db", uuid::Uuid::new_v4());
+    /// let listener = DatabaseStorageListener::builder()
+    ///     .testing_preset()
+    ///     .database_path(&temp_path)
+    ///     .build()
+    ///     .await?;
+    /// ```
+    pub fn testing_preset(mut self) -> Self {
+        // Keep current database_path (user should set explicitly)
+        self.batch_size = 50;
+        self.verbose = true;
+        self.enable_wal_mode = false;
+        self.auto_start_background_writer = false;
+        self
+    }
+
+    /// Apply performance preset configuration for benchmarking and stress testing
+    ///
+    /// This preset:
+    /// - Uses file-based database (user must set path)
+    /// - Sets very large batch size (500) for maximum throughput
+    /// - Disables verbose logging to minimize I/O overhead
+    /// - Enables WAL mode for best write performance
+    /// - Enables background writer for optimal async performance
+    ///
+    /// Designed for performance testing and high-throughput scenarios.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = DatabaseStorageListener::builder()
+    ///     .performance_preset()
+    ///     .database_path("benchmark_wallet.db")
+    ///     .build()
+    ///     .await?;
+    /// ```
+    pub fn performance_preset(mut self) -> Self {
+        // Keep current database_path (user should set explicitly)
+        self.batch_size = 500;
+        self.verbose = false;
+        self.enable_wal_mode = true;
+        self.auto_start_background_writer = true;
+        self
+    }
+
     /// Build the configured DatabaseStorageListener
     pub async fn build(self) -> LightweightWalletResult<DatabaseStorageListener> {
         let mut listener = DatabaseStorageListener::new(&self.database_path).await?;
@@ -922,6 +1063,90 @@ mod tests {
             // Stop background writer
             let result = listener.stop_background_writer().await;
             assert!(result.is_ok());
+        }
+
+        #[tokio::test]
+        async fn test_database_storage_listener_builder_presets() {
+            // Test memory preset
+            let memory_listener = DatabaseStorageListener::builder()
+                .memory_preset()
+                .build()
+                .await;
+            assert!(memory_listener.is_ok());
+            let listener = memory_listener.unwrap();
+            assert_eq!(listener.batch_size, 25);
+            assert!(!listener.verbose);
+
+            // Test production preset
+            let production_builder = DatabaseStorageListener::builder()
+                .production_preset()
+                .database_path("test_production.db");
+            // We can test the builder configuration without building
+            assert_eq!(production_builder.batch_size, 200);
+            assert!(!production_builder.verbose);
+            assert!(production_builder.enable_wal_mode);
+            assert!(production_builder.auto_start_background_writer);
+
+            // Test development preset
+            let development_builder = DatabaseStorageListener::builder()
+                .development_preset()
+                .database_path("test_development.db");
+            assert_eq!(development_builder.batch_size, 10);
+            assert!(development_builder.verbose);
+            assert!(!development_builder.enable_wal_mode);
+            assert!(development_builder.auto_start_background_writer);
+
+            // Test testing preset
+            let testing_builder = DatabaseStorageListener::builder()
+                .testing_preset()
+                .database_path("test_testing.db");
+            assert_eq!(testing_builder.batch_size, 50);
+            assert!(testing_builder.verbose);
+            assert!(!testing_builder.enable_wal_mode);
+            assert!(!testing_builder.auto_start_background_writer);
+
+            // Test performance preset
+            let performance_builder = DatabaseStorageListener::builder()
+                .performance_preset()
+                .database_path("test_performance.db");
+            assert_eq!(performance_builder.batch_size, 500);
+            assert!(!performance_builder.verbose);
+            assert!(performance_builder.enable_wal_mode);
+            assert!(performance_builder.auto_start_background_writer);
+        }
+
+        #[tokio::test]
+        async fn test_database_storage_listener_builder_preset_chaining() {
+            let listener = DatabaseStorageListener::builder()
+                .production_preset() // Start with production preset
+                .batch_size(100) // Override batch size
+                .verbose(true) // Override verbose
+                .database_path(":memory:") // Use memory for test
+                .build()
+                .await;
+
+            assert!(listener.is_ok());
+            let listener = listener.unwrap();
+
+            // Should have the overridden values
+            assert_eq!(listener.batch_size, 100);
+            assert!(listener.verbose);
+        }
+
+        #[tokio::test]
+        async fn test_database_storage_listener_builder_basic() {
+            let listener = DatabaseStorageListener::builder()
+                .database_path(":memory:")
+                .batch_size(75)
+                .verbose(true)
+                .build()
+                .await;
+
+            assert!(listener.is_ok());
+            let listener = listener.unwrap();
+            assert_eq!(listener.batch_size, 75);
+            assert!(listener.verbose);
+            assert_eq!(listener.name(), "DatabaseStorageListener");
         }
     }
 

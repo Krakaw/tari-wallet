@@ -304,6 +304,11 @@ impl ConsoleLoggingListener {
         Self::with_config(ConsoleLoggingConfig::debug())
     }
 
+    /// Create a builder for configuring the console logging listener
+    pub fn builder() -> ConsoleLoggingListenerBuilder {
+        ConsoleLoggingListenerBuilder::new()
+    }
+
     /// Format a timestamp for display
     fn format_timestamp(&self, timestamp: SystemTime) -> String {
         if !self.config.include_timestamps {
@@ -789,6 +794,329 @@ impl Default for ConsoleLoggingListener {
     }
 }
 
+/// Builder for configuring ConsoleLoggingListener with fluent interface
+///
+/// This builder provides a convenient way to construct a ConsoleLoggingListener
+/// with custom configuration options. It follows the same pattern as other
+/// event listener builders in the system.
+///
+/// # Examples
+///
+/// ## Basic Usage
+/// ```rust,ignore
+/// use lightweight_wallet_libs::events::listeners::{ConsoleLoggingListener, LogLevel};
+///
+/// let listener = ConsoleLoggingListener::builder()
+///     .log_level(LogLevel::Debug)
+///     .with_colors(true)
+///     .with_prefix("[SCAN]".to_string())
+///     .build();
+/// ```
+///
+/// ## Production Configuration
+/// ```rust,ignore
+/// let listener = ConsoleLoggingListener::builder()
+///     .minimal_preset()
+///     .with_prefix("[PROD]".to_string())
+///     .build();
+/// ```
+///
+/// ## Development Configuration
+/// ```rust,ignore
+/// let listener = ConsoleLoggingListener::builder()
+///     .debug_preset()
+///     .max_message_length(1000)
+///     .build();
+/// ```
+pub struct ConsoleLoggingListenerBuilder {
+    config: ConsoleLoggingConfig,
+}
+
+impl ConsoleLoggingListenerBuilder {
+    /// Create a new builder with default configuration
+    pub fn new() -> Self {
+        Self {
+            config: ConsoleLoggingConfig::default(),
+        }
+    }
+
+    /// Set the log level for filtering events
+    ///
+    /// # Arguments
+    /// * `level` - The minimum log level to display
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .log_level(LogLevel::Verbose)
+    ///     .build();
+    /// ```
+    pub fn log_level(mut self, level: LogLevel) -> Self {
+        self.config.log_level = level;
+        self
+    }
+
+    /// Enable or disable colored output
+    ///
+    /// # Arguments
+    /// * `use_colors` - Whether to use ANSI color codes in output
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .with_colors(false)  // Disable colors for CI
+    ///     .build();
+    /// ```
+    pub fn with_colors(mut self, use_colors: bool) -> Self {
+        self.config.use_colors = use_colors;
+        self
+    }
+
+    /// Enable or disable timestamp inclusion
+    ///
+    /// # Arguments
+    /// * `include_timestamps` - Whether to include timestamps in log output
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .with_timestamps(true)
+    ///     .build();
+    /// ```
+    pub fn with_timestamps(mut self, include_timestamps: bool) -> Self {
+        self.config.include_timestamps = include_timestamps;
+        self
+    }
+
+    /// Enable or disable event ID inclusion
+    ///
+    /// # Arguments
+    /// * `include_event_ids` - Whether to include event IDs in log output
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .with_event_ids(true)  // Useful for debugging
+    ///     .build();
+    /// ```
+    pub fn with_event_ids(mut self, include_event_ids: bool) -> Self {
+        self.config.include_event_ids = include_event_ids;
+        self
+    }
+
+    /// Enable or disable correlation ID inclusion
+    ///
+    /// # Arguments
+    /// * `include_correlation_ids` - Whether to include correlation IDs when available
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .with_correlation_ids(true)
+    ///     .build();
+    /// ```
+    pub fn with_correlation_ids(mut self, include_correlation_ids: bool) -> Self {
+        self.config.include_correlation_ids = include_correlation_ids;
+        self
+    }
+
+    /// Enable or disable JSON debug output
+    ///
+    /// # Arguments
+    /// * `include_json_debug` - Whether to include full JSON event data in debug mode
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .with_json_debug(true)  // Full JSON output for deep debugging
+    ///     .build();
+    /// ```
+    pub fn with_json_debug(mut self, include_json_debug: bool) -> Self {
+        self.config.include_json_debug = include_json_debug;
+        self
+    }
+
+    /// Set a custom prefix for all log messages
+    ///
+    /// # Arguments
+    /// * `prefix` - The prefix string to prepend to all log messages
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .with_prefix("[WALLET_SCAN]".to_string())
+    ///     .build();
+    /// ```
+    pub fn with_prefix(mut self, prefix: String) -> Self {
+        self.config.log_prefix = Some(prefix);
+        self
+    }
+
+    /// Set maximum message length for truncation
+    ///
+    /// # Arguments
+    /// * `max_length` - Maximum characters before truncating messages
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .max_message_length(200)  // Limit for CI environments
+    ///     .build();
+    /// ```
+    pub fn max_message_length(mut self, max_length: usize) -> Self {
+        self.config.max_message_length = Some(max_length);
+        self
+    }
+
+    /// Apply minimal preset configuration for production/CI use
+    ///
+    /// This preset:
+    /// - Sets log level to Minimal (errors and completion only)
+    /// - Disables colors
+    /// - Disables timestamps
+    /// - Disables event IDs and correlation IDs
+    /// - Disables JSON debug output
+    /// - Sets message length limit to 200 characters
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .minimal_preset()
+    ///     .build();
+    /// ```
+    pub fn minimal_preset(mut self) -> Self {
+        self.config = ConsoleLoggingConfig::minimal();
+        self
+    }
+
+    /// Apply debug preset configuration for development use
+    ///
+    /// This preset:
+    /// - Sets log level to Debug (all events)
+    /// - Enables colors
+    /// - Enables timestamps
+    /// - Enables event IDs and correlation IDs
+    /// - Enables JSON debug output
+    /// - Sets default prefix to "[WALLET_SCAN]"
+    /// - No message length limit
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .debug_preset()
+    ///     .build();
+    /// ```
+    pub fn debug_preset(mut self) -> Self {
+        self.config = ConsoleLoggingConfig::debug();
+        self
+    }
+
+    /// Apply verbose preset configuration for detailed monitoring
+    ///
+    /// This preset:
+    /// - Sets log level to Verbose
+    /// - Enables colors
+    /// - Enables timestamps
+    /// - Enables correlation IDs but not event IDs
+    /// - Disables JSON debug output
+    /// - No message length limit
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .verbose_preset()
+    ///     .build();
+    /// ```
+    pub fn verbose_preset(mut self) -> Self {
+        self.config = ConsoleLoggingConfig::new()
+            .with_log_level(LogLevel::Verbose)
+            .with_colors(true)
+            .with_timestamps(true)
+            .with_event_ids(false)
+            .with_correlation_ids(true)
+            .with_json_debug(false);
+        self
+    }
+
+    /// Apply CI-friendly preset configuration
+    ///
+    /// This preset:
+    /// - Sets log level to Normal
+    /// - Disables colors (CI-friendly)
+    /// - Enables timestamps for log correlation
+    /// - Disables event IDs but enables correlation IDs
+    /// - Disables JSON debug output
+    /// - Sets message length limit to 300 characters
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .ci_preset()
+    ///     .build();
+    /// ```
+    pub fn ci_preset(mut self) -> Self {
+        self.config = ConsoleLoggingConfig::new()
+            .with_log_level(LogLevel::Normal)
+            .with_colors(false)
+            .with_timestamps(true)
+            .with_event_ids(false)
+            .with_correlation_ids(true)
+            .with_json_debug(false)
+            .with_max_message_length(300);
+        self
+    }
+
+    /// Apply console-only preset configuration (no file/network output)
+    ///
+    /// This preset is optimized for interactive console use:
+    /// - Sets log level to Normal
+    /// - Enables colors for better readability
+    /// - Enables timestamps
+    /// - Disables event IDs (too verbose for console)
+    /// - Enables correlation IDs for flow tracking
+    /// - Disables JSON debug output
+    /// - No message length limit
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .console_preset()
+    ///     .build();
+    /// ```
+    pub fn console_preset(mut self) -> Self {
+        self.config = ConsoleLoggingConfig::new()
+            .with_log_level(LogLevel::Normal)
+            .with_colors(true)
+            .with_timestamps(true)
+            .with_event_ids(false)
+            .with_correlation_ids(true)
+            .with_json_debug(false);
+        self
+    }
+
+    /// Build the configured ConsoleLoggingListener
+    ///
+    /// # Returns
+    /// A fully configured ConsoleLoggingListener instance
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ConsoleLoggingListener::builder()
+    ///     .log_level(LogLevel::Verbose)
+    ///     .with_colors(true)
+    ///     .build();
+    /// ```
+    pub fn build(self) -> ConsoleLoggingListener {
+        ConsoleLoggingListener::with_config(self.config)
+    }
+}
+
+impl Default for ConsoleLoggingListenerBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl EventListener for ConsoleLoggingListener {
     async fn handle_event(
@@ -1165,5 +1493,115 @@ mod tests {
             assert!(stats.start_timestamp.is_some());
             assert_eq!(stats.outputs_found, 0);
         }
+    }
+
+    #[test]
+    fn test_console_logging_listener_builder_basic() {
+        let listener = ConsoleLoggingListener::builder()
+            .log_level(LogLevel::Debug)
+            .with_colors(false)
+            .with_timestamps(true)
+            .build();
+
+        assert_eq!(listener.config.log_level, LogLevel::Debug);
+        assert!(!listener.config.use_colors);
+        assert!(listener.config.include_timestamps);
+    }
+
+    #[test]
+    fn test_console_logging_listener_builder_advanced() {
+        let listener = ConsoleLoggingListener::builder()
+            .with_event_ids(true)
+            .with_correlation_ids(false)
+            .with_json_debug(true)
+            .with_prefix("[TEST]".to_string())
+            .max_message_length(500)
+            .build();
+
+        assert!(listener.config.include_event_ids);
+        assert!(!listener.config.include_correlation_ids);
+        assert!(listener.config.include_json_debug);
+        assert_eq!(listener.config.log_prefix, Some("[TEST]".to_string()));
+        assert_eq!(listener.config.max_message_length, Some(500));
+    }
+
+    #[test]
+    fn test_console_logging_listener_builder_presets() {
+        // Test minimal preset
+        let minimal_listener = ConsoleLoggingListener::builder().minimal_preset().build();
+        assert_eq!(minimal_listener.config.log_level, LogLevel::Minimal);
+        assert!(!minimal_listener.config.use_colors);
+        assert!(!minimal_listener.config.include_timestamps);
+        assert_eq!(minimal_listener.config.max_message_length, Some(200));
+
+        // Test debug preset
+        let debug_listener = ConsoleLoggingListener::builder().debug_preset().build();
+        assert_eq!(debug_listener.config.log_level, LogLevel::Debug);
+        assert!(debug_listener.config.use_colors);
+        assert!(debug_listener.config.include_timestamps);
+        assert!(debug_listener.config.include_event_ids);
+        assert!(debug_listener.config.include_json_debug);
+
+        // Test verbose preset
+        let verbose_listener = ConsoleLoggingListener::builder().verbose_preset().build();
+        assert_eq!(verbose_listener.config.log_level, LogLevel::Verbose);
+        assert!(verbose_listener.config.use_colors);
+        assert!(verbose_listener.config.include_timestamps);
+        assert!(!verbose_listener.config.include_event_ids);
+        assert!(verbose_listener.config.include_correlation_ids);
+        assert!(!verbose_listener.config.include_json_debug);
+
+        // Test CI preset
+        let ci_listener = ConsoleLoggingListener::builder().ci_preset().build();
+        assert_eq!(ci_listener.config.log_level, LogLevel::Normal);
+        assert!(!ci_listener.config.use_colors);
+        assert!(ci_listener.config.include_timestamps);
+        assert!(!ci_listener.config.include_event_ids);
+        assert!(ci_listener.config.include_correlation_ids);
+        assert_eq!(ci_listener.config.max_message_length, Some(300));
+
+        // Test console preset
+        let console_listener = ConsoleLoggingListener::builder().console_preset().build();
+        assert_eq!(console_listener.config.log_level, LogLevel::Normal);
+        assert!(console_listener.config.use_colors);
+        assert!(console_listener.config.include_timestamps);
+        assert!(!console_listener.config.include_event_ids);
+        assert!(console_listener.config.include_correlation_ids);
+        assert!(!console_listener.config.include_json_debug);
+    }
+
+    #[test]
+    fn test_console_logging_listener_builder_chaining() {
+        let listener = ConsoleLoggingListener::builder()
+            .verbose_preset() // Start with verbose preset
+            .log_level(LogLevel::Minimal) // Override log level
+            .with_colors(false) // Override colors
+            .with_prefix("[CUSTOM]".to_string()) // Add custom prefix
+            .build();
+
+        // Should have the overridden values
+        assert_eq!(listener.config.log_level, LogLevel::Minimal);
+        assert!(!listener.config.use_colors);
+        assert_eq!(listener.config.log_prefix, Some("[CUSTOM]".to_string()));
+
+        // Should retain other preset values
+        assert!(listener.config.include_timestamps);
+        assert!(listener.config.include_correlation_ids);
+    }
+
+    #[test]
+    fn test_console_logging_listener_builder_default() {
+        let builder = ConsoleLoggingListenerBuilder::default();
+        let listener = builder.build();
+
+        // Should match the default ConsoleLoggingListener configuration
+        assert_eq!(listener.config.log_level, LogLevel::Normal);
+        assert!(listener.config.use_colors);
+        assert!(listener.config.include_timestamps);
+        assert!(!listener.config.include_event_ids);
+        assert!(listener.config.include_correlation_ids);
+        assert!(!listener.config.include_json_debug);
+        assert_eq!(listener.config.log_prefix, None);
+        assert_eq!(listener.config.max_message_length, None);
     }
 }

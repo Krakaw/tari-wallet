@@ -871,6 +871,154 @@ impl ProgressTrackingListenerBuilder {
         self
     }
 
+    /// Apply silent preset configuration for minimal output
+    ///
+    /// This preset:
+    /// - Sets quiet mode to true (no console output)
+    /// - Disables verbose logging
+    /// - Sets update frequency to 100 blocks
+    /// - Disables ETA calculation for performance
+    /// - Disables detailed statistics tracking
+    ///
+    /// Useful for background operations or when only callback-based progress is needed.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ProgressTrackingListener::builder()
+    ///     .silent_preset()
+    ///     .with_progress_callback(|info| log::info!("Progress: {:.1}%", info.progress_percent))
+    ///     .build();
+    /// ```
+    pub fn silent_preset(mut self) -> Self {
+        self.config.quiet = true;
+        self.config.frequency = 100;
+        self.config.calculate_eta = false;
+        self.config.track_detailed_stats = false;
+        self.verbose = false;
+        self
+    }
+
+    /// Apply console preset configuration for interactive use
+    ///
+    /// This preset:
+    /// - Sets quiet mode to false (enables console output)
+    /// - Enables verbose logging
+    /// - Sets update frequency to 10 blocks for responsive feedback
+    /// - Enables ETA calculation
+    /// - Enables detailed statistics tracking
+    /// - Sets minimum update interval to 500ms to avoid spam
+    ///
+    /// Ideal for interactive command-line tools and development.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ProgressTrackingListener::builder()
+    ///     .console_preset()
+    ///     .build();
+    /// ```
+    pub fn console_preset(mut self) -> Self {
+        self.config.quiet = false;
+        self.config.frequency = 10;
+        self.config.calculate_eta = true;
+        self.config.track_detailed_stats = true;
+        self.config.min_update_interval_ms = 500;
+        self.verbose = true;
+        self
+    }
+
+    /// Apply performance preset configuration for high-throughput scanning
+    ///
+    /// This preset:
+    /// - Sets quiet mode to true (reduces I/O overhead)
+    /// - Disables verbose logging
+    /// - Sets update frequency to 500 blocks for minimal updates
+    /// - Disables ETA calculation (saves CPU)
+    /// - Disables detailed statistics tracking (saves memory)
+    /// - Sets minimum update interval to 2000ms
+    ///
+    /// Optimized for maximum scanning performance with minimal progress overhead.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ProgressTrackingListener::builder()
+    ///     .performance_preset()
+    ///     .with_progress_callback(|info| {
+    ///         if info.blocks_processed % 1000 == 0 {
+    ///             println!("Processed {} blocks", info.blocks_processed);
+    ///         }
+    ///     })
+    ///     .build();
+    /// ```
+    pub fn performance_preset(mut self) -> Self {
+        self.config.quiet = true;
+        self.config.frequency = 500;
+        self.config.calculate_eta = false;
+        self.config.track_detailed_stats = false;
+        self.config.min_update_interval_ms = 2000;
+        self.verbose = false;
+        self
+    }
+
+    /// Apply detailed preset configuration for comprehensive monitoring
+    ///
+    /// This preset:
+    /// - Sets quiet mode to false (enables console output)
+    /// - Enables verbose logging
+    /// - Sets update frequency to 5 blocks for very frequent updates
+    /// - Enables ETA calculation
+    /// - Enables detailed statistics tracking
+    /// - Sets minimum update interval to 250ms for rapid feedback
+    ///
+    /// Provides maximum visibility into the scanning process for debugging
+    /// and detailed analysis.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ProgressTrackingListener::builder()
+    ///     .detailed_preset()
+    ///     .with_progress_callback(|info| {
+    ///         log::debug!("Detailed progress: {:?}", info);
+    ///     })
+    ///     .build();
+    /// ```
+    pub fn detailed_preset(mut self) -> Self {
+        self.config.quiet = false;
+        self.config.frequency = 5;
+        self.config.calculate_eta = true;
+        self.config.track_detailed_stats = true;
+        self.config.min_update_interval_ms = 250;
+        self.verbose = true;
+        self
+    }
+
+    /// Apply CI preset configuration for continuous integration environments
+    ///
+    /// This preset:
+    /// - Sets quiet mode to false but with less frequent updates
+    /// - Disables verbose logging to reduce log volume
+    /// - Sets update frequency to 50 blocks for periodic updates
+    /// - Enables ETA calculation for time estimates
+    /// - Enables detailed statistics for final reporting
+    /// - Sets minimum update interval to 5000ms to prevent CI log spam
+    ///
+    /// Balances progress visibility with CI log cleanliness.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let listener = ProgressTrackingListener::builder()
+    ///     .ci_preset()
+    ///     .build();
+    /// ```
+    pub fn ci_preset(mut self) -> Self {
+        self.config.quiet = false;
+        self.config.frequency = 50;
+        self.config.calculate_eta = true;
+        self.config.track_detailed_stats = true;
+        self.config.min_update_interval_ms = 5000;
+        self.verbose = false;
+        self
+    }
+
     /// Build the configured ProgressTrackingListener
     pub fn build(self) -> ProgressTrackingListener {
         let mut listener =
@@ -1265,5 +1413,109 @@ mod tests {
         // Reset and verify state is cleared
         listener_mut.reset();
         assert!(listener_mut.get_progress_info().is_none());
+    }
+
+    #[test]
+    fn test_progress_tracking_listener_builder_presets() {
+        // Test silent preset
+        let silent_listener = ProgressTrackingListener::builder().silent_preset().build();
+        assert!(silent_listener.config.quiet);
+        assert_eq!(silent_listener.config.frequency, 100);
+        assert!(!silent_listener.config.calculate_eta);
+        assert!(!silent_listener.config.track_detailed_stats);
+        assert!(!silent_listener.verbose);
+
+        // Test console preset
+        let console_listener = ProgressTrackingListener::builder().console_preset().build();
+        assert!(!console_listener.config.quiet);
+        assert_eq!(console_listener.config.frequency, 10);
+        assert!(console_listener.config.calculate_eta);
+        assert!(console_listener.config.track_detailed_stats);
+        assert_eq!(console_listener.config.min_update_interval_ms, 500);
+        assert!(console_listener.verbose);
+
+        // Test performance preset
+        let performance_listener = ProgressTrackingListener::builder()
+            .performance_preset()
+            .build();
+        assert!(performance_listener.config.quiet);
+        assert_eq!(performance_listener.config.frequency, 500);
+        assert!(!performance_listener.config.calculate_eta);
+        assert!(!performance_listener.config.track_detailed_stats);
+        assert_eq!(performance_listener.config.min_update_interval_ms, 2000);
+        assert!(!performance_listener.verbose);
+
+        // Test detailed preset
+        let detailed_listener = ProgressTrackingListener::builder()
+            .detailed_preset()
+            .build();
+        assert!(!detailed_listener.config.quiet);
+        assert_eq!(detailed_listener.config.frequency, 5);
+        assert!(detailed_listener.config.calculate_eta);
+        assert!(detailed_listener.config.track_detailed_stats);
+        assert_eq!(detailed_listener.config.min_update_interval_ms, 250);
+        assert!(detailed_listener.verbose);
+
+        // Test CI preset
+        let ci_listener = ProgressTrackingListener::builder().ci_preset().build();
+        assert!(!ci_listener.config.quiet);
+        assert_eq!(ci_listener.config.frequency, 50);
+        assert!(ci_listener.config.calculate_eta);
+        assert!(ci_listener.config.track_detailed_stats);
+        assert_eq!(ci_listener.config.min_update_interval_ms, 5000);
+        assert!(!ci_listener.verbose);
+    }
+
+    #[test]
+    fn test_progress_tracking_listener_builder_preset_chaining() {
+        let listener = ProgressTrackingListener::builder()
+            .performance_preset() // Start with performance preset
+            .frequency(25) // Override frequency
+            .verbose(true) // Override verbose
+            .build();
+
+        // Should have the overridden values
+        assert_eq!(listener.config.frequency, 25);
+        assert!(listener.verbose);
+
+        // Should retain other preset values
+        assert!(listener.config.quiet);
+        assert!(!listener.config.calculate_eta);
+        assert!(!listener.config.track_detailed_stats);
+    }
+
+    #[test]
+    fn test_progress_tracking_listener_builder_with_callbacks() {
+        let progress_called = Arc::new(AtomicUsize::new(0));
+        let progress_called_clone = progress_called.clone();
+
+        let completion_called = Arc::new(AtomicUsize::new(0));
+        let completion_called_clone = completion_called.clone();
+
+        let error_called = Arc::new(AtomicUsize::new(0));
+        let error_called_clone = error_called.clone();
+
+        let listener = ProgressTrackingListener::builder()
+            .console_preset()
+            .with_progress_callback(move |_info| {
+                progress_called_clone.fetch_add(1, Ordering::Relaxed);
+            })
+            .with_completion_callback(move |_info| {
+                completion_called_clone.fetch_add(1, Ordering::Relaxed);
+            })
+            .with_error_callback(move |_error, _block| {
+                error_called_clone.fetch_add(1, Ordering::Relaxed);
+            })
+            .build();
+
+        // Verify the listener was configured correctly
+        assert!(!listener.config.quiet);
+        assert_eq!(listener.config.frequency, 10);
+        assert!(listener.verbose);
+
+        // Verify callbacks are set (we can't easily test execution without async setup)
+        assert!(listener.progress_callback.is_some());
+        assert!(listener.completion_callback.is_some());
+        assert!(listener.error_callback.is_some());
     }
 }

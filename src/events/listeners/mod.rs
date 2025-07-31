@@ -68,11 +68,12 @@
 //!
 //! # Builder Patterns
 //!
-//! All listeners support builder patterns for easy configuration:
+//! All listeners support comprehensive builder patterns with preset configurations for easy setup:
 //!
+//! ## Basic Builder Usage
 //! ```rust,ignore
 //! use lightweight_wallet_libs::events::listeners::{
-//!     DatabaseStorageListener, ProgressTrackingListener
+//!     DatabaseStorageListener, ProgressTrackingListener, ConsoleLoggingListener, LogLevel
 //! };
 //!
 //! # async fn builder_example() -> Result<(), Box<dyn std::error::Error>> {
@@ -83,15 +84,110 @@
 //!     .enable_wal_mode(true)
 //!     .build().await?;
 //!
-//! // Progress listener with multiple callbacks
+//! // Progress listener with callbacks
 //! let progress_listener = ProgressTrackingListener::builder()
-//!     .with_progress_callback(|p| println!("Progress: {:.1}%", p.percentage))
+//!     .frequency(20)
+//!     .with_progress_callback(|p| println!("Progress: {:.1}%", p.progress_percent))
 //!     .with_completion_callback(|stats| println!("Completed: {:?}", stats))
-//!     .with_error_callback(|err| eprintln!("Error: {}", err))
-//!     .update_frequency_ms(1000)
+//!     .verbose(true)
+//!     .build();
+//!
+//! // Console listener with custom configuration
+//! let console_listener = ConsoleLoggingListener::builder()
+//!     .log_level(LogLevel::Verbose)
+//!     .with_colors(true)
+//!     .with_prefix("[SCAN]".to_string())
 //!     .build();
 //! # Ok(())
 //! # }
+//! ```
+//!
+//! ## Preset Configurations
+//!
+//! Each listener provides convenient preset configurations for common use cases:
+//!
+//! ### Console Logging Presets
+//! ```rust,ignore
+//! // For production/CI environments - minimal output, no colors
+//! let prod_logger = ConsoleLoggingListener::builder()
+//!     .minimal_preset()
+//!     .build();
+//!
+//! // For development with full debugging - all events, JSON output
+//! let dev_logger = ConsoleLoggingListener::builder()
+//!     .debug_preset()
+//!     .build();
+//!
+//! // For CI systems - structured output, no colors, limited length
+//! let ci_logger = ConsoleLoggingListener::builder()
+//!     .ci_preset()
+//!     .build();
+//!
+//! // For interactive console use - colors, readable format
+//! let console_logger = ConsoleLoggingListener::builder()
+//!     .console_preset()
+//!     .build();
+//! ```
+//!
+//! ### Progress Tracking Presets
+//! ```rust,ignore
+//! // For background operations with minimal output
+//! let silent_progress = ProgressTrackingListener::builder()
+//!     .silent_preset()
+//!     .with_progress_callback(|info| log::info!("Progress: {:.1}%", info.progress_percent))
+//!     .build();
+//!
+//! // For interactive console applications
+//! let console_progress = ProgressTrackingListener::builder()
+//!     .console_preset()
+//!     .build();
+//!
+//! // For maximum performance with minimal overhead
+//! let perf_progress = ProgressTrackingListener::builder()
+//!     .performance_preset()
+//!     .build();
+//!
+//! // For detailed debugging and analysis
+//! let detailed_progress = ProgressTrackingListener::builder()
+//!     .detailed_preset()
+//!     .build();
+//! ```
+//!
+//! ### Database Storage Presets
+//! ```rust,ignore
+//! # async fn db_presets() -> Result<(), Box<dyn std::error::Error>> {
+//! // For testing and development - in-memory database
+//! let test_db = DatabaseStorageListener::builder()
+//!     .memory_preset()
+//!     .build().await?;
+//!
+//! // For production environments - optimized for performance
+//! let prod_db = DatabaseStorageListener::builder()
+//!     .production_preset()
+//!     .database_path("production_wallet.db")
+//!     .build().await?;
+//!
+//! // For development and debugging - verbose logging, small batches
+//! let dev_db = DatabaseStorageListener::builder()
+//!     .development_preset()
+//!     .database_path("debug_wallet.db")
+//!     .build().await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Preset Chaining and Customization
+//!
+//! Presets can be combined with custom settings, with later settings overriding preset values:
+//!
+//! ```rust,ignore
+//! // Start with a preset and customize specific settings
+//! let custom_listener = ConsoleLoggingListener::builder()
+//!     .debug_preset()                    // Start with debug configuration
+//!     .log_level(LogLevel::Normal)       // Override log level
+//!     .with_colors(false)                // Override colors for CI
+//!     .with_prefix("[CUSTOM]".to_string()) // Add custom prefix
+//!     .build();
 //! ```
 
 // Module exports
