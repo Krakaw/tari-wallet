@@ -223,6 +223,7 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         fn set_should_fail(&self, fail: bool) {
             *self.should_fail.lock().unwrap() = fail;
         }
@@ -239,10 +240,12 @@ mod tests {
             self.wallets_updated.lock().unwrap().clone()
         }
 
+        #[allow(dead_code)]
         fn get_transactions_marked(&self) -> Vec<(CompressedCommitment, u64, usize)> {
             self.transactions_marked.lock().unwrap().clone()
         }
 
+        #[allow(dead_code)]
         fn get_batch_marked(&self) -> Vec<Vec<(CompressedCommitment, u64, usize)>> {
             self.batch_marked.lock().unwrap().clone()
         }
