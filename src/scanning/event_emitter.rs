@@ -92,7 +92,7 @@ impl ScanEventEmitter {
             scan_start_time: None,
             current_config: None,
             current_context: None,
-            fire_and_forget: false,
+            fire_and_forget: true,
         }
     }
 

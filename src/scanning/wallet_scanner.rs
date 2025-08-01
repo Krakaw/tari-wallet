@@ -1850,7 +1850,8 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
 
     // Wallet state has been updated directly by the block scanning logic
 
-    // Post-processing step: mark spent outputs using blockchain input data
+    // Post-processing step: mark spent outputs using blockchain input data (storage feature only)
+    #[cfg(feature = "storage")]
     if let Some(database_processor) = data_processor
         .as_any()
         .downcast_ref::<crate::scanning::database_processor::DatabaseDataProcessor>(

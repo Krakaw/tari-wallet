@@ -6,13 +6,15 @@
 //! management and transaction storage.
 
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::error::Error;
 
-use crate::events::{
-    ErrorRecord, ErrorRecoveryConfig, ErrorRecoveryManager, EventListener, SharedEvent,
-    WalletScanEvent,
-};
+use crate::events::{EventListener, SharedEvent};
+
+#[cfg(feature = "storage")]
+use std::collections::HashMap;
+
+#[cfg(feature = "storage")]
+use crate::events::{ErrorRecord, ErrorRecoveryConfig, ErrorRecoveryManager, WalletScanEvent};
 
 #[cfg(feature = "storage")]
 use crate::{
