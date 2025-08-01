@@ -21,6 +21,9 @@ use crate::{
     wallet::Wallet,
 };
 
+#[cfg(all(feature = "grpc", feature = "storage"))]
+use crate::scanning::data_processor::DataProcessor;
+
 #[cfg(feature = "grpc")]
 use crate::scanning::GrpcBlockchainScanner;
 
