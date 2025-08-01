@@ -1,0 +1,18 @@
+{
+  auto_https off
+  metrics
+  servers :9000 {
+    protocols h1 h2c
+  }
+}
+:9000 {
+  log
+  reverse_proxy {
+    to https://grpc.tari.com
+    lb_policy least_conn
+    lb_retries 2
+    header_up Host {upstream_hostport}
+    health_uri /tari.rpc.BaseNode/GetTipInfo
+    fail_duration 30s
+  }
+}
