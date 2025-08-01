@@ -162,7 +162,7 @@ pub struct CliArgs {
     #[arg(
         short,
         long,
-        default_value = "http://grpc.tari.com",
+        default_value = "http://127.0.0.1:18142",
         help = "Base URL for Tari base node GRPC"
     )]
     base_url: String,
