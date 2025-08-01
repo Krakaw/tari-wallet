@@ -1335,9 +1335,9 @@ impl WalletScanner {
                     event_emitter
                         .emit_scan_error(&e, Some(current_block), true, 0)
                         .await
-                        .unwrap_or_else(|_err| {
+                        .unwrap_or_else(|err| {
                             // Don't let event emission errors mask the original error
-                            // TODO: Handle this error, does this constitute a critical error?
+                            eprintln!("Error emitting scan error event: {err}");
                         });
                 }
 
@@ -1866,7 +1866,14 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
                         .mark_spent_outputs_from_inputs(wallet_id, from_block, to_block)
                         .await
                     {
-                        _ => {}
+                        Ok(spent_count) => {
+                            if spent_count > 0 {
+                                println!("Marked {spent_count} outputs as spent");
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error marking outputs as spent: {e}");
+                        }
                     }
                 }
             }

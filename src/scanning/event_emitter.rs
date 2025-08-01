@@ -651,7 +651,6 @@ impl std::fmt::Debug for ScanEventEmitter {
 mod tests {
     use super::*;
     use crate::events::listeners::MockEventListener;
-    // Removed unused tokio imports
 
     fn create_test_emitter() -> ScanEventEmitter {
         let mut dispatcher = EventDispatcher::new();
