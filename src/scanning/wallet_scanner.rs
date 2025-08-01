@@ -16,14 +16,13 @@
 use tokio::time::Instant;
 
 use crate::{
-    common::format_number,
     data_structures::wallet_transaction::WalletState,
     errors::{LightweightWalletError, LightweightWalletResult},
     wallet::Wallet,
 };
 
 #[cfg(feature = "grpc")]
-use crate::scanning::GrpcBlockchainScanner;
+use crate::{common::format_number, scanning::GrpcBlockchainScanner};
 
 #[cfg(feature = "storage")]
 use crate::{
@@ -48,9 +47,12 @@ use tari_utilities::ByteArray;
 #[cfg(all(feature = "grpc", feature = "storage"))]
 use zeroize::Zeroize;
 
+use super::ScanContext;
+
+#[cfg(feature = "grpc")]
 use super::{
     data_processor::{BlockData, CompletionData, DataProcessor, ProgressData},
-    BinaryScanConfig, ProgressTracker, ScanContext,
+    BinaryScanConfig, ProgressTracker,
 };
 
 #[cfg(all(feature = "grpc", feature = "storage"))]
