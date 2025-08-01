@@ -10,7 +10,7 @@ use std::error::Error;
 
 use crate::events::{EventListener, SharedEvent};
 
-#[cfg(feature = "storage")]
+#[cfg(feature = "grpc")]
 use crate::LightweightWalletError;
 
 #[cfg(feature = "storage")]

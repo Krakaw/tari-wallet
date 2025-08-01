@@ -63,7 +63,7 @@
 //! ```rust,no_run
 //! use async_trait::async_trait;
 //! use lightweight_wallet_libs::events::{EventListener, WalletScanEvent};
-//!
+//! use lightweight_wallet_libs::events::SharedEvent;
 //! struct CustomListener;
 //!
 //! #[async_trait]
