@@ -2484,7 +2484,7 @@ fn display_summary_results(wallet_state: &WalletState, config: &BinaryScanConfig
 ///     .build();
 ///
 /// // Production scanner with database storage
-/// #[cfg(feature = "storage")]
+/// # #[cfg(feature = "storage")]
 /// let scanner = ScannerBuilder::new()
 ///     .with_database_events("production_scanner".to_string(), Some("wallet.db".to_string()))?
 ///     .with_performance_preset()
