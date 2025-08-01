@@ -8,16 +8,18 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+#[cfg(feature = "storage")]
 use tempfile::TempDir;
 
-use lightweight_wallet_libs::events::types::{
-    AddressInfo, BlockInfo, EventMetadata, OutputData, ScanConfig, TransactionData,
-};
+use lightweight_wallet_libs::events::types::{EventMetadata, ScanConfig};
 use lightweight_wallet_libs::events::{EventDispatcher, EventListener, WalletScanEvent};
 
 use lightweight_wallet_libs::events::listeners::{
     ConsoleLoggingListener, MockEventListener, ProgressTrackingListener,
 };
+
+#[cfg(feature = "storage")]
+use lightweight_wallet_libs::events::types::{AddressInfo, BlockInfo, OutputData, TransactionData};
 
 #[cfg(feature = "storage")]
 use lightweight_wallet_libs::events::listeners::DatabaseStorageListener;

@@ -651,6 +651,7 @@ impl EventCapture {
     ///
     /// This method supports deterministic async testing by using Tokio's time
     /// infrastructure when available (in tests with `tokio::test(start_paused = true)`).
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn wait_for_pattern(
         &self,
         pattern: EventPattern,
@@ -664,6 +665,7 @@ impl EventCapture {
     ///
     /// This allows for deterministic testing by controlling the polling interval.
     /// In tests, use a larger interval or control time with `tokio::time::advance()`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn wait_for_pattern_with_interval(
         &self,
         pattern: EventPattern,
@@ -687,6 +689,7 @@ impl EventCapture {
     /// This method is designed for deterministic async testing where time is controlled.
     /// It polls continuously until the pattern matches without any timeout.
     /// Use with `tokio::test(start_paused = true)` and `tokio::time::advance()`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn wait_for_pattern_deterministic(
         &self,
         pattern: EventPattern,
@@ -708,6 +711,7 @@ impl EventCapture {
     ///
     /// This method supports deterministic async testing by using Tokio's time
     /// infrastructure when available (in tests with `tokio::test(start_paused = true)`).
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn capture_for_duration(&self, duration: Duration) -> Vec<CapturedEvent> {
         tokio::time::sleep(duration).await;
         self.mock.get_captured_events().lock().unwrap().clone()
@@ -718,6 +722,7 @@ impl EventCapture {
     /// This method is designed for deterministic async testing where you want to allow
     /// async tasks to progress without advancing real time. It yields control the specified
     /// number of times and then returns the captured events.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn capture_with_yields(&self, yield_count: usize) -> Vec<CapturedEvent> {
         for _ in 0..yield_count {
             tokio::task::yield_now().await;
@@ -910,6 +915,7 @@ mod tests {
         assert_eq!(pattern.forbidden_patterns, vec!["ScanError"]);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_event_pattern_verification() {
         let mock = MockEventListener::new();
@@ -980,6 +986,7 @@ mod tests {
         assert!(scenario.should_succeed);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_test_scenario_setup() {
         let scenario = TestScenario::successful_scan();
@@ -1054,6 +1061,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test(start_paused = true)]
     async fn test_deterministic_event_pattern_waiting() {
         use crate::events::types::WalletScanEvent;

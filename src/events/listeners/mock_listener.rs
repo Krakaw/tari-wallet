@@ -497,6 +497,7 @@ impl MockEventListener {
     ///
     /// This allows for deterministic testing by controlling the polling interval.
     /// In tests, use a larger interval or control time with `tokio::time::advance()`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn wait_for_event_count_with_interval(
         &self,
         expected_count: usize,
@@ -533,6 +534,7 @@ impl MockEventListener {
     ///
     /// This allows for deterministic testing by controlling the polling interval.
     /// In tests, use a larger interval or control time with `tokio::time::advance()`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn wait_for_event_type_with_interval(
         &self,
         event_type: &str,
@@ -564,6 +566,7 @@ impl MockEventListener {
     /// This method is designed for deterministic async testing where time is controlled.
     /// It polls continuously until the expected count is reached without any timeout.
     /// Use with `tokio::test(start_paused = true)` and `tokio::time::advance()`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn wait_for_event_count_deterministic(
         &self,
         expected_count: usize,
@@ -587,6 +590,7 @@ impl MockEventListener {
     /// This method is designed for deterministic async testing where time is controlled.
     /// It polls continuously until the event type is found without any timeout.
     /// Use with `tokio::test(start_paused = true)` and `tokio::time::advance()`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn wait_for_event_type_deterministic(
         &self,
         event_type: &str,
@@ -617,6 +621,7 @@ impl MockEventListener {
     /// This method yields control to the async runtime without advancing real time.
     /// Useful for deterministic tests where you want to allow tasks to process
     /// without introducing real time delays.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn yield_now(&self) {
         tokio::task::yield_now().await;
     }

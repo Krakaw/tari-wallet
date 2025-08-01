@@ -11,6 +11,9 @@ use std::error::Error;
 use crate::events::{EventListener, SharedEvent};
 
 #[cfg(feature = "storage")]
+use crate::LightweightWalletError;
+
+#[cfg(feature = "storage")]
 use std::collections::HashMap;
 
 #[cfg(feature = "storage")]
@@ -19,7 +22,7 @@ use crate::events::{ErrorRecord, ErrorRecoveryConfig, ErrorRecoveryManager, Wall
 #[cfg(feature = "storage")]
 use crate::{
     data_structures::types::CompressedCommitment,
-    errors::{LightweightWalletError, LightweightWalletResult},
+    errors::LightweightWalletResult,
     storage::{SqliteStorage, StoredOutput, WalletStorage},
 };
 
