@@ -113,11 +113,9 @@ pub use data_processor::{
 pub use database_processor::{DatabaseDataProcessor, MemoryStorageProcessor};
 
 // Event emitter module for scanner integration with event system
-#[cfg(feature = "grpc")]
 pub mod event_emitter;
 
 // Re-export event emitter types
-#[cfg(feature = "grpc")]
 pub use event_emitter::{
     create_address_info_from_transaction, create_block_info_from_block,
     create_default_event_emitter, ScanEventEmitter,
