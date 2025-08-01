@@ -112,17 +112,16 @@ impl fmt::Display for EventDispatcherError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             EventDispatcherError::DuplicateListener(name) => {
-                write!(f, "Listener with name '{}' is already registered", name)
+                write!(f, "Listener with name '{name}' is already registered")
             }
             EventDispatcherError::TooManyListeners { current, max } => {
                 write!(
                     f,
-                    "Cannot register listener: maximum of {} listeners allowed, currently have {}",
-                    max, current
+                    "Cannot register listener: maximum of {max} listeners allowed, currently have {current}"
                 )
             }
             EventDispatcherError::InvalidListenerName(name) => {
-                write!(f, "Invalid listener name: '{}'", name)
+                write!(f, "Invalid listener name: '{name}'")
             }
         }
     }

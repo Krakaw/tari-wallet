@@ -1651,6 +1651,7 @@ fn initialize_scan_state() -> (WalletState, Instant) {
 
 /// Core scanning logic using data processor - simplified and focused with batch processing
 #[cfg(feature = "grpc")]
+#[allow(clippy::too_many_arguments)] // TODO: Refactor this to remove the need for so many arguments
 async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
     scanner: &mut GrpcBlockchainScanner,
     scan_context: &ScanContext,
@@ -2838,17 +2839,13 @@ mod tests {
         }
 
         let total_emit_time = start.elapsed();
-        println!(
-            "Total time to emit 3 events with fire-and-forget: {:?}",
-            total_emit_time
-        );
+        println!("Total time to emit 3 events with fire-and-forget: {total_emit_time:?}");
 
         // In fire-and-forget mode, this should complete much faster than
         // the combined listener processing time (500ms + 300ms = 800ms per event)
         // With 3 events, blocking would take ~2400ms, fire-and-forget should be < 100ms
         assert!(total_emit_time < Duration::from_millis(200),
-               "Fire-and-forget emission took too long: {:?} (should be much less than listener processing time)",
-               total_emit_time);
+               "Fire-and-forget emission took too long: {total_emit_time:?} (should be much less than listener processing time)");
 
         println!("✓ Fire-and-forget emission is non-blocking and doesn't wait for slow listeners!");
 
@@ -2881,13 +2878,12 @@ mod tests {
             .unwrap();
 
         let total_emit_time = start.elapsed();
-        println!("Blocking mode emission time: {:?}", total_emit_time);
+        println!("Blocking mode emission time: {total_emit_time:?}");
 
         // In blocking mode, this should take at least as long as the listener processing time
         assert!(
             total_emit_time >= Duration::from_millis(150),
-            "Blocking emission completed too quickly: {:?} (should wait for listener)",
-            total_emit_time
+            "Blocking emission completed too quickly: {total_emit_time:?} (should wait for listener)"
         );
 
         println!("✓ Blocking mode waits for listeners as expected!");

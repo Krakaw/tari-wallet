@@ -347,7 +347,7 @@ impl ConsoleLoggingListener {
 
         if self.config.include_correlation_ids {
             if let Some(ref correlation_id) = metadata.correlation_id {
-                parts.push(format!("corr:{}", correlation_id));
+                parts.push(format!("corr:{correlation_id}"));
             }
         }
 
@@ -425,7 +425,7 @@ impl ConsoleLoggingListener {
             .map_or("default".to_string(), |s| s.to_string());
         let timeout = config
             .timeout_seconds
-            .map_or("none".to_string(), |t| format!("{}s", t));
+            .map_or("none".to_string(), |t| format!("{t}s"));
         let block_count = block_range.1.saturating_sub(block_range.0) + 1;
 
         let message = format!(
@@ -507,7 +507,7 @@ impl ConsoleLoggingListener {
 
         let amount_str = output_data
             .amount
-            .map_or("unknown".to_string(), |a| format!("{}", a));
+            .map_or("unknown".to_string(), |a| format!("{a}"));
         let mine_str = if output_data.is_mine { "MINE" } else { "OTHER" };
         let color = if output_data.is_mine {
             self.colors.success
@@ -554,7 +554,7 @@ impl ConsoleLoggingListener {
     ) {
         let amount_str = spent_output_data
             .spent_amount
-            .map_or("unknown".to_string(), |a| format!("{}", a));
+            .map_or("unknown".to_string(), |a| format!("{a}"));
 
         let message = format!(
             "Spent output {} (amount: {}) at block {} via {} (input #{})",
@@ -617,7 +617,7 @@ impl ConsoleLoggingListener {
         let eta_str = estimated_time_remaining.map_or("unknown".to_string(), |eta| {
             let secs = eta.as_secs();
             if secs < 60 {
-                format!("{}s", secs)
+                format!("{secs}s")
             } else if secs < 3600 {
                 format!("{}m{}s", secs / 60, secs % 60)
             } else {
@@ -689,7 +689,7 @@ impl ConsoleLoggingListener {
         let duration_str = {
             let secs = total_duration.as_secs();
             if secs < 60 {
-                format!("{}s", secs)
+                format!("{secs}s")
             } else if secs < 3600 {
                 format!("{}m{}s", secs / 60, secs % 60)
             } else {
@@ -699,14 +699,14 @@ impl ConsoleLoggingListener {
 
         let mut stats_parts = Vec::new();
         if let Some(blocks) = final_statistics.get("blocks_processed") {
-            stats_parts.push(format!("{} blocks", blocks));
+            stats_parts.push(format!("{blocks} blocks"));
         }
         if let Some(outputs) = final_statistics.get("outputs_found") {
-            stats_parts.push(format!("{} outputs", outputs));
+            stats_parts.push(format!("{outputs} outputs"));
         }
         if let Some(errors) = final_statistics.get("errors_encountered") {
             if *errors > 0 {
-                stats_parts.push(format!("{} errors", errors));
+                stats_parts.push(format!("{errors} errors"));
             }
         }
 
@@ -754,10 +754,10 @@ impl ConsoleLoggingListener {
         } else {
             "fatal"
         };
-        let block_str = block_height.map_or(String::new(), |h| format!(" at block {}", h));
+        let block_str = block_height.map_or(String::new(), |h| format!(" at block {h}"));
         let code_str = error_code
             .as_ref()
-            .map_or(String::new(), |c| format!(" [{}]", c));
+            .map_or(String::new(), |c| format!(" [{c}]"));
 
         let message = format!(
             "{}Scan error{} ({}){}{}: {}",
@@ -792,11 +792,11 @@ impl ConsoleLoggingListener {
         partial_completion: &Option<f64>,
     ) {
         let completion_str =
-            partial_completion.map_or(String::new(), |p| format!(" ({:.1}% complete)", p));
+            partial_completion.map_or(String::new(), |p| format!(" ({p:.1}% complete)"));
 
         let stats_summary = final_statistics
             .iter()
-            .map(|(k, v)| format!("{}: {}", k, v))
+            .map(|(k, v)| format!("{k}: {v}"))
             .collect::<Vec<_>>()
             .join(", ");
 
@@ -1177,7 +1177,7 @@ impl EventListener for ConsoleLoggingListener {
         event: &SharedEvent,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Check if this event should be logged at the current level
-        if !self.config.log_level.should_log(&event) {
+        if !self.config.log_level.should_log(event) {
             return Ok(());
         }
 
@@ -1259,7 +1259,7 @@ impl EventListener for ConsoleLoggingListener {
         }
 
         // Log JSON debug information if enabled
-        self.log_json_debug(&event);
+        self.log_json_debug(event);
 
         Ok(())
     }

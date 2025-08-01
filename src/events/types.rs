@@ -1102,6 +1102,7 @@ mod tests {
                 timestamp,
                 processing_duration: duration,
                 outputs_count,
+                spent_outputs_count,
             } => {
                 assert!(!metadata.event_id.is_empty());
                 assert_eq!(metadata.source, "wallet_scanner");
@@ -1111,6 +1112,7 @@ mod tests {
                 assert_eq!(*timestamp, 1697123456);
                 assert_eq!(*duration, processing_duration);
                 assert_eq!(*outputs_count, 5);
+                assert_eq!(*spent_outputs_count, 0);
             }
             _ => panic!("Expected BlockProcessed event"),
         }
@@ -1177,6 +1179,7 @@ mod tests {
             timestamp: 1697987654,
             processing_duration: Duration::from_millis(300),
             outputs_count: 10,
+            spent_outputs_count: 0,
         };
 
         match &event {
@@ -1191,7 +1194,7 @@ mod tests {
     #[test]
     fn test_block_processed_duration_handling() {
         // Test various processing durations
-        let durations = vec![
+        let durations = [
             Duration::from_nanos(1),
             Duration::from_micros(1),
             Duration::from_millis(1),
@@ -1458,9 +1461,7 @@ mod tests {
             let summary = event.summary();
             assert!(
                 summary.contains(expected_format),
-                "Expected '{}' in summary: {}",
-                expected_format,
-                summary
+                "Expected '{expected_format}' in summary: {summary}"
             );
         }
     }
@@ -1638,9 +1639,7 @@ mod tests {
             let summary = event.summary();
             assert!(
                 summary.contains(expected_format),
-                "Expected '{}' in summary: {}",
-                expected_format,
-                summary
+                "Expected '{expected_format}' in summary: {summary}"
             );
         }
     }

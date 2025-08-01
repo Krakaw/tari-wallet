@@ -86,8 +86,7 @@ async fn test_progress_tracking_listener_integration() {
         .await;
     assert!(
         result.is_ok(),
-        "Failed to handle ScanStarted event: {:?}",
-        result
+        "Failed to handle ScanStarted event: {result:?}",
     );
 
     let result = progress_listener
@@ -95,8 +94,7 @@ async fn test_progress_tracking_listener_integration() {
         .await;
     assert!(
         result.is_ok(),
-        "Failed to handle ScanProgress event: {:?}",
-        result
+        "Failed to handle ScanProgress event: {result:?}",
     );
 
     let result = progress_listener
@@ -104,8 +102,7 @@ async fn test_progress_tracking_listener_integration() {
         .await;
     assert!(
         result.is_ok(),
-        "Failed to handle ScanCompleted event: {:?}",
-        result
+        "Failed to handle ScanCompleted event: {result:?}",
     );
 
     // Verify callbacks were called
@@ -137,6 +134,7 @@ async fn test_console_logging_listener_integration() {
         timestamp: 1640995200,
         processing_duration: Duration::from_millis(75),
         outputs_count: 1,
+        spent_outputs_count: 0,
     };
 
     // Test minimal configuration
@@ -145,8 +143,7 @@ async fn test_console_logging_listener_integration() {
         .await;
     assert!(
         result.is_ok(),
-        "Failed to handle event in minimal config: {:?}",
-        result
+        "Failed to handle event in minimal config: {result:?}",
     );
 
     // Test debug configuration
@@ -155,8 +152,7 @@ async fn test_console_logging_listener_integration() {
         .await;
     assert!(
         result.is_ok(),
-        "Failed to handle event in debug config: {:?}",
-        result
+        "Failed to handle event in debug config: {result:?}",
     );
 
     println!("✓ ConsoleLoggingListener integration test passed");
@@ -305,8 +301,7 @@ async fn test_database_storage_listener_integration() {
     let result = db_listener.handle_event(&Arc::new(scan_started)).await;
     assert!(
         result.is_ok(),
-        "Failed to handle ScanStarted event: {:?}",
-        result
+        "Failed to handle ScanStarted event: {result:?}",
     );
 
     // Create and handle block processed event
@@ -317,13 +312,13 @@ async fn test_database_storage_listener_integration() {
         timestamp: 1640995440,
         processing_duration: Duration::from_millis(50),
         outputs_count: 1,
+        spent_outputs_count: 0,
     };
 
     let result = db_listener.handle_event(&Arc::new(block_processed)).await;
     assert!(
         result.is_ok(),
-        "Failed to handle BlockProcessed event: {:?}",
-        result
+        "Failed to handle BlockProcessed event: {result:?}",
     );
 
     // Create and handle output found event
@@ -354,8 +349,7 @@ async fn test_database_storage_listener_integration() {
     let result = db_listener.handle_event(&Arc::new(output_found)).await;
     assert!(
         result.is_ok(),
-        "Failed to handle OutputFound event: {:?}",
-        result
+        "Failed to handle OutputFound event: {result:?}",
     );
 
     // Handle scan completion
@@ -374,8 +368,7 @@ async fn test_database_storage_listener_integration() {
     let result = db_listener.handle_event(&Arc::new(scan_completed)).await;
     assert!(
         result.is_ok(),
-        "Failed to handle ScanCompleted event: {:?}",
-        result
+        "Failed to handle ScanCompleted event: {result:?}",
     );
 
     println!("✓ DatabaseStorageListener integration test passed");
@@ -407,10 +400,11 @@ async fn test_high_frequency_events_integration() {
         let event = WalletScanEvent::BlockProcessed {
             metadata: EventMetadata::new("integration_test"),
             height: 20000 + i,
-            hash: format!("block_hash_{}", i),
+            hash: format!("block_hash_{i}"),
             timestamp: 1640995200 + i * 120,
             processing_duration: Duration::from_millis(25),
             outputs_count: if i % 10 == 0 { 1 } else { 0 },
+            spent_outputs_count: 0,
         };
 
         dispatcher.dispatch(event).await;
@@ -426,8 +420,7 @@ async fn test_high_frequency_events_integration() {
     // Should process at least 10 events per second
     assert!(
         elapsed < Duration::from_secs(10),
-        "Performance too slow: {:?}",
-        elapsed
+        "Performance too slow: {elapsed:?}"
     );
 
     println!("✓ High-frequency events integration test passed");

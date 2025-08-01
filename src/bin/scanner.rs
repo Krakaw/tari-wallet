@@ -712,10 +712,7 @@ async fn main_with_storage() -> LightweightWalletResult<()> {
                 }
                 Err(e) => {
                     if !args.quiet {
-                        eprintln!(
-                            "⚠️  Warning: Could not create database event listener: {}",
-                            e
-                        );
+                        eprintln!("⚠️  Warning: Could not create database event listener: {e}");
                         eprintln!("   Continuing with memory-only event handling...");
                     }
                 }

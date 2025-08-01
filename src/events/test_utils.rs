@@ -198,7 +198,7 @@ impl EventPattern {
 
     /// Require a specific event type to appear (can be followed by others)
     pub fn followed_by_any_number_of(mut self, event_type: &str) -> Self {
-        self.required_patterns.push(format!("{}*", event_type));
+        self.required_patterns.push(format!("{event_type}*"));
         self
     }
 
@@ -572,8 +572,7 @@ impl TestScenario {
 
         // Check block range if specified
         if let Some((start, end)) = self.block_range {
-            let events =
-                mock.find_events_with_content(&format!("\"block_range\":[{},{}]", start, end));
+            let events = mock.find_events_with_content(&format!("\"block_range\":[{start},{end}]"));
             if events.is_empty() {
                 return Err(EventTestError::ContentNotFound(format!(
                     "block range {start}-{end}"
@@ -1079,8 +1078,8 @@ mod tests {
 
                     let event = WalletScanEvent::block_processed(
                         i + 1,
-                        format!("0x{:x}", i),
-                        1697123456 + i as u64,
+                        format!("0x{i:x}"),
+                        1697123456 + i,
                         Duration::from_millis(50),
                         2,
                     );
@@ -1131,8 +1130,8 @@ mod tests {
         for i in 0..5 {
             let event = WalletScanEvent::block_processed(
                 i + 1,
-                format!("0x{:x}", i),
-                1697123456 + i as u64,
+                format!("0x{i:x}"),
+                1697123456 + i,
                 Duration::from_millis(10),
                 1,
             );

@@ -380,7 +380,7 @@ impl DatabaseStorageListener {
                 // No-op
             }
             Err(e) => {
-                return Err(e.into());
+                return Err(e);
             }
         }
 
@@ -396,7 +396,7 @@ impl DatabaseStorageListener {
         let commitment_bytes = match hex::decode(commitment) {
             Ok(bytes) => bytes,
             Err(e) => {
-                return Err(format!("Invalid hex commitment: {}", e).into());
+                return Err(format!("Invalid hex commitment: {e}").into());
             }
         };
 
@@ -436,7 +436,7 @@ impl DatabaseStorageListener {
         if let Some(wallet_id) = self.wallet_id {
             // Parse the commitment
             let commitment = CompressedCommitment::from_hex(commitment_hex)
-                .map_err(|e| format!("Invalid commitment hex: {}", e))?;
+                .map_err(|e| format!("Invalid commitment hex: {e}"))?;
 
             // Create an outbound transaction record
             let outbound_transaction = WalletTransaction::new(
@@ -458,7 +458,7 @@ impl DatabaseStorageListener {
                 .save_transaction(wallet_id, &outbound_transaction)
                 .await
             {
-                return Err(format!("Failed to save outbound transaction: {}", e).into());
+                return Err(format!("Failed to save outbound transaction: {e}").into());
             }
         }
 
@@ -476,7 +476,7 @@ impl DatabaseStorageListener {
         let commitment_bytes = match hex::decode(commitment) {
             Ok(bytes) => bytes,
             Err(e) => {
-                return Err(format!("Invalid hex commitment: {}", e).into());
+                return Err(format!("Invalid hex commitment: {e}").into());
             }
         };
 
@@ -543,8 +543,7 @@ impl DatabaseStorageListener {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         if self.verbose {
             self.log(&format!(
-                "Scan error at block {:?}: {}",
-                block_height, error_message
+                "Scan error at block {block_height:?}: {error_message}"
             ));
         }
 
@@ -562,8 +561,7 @@ impl DatabaseStorageListener {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         if self.verbose {
             self.log(&format!(
-                "Scan cancelled: reason={}, stats={:?}",
-                reason, final_statistics
+                "Scan cancelled: reason={reason}, stats={final_statistics:?}"
             ));
         }
 
@@ -582,7 +580,7 @@ impl DatabaseStorageListener {
         // Parse commitment from hex string
         let commitment_hex = output_data.commitment.trim_start_matches("0x");
         let commitment_bytes =
-            hex::decode(commitment_hex).map_err(|e| format!("Invalid commitment hex: {}", e))?;
+            hex::decode(commitment_hex).map_err(|e| format!("Invalid commitment hex: {e}"))?;
 
         // Convert to fixed-size array for CompressedCommitment
         if commitment_bytes.len() != 32 {
@@ -727,13 +725,13 @@ impl DatabaseStorageListener {
 
     /// Log a message (platform-specific)
     fn log(&self, message: &str) {
-        let log_message = format!("[DatabaseStorageListener] {}", message);
+        let log_message = format!("[DatabaseStorageListener] {message}");
 
         #[cfg(target_arch = "wasm32")]
         web_sys::console::log_1(&log_message.into());
 
         #[cfg(not(target_arch = "wasm32"))]
-        println!("{}", log_message);
+        println!("{log_message}");
     }
 
     /// Get database statistics
@@ -970,7 +968,7 @@ impl DatabaseStorageListener {
 
         // Parse the commitment from hex
         let commitment = CompressedCommitment::from_hex(&output_data.commitment)
-            .map_err(|e| format!("Invalid commitment hex: {}", e))?;
+            .map_err(|e| format!("Invalid commitment hex: {e}"))?;
 
         // Parse direction
         let direction = match transaction_data.direction.as_str() {

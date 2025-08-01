@@ -578,7 +578,7 @@ pub fn create_default_event_emitter(
     dispatcher
         .register(Box::new(progress_listener))
         .map_err(|e| {
-            LightweightWalletError::from(format!("Failed to register progress listener: {}", e))
+            LightweightWalletError::from(format!("Failed to register progress listener: {e}"))
         })?;
 
     // Add default console logging listener
@@ -586,7 +586,7 @@ pub fn create_default_event_emitter(
     dispatcher
         .register(Box::new(console_listener))
         .map_err(|e| {
-            LightweightWalletError::from(format!("Failed to register console listener: {}", e))
+            LightweightWalletError::from(format!("Failed to register console listener: {e}"))
         })?;
 
     let mut emitter = ScanEventEmitter::new(dispatcher, source).with_fire_and_forget(true); // Enable fire-and-forget by default for scanning performance
@@ -616,7 +616,7 @@ pub async fn create_database_event_emitter(
     if let Some(path) = database_path {
         let db_listener = DatabaseStorageListener::new(&path).await?;
         dispatcher.register(Box::new(db_listener)).map_err(|e| {
-            LightweightWalletError::from(format!("Failed to register database listener: {}", e))
+            LightweightWalletError::from(format!("Failed to register database listener: {e}"))
         })?;
     }
 
@@ -625,7 +625,7 @@ pub async fn create_database_event_emitter(
     dispatcher
         .register(Box::new(progress_listener))
         .map_err(|e| {
-            LightweightWalletError::from(format!("Failed to register progress listener: {}", e))
+            LightweightWalletError::from(format!("Failed to register progress listener: {e}"))
         })?;
 
     let mut emitter = ScanEventEmitter::new(dispatcher, source);
