@@ -414,13 +414,12 @@ impl EventListener for AsciiProgressBarListener {
                 spent_outputs_count,
                 ..
             } => {
-                // Update output counts from block processing and display progress
+                // Update output counts from block processing but don't display progress
+                // Progress display is handled by ScanProgress events for better accuracy
                 if let Ok(mut state) = self.state.lock() {
                     state.outputs_found += outputs_count;
                     state.spent_found += spent_outputs_count;
-                    if state.scan_active {
-                        self.display_progress(&state);
-                    }
+                    // Don't display progress here - let ScanProgress events handle it
                 }
             }
             WalletScanEvent::ScanCompleted { .. }

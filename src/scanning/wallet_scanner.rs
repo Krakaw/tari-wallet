@@ -1634,9 +1634,7 @@ fn prepare_block_heights(config: &BinaryScanConfig, from_block: u64, to_block: u
         heights
     } else {
         let heights: Vec<u64> = (from_block..=to_block).collect();
-        if !config.quiet {
-            display_scan_info(config, &heights, has_specific_blocks);
-        }
+        // Don't display here for range scanning - it's handled in the main function
         heights
     }
 }
@@ -1944,7 +1942,8 @@ async fn scan_wallet_across_blocks_with_cancellation(
         .emit_scan_started(config, scan_context, (from_block, to_block), wallet_context)
         .await?;
 
-    if !config.quiet {
+    // Display scanning information (already handled in prepare_block_heights, don't duplicate)
+    if !config.quiet && config.block_heights.is_none() {
         println!(
             "🔍 Scanning blocks {} to {} ({} blocks total)...",
             format_number(from_block),
@@ -2011,9 +2010,18 @@ async fn scan_wallet_across_blocks_with_cancellation(
             return Ok(ScanResult::Interrupted(wallet_state, Some(metadata)));
         }
 
-        // Create batch of blocks to process
-        let batch_end_index =
-            std::cmp::min(current_block_index + config.batch_size, block_heights.len());
+        // Create batch of blocks to process - for specific blocks, use larger batches to reduce GRPC calls
+        let effective_batch_size = if config.block_heights.is_some() {
+            // For specific blocks, use larger batches (up to 100) since we're not scanning sequentially
+            std::cmp::min(config.batch_size * 10, 100)
+        } else {
+            config.batch_size
+        };
+
+        let batch_end_index = std::cmp::min(
+            current_block_index + effective_batch_size,
+            block_heights.len(),
+        );
         let batch_heights: Vec<u64> = block_heights[current_block_index..batch_end_index].to_vec();
 
         // Create batch config for this set of specific blocks
@@ -2132,13 +2140,23 @@ async fn scan_wallet_across_blocks_with_cancellation(
                 let batch_size = batch_heights.len() as u64;
                 blocks_processed += batch_size;
 
-                // Emit progress update
-                if blocks_processed % config.progress_frequency as u64 == 0
-                    || last_progress_update.elapsed().as_secs() >= 1
-                {
+                // Emit progress update - disable for specific blocks since they're fast and progress values are wrong
+                let should_emit_progress = if config.block_heights.is_some() {
+                    // Skip progress for specific blocks - they're fast enough and progress bar values are incorrect
+                    false
+                } else {
+                    // For range scanning, use the configured frequency
+                    blocks_processed % config.progress_frequency as u64 == 0
+                        || last_progress_update.elapsed().as_secs() >= 1
+                };
+
+                if should_emit_progress {
                     let total_blocks = block_heights.len() as u64;
-                    let processing_rate =
-                        blocks_processed as f64 / last_progress_update.elapsed().as_secs_f64();
+                    let processing_rate = if last_progress_update.elapsed().as_secs_f64() > 0.0 {
+                        blocks_processed as f64 / last_progress_update.elapsed().as_secs_f64()
+                    } else {
+                        0.0
+                    };
                     let estimated_completion = if processing_rate > 0.0 {
                         let remaining_blocks = total_blocks - blocks_processed;
                         let remaining_seconds = remaining_blocks as f64 / processing_rate;
@@ -2150,12 +2168,13 @@ async fn scan_wallet_across_blocks_with_cancellation(
                         None
                     };
 
-                    let current_block =
-                        if current_block_index > 0 && current_block_index <= block_heights.len() {
-                            block_heights[current_block_index - 1]
-                        } else {
-                            from_block
-                        };
+                    let current_block = if current_block_index > 0 {
+                        // Get the last block we just processed
+                        block_heights[current_block_index - 1]
+                    } else {
+                        // Haven't processed any blocks yet, use the first block
+                        block_heights.get(0).copied().unwrap_or(from_block)
+                    };
 
                     event_emitter
                         .emit_scan_progress(
@@ -2241,7 +2260,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
 fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_specific_blocks: bool) {
     if has_specific_blocks {
         println!(
-            "🔍 Scanning {} specific blocks: {:?}",
+            "🔍 Scanning {} specific blocks: \"{}\"",
             format_number(block_heights.len()),
             if block_heights.len() <= 10 {
                 block_heights
@@ -2251,10 +2270,11 @@ fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_speci
                     .join(", ")
             } else {
                 format!(
-                    "{}..{} and {} others",
+                    "{}, {}..{} and {} others",
                     format_number(block_heights[0]),
+                    format_number(block_heights[1]),
                     format_number(block_heights.last().copied().unwrap_or(0)),
-                    format_number(block_heights.len() - 2)
+                    format_number(block_heights.len() - 3)
                 )
             }
         );
@@ -2267,8 +2287,6 @@ fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_speci
             format_number(block_range)
         );
     }
-
-    println!();
 }
 
 // =============================================================================
@@ -2422,11 +2440,34 @@ fn display_summary_results(wallet_state: &WalletState, config: &BinaryScanConfig
 
     println!("📊 WALLET SCAN SUMMARY");
     println!("=====================");
-    println!(
-        "Scan range: Block {} to {}",
-        format_number(config.from_block),
-        format_number(config.to_block)
-    );
+    if let Some(ref block_heights) = config.block_heights {
+        if block_heights.len() <= 10 {
+            println!(
+                "Scanned {} specific blocks: {}",
+                format_number(block_heights.len()),
+                block_heights
+                    .iter()
+                    .map(|h| format_number(*h))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        } else {
+            println!(
+                "Scanned {} specific blocks: {}, {}..{} and {} others",
+                format_number(block_heights.len()),
+                format_number(block_heights[0]),
+                format_number(block_heights[1]),
+                format_number(block_heights.last().copied().unwrap_or(0)),
+                format_number(block_heights.len() - 3)
+            );
+        }
+    } else {
+        println!(
+            "Scan range: Block {} to {}",
+            format_number(config.from_block),
+            format_number(config.to_block)
+        );
+    }
     println!(
         "Total transactions: {}",
         format_number(wallet_state.transactions.len())
