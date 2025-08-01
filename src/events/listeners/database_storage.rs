@@ -10,9 +10,6 @@ use std::error::Error;
 
 use crate::events::{EventListener, SharedEvent};
 
-#[cfg(feature = "grpc")]
-use crate::LightweightWalletError;
-
 #[cfg(feature = "storage")]
 use std::collections::HashMap;
 
@@ -663,7 +660,7 @@ impl DatabaseStorageListener {
 
     /// Save outputs to database using architecture-specific method
     async fn save_outputs(&self, outputs: &[StoredOutput]) -> LightweightWalletResult<Vec<u32>> {
-        #[cfg(all(feature = "grpc", not(target_arch = "wasm32")))]
+        #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(writer) = &self.background_writer {
                 let (response_tx, response_rx) = oneshot::channel();
