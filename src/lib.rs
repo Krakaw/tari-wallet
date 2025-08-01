@@ -11,9 +11,8 @@ pub mod events;
 pub mod extraction;
 pub mod hex_utils;
 pub mod key_management;
-#[cfg(any(feature = "grpc", feature = "http"))]
 pub mod scanning;
-#[cfg(feature = "storage")]
+
 pub mod storage;
 pub mod utils;
 pub mod validation;
@@ -32,7 +31,7 @@ pub use extraction::*;
 pub use hex_utils::*;
 pub use key_management::*;
 pub use scanning::*;
-#[cfg(feature = "storage")]
+
 pub use storage::*;
 pub use validation::*;
 pub use wallet::*;

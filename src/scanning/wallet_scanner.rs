@@ -32,7 +32,6 @@ use crate::scanning::GrpcBlockchainScanner;
 
 use crate::common::format_number;
 
-#[cfg(feature = "storage")]
 use crate::{
     data_structures::{
         transaction::TransactionDirection, transaction_output::LightweightTransactionOutput,
@@ -40,8 +39,9 @@ use crate::{
     },
     errors::KeyManagementError,
     key_management::key_derivation,
-    storage::storage_trait::{OutputStatus, StoredOutput},
 };
+
+use crate::storage::{output_status::OutputStatus, stored_output::StoredOutput};
 
 use blake2::{Blake2b, Digest};
 
@@ -63,7 +63,6 @@ use super::ScannerStorage;
 // =============================================================================
 
 /// Filter transactions from a specific block
-#[cfg(feature = "storage")]
 fn filter_block_transactions(
     wallet_state: &WalletState,
     block_height: u64,
@@ -77,7 +76,6 @@ fn filter_block_transactions(
 }
 
 /// Create stored output from blockchain output and transaction data
-#[cfg(feature = "storage")]
 fn create_stored_output_from_blockchain_data(
     transaction: &crate::data_structures::wallet_transaction::WalletTransaction,
     blockchain_output: &LightweightTransactionOutput,
@@ -176,7 +174,6 @@ fn create_stored_output_from_blockchain_data(
 }
 
 /// Extract UTXO data from blockchain outputs and create StoredOutput objects
-#[cfg(feature = "storage")]
 pub fn extract_utxo_outputs_from_wallet_state(
     wallet_state: &WalletState,
     scan_context: &ScanContext,
@@ -1521,7 +1518,7 @@ impl WalletScanner {
     }
 
     /// Check if an error is retryable
-    #[cfg(feature = "grpc")]
+    #[allow(unused)] // TODO: This doesn't need the grpc feature flag, but the calling function does
     fn is_retryable_error(&self, error: &LightweightWalletError) -> bool {
         match error {
             // Network-related errors are typically retryable
@@ -3280,7 +3277,6 @@ mod tests {
         assert_eq!(reliability.config.retry_config.max_retries, 5);
     }
 
-    #[cfg(feature = "grpc")]
     #[test]
     fn test_wallet_scanner_is_retryable_error() {
         let scanner = WalletScanner::new();
@@ -3342,7 +3338,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
     #[test]
     fn test_generate_transaction_id() {
         let tx_id_1 = generate_transaction_id(1000, 5);
@@ -3360,7 +3355,6 @@ mod tests {
         assert_ne!(generate_transaction_id(0, 0), 0);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
     #[test]
     fn test_derive_utxo_spending_keys_with_entropy() {
         let entropy = [1u8; 16];
@@ -3374,7 +3368,6 @@ mod tests {
         assert_ne!(script_private_key.as_bytes(), [0u8; 32]);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
     #[test]
     fn test_derive_utxo_spending_keys_view_only() {
         let entropy = [0u8; 16]; // View-key mode
@@ -3388,7 +3381,6 @@ mod tests {
         assert_eq!(script_private_key.as_bytes(), [0u8; 32]);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
     #[test]
     fn test_extract_script_data_empty() {
         let result = extract_script_data(&[]);
@@ -3399,7 +3391,6 @@ mod tests {
         assert_eq!(script_lock_height, 0);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
     #[test]
     fn test_extract_script_data_with_data() {
         // Create a simple script with OP_PUSHDATA
@@ -3411,7 +3402,6 @@ mod tests {
         assert_eq!(input_data, vec![0x01, 0x02, 0x03, 0x04]);
     }
 
-    #[cfg(feature = "grpc")]
     #[test]
     fn test_format_currency_amount() {
         let amount = 1_000_000u64; // 1 Tari
@@ -3421,14 +3411,12 @@ mod tests {
         assert!(formatted.contains("1.000000 T"));
     }
 
-    #[cfg(feature = "grpc")]
     #[test]
     fn test_has_wallet_activity() {
         let empty_state = WalletState::new();
         assert!(!has_wallet_activity(&empty_state));
     }
 
-    #[cfg(feature = "grpc")]
     #[test]
     fn test_calculate_wallet_summary() {
         let wallet_state = WalletState::new();
@@ -3442,7 +3430,6 @@ mod tests {
         assert_eq!(spent_count, 0);
     }
 
-    #[cfg(feature = "grpc")]
     #[test]
     fn test_calculate_direction_counts() {
         let wallet_state = WalletState::new();
