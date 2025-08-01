@@ -22,7 +22,10 @@ use crate::{
 };
 
 #[cfg(all(feature = "grpc", feature = "storage"))]
-use crate::scanning::data_processor::DataProcessor;
+use crate::scanning::{
+    data_processor::{BlockData, CompletionData, DataProcessor, ProgressData},
+    progress::ProgressTracker,
+};
 
 #[cfg(feature = "grpc")]
 use crate::scanning::GrpcBlockchainScanner;
