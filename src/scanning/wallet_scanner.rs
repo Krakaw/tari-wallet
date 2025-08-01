@@ -22,7 +22,9 @@ use crate::{
 };
 
 #[cfg(feature = "grpc")]
-use crate::{common::format_number, scanning::GrpcBlockchainScanner};
+use crate::scanning::GrpcBlockchainScanner;
+
+use crate::common::format_number;
 
 #[cfg(feature = "storage")]
 use crate::{
@@ -35,25 +37,17 @@ use crate::{
     storage::storage_trait::{OutputStatus, StoredOutput},
 };
 
-#[cfg(all(feature = "grpc", feature = "storage"))]
 use blake2::{Blake2b, Digest};
 
-#[cfg(all(feature = "grpc", feature = "storage"))]
 use digest::consts::U32;
 
-#[cfg(all(feature = "grpc", feature = "storage"))]
 use tari_utilities::ByteArray;
 
-#[cfg(all(feature = "grpc", feature = "storage"))]
 use zeroize::Zeroize;
 
 use super::ScanContext;
 
-#[cfg(feature = "grpc")]
-use super::{
-    data_processor::{BlockData, CompletionData, DataProcessor, ProgressData},
-    BinaryScanConfig, ProgressTracker,
-};
+use super::BinaryScanConfig;
 
 #[cfg(all(feature = "grpc", feature = "storage"))]
 use super::ScannerStorage;
@@ -211,7 +205,6 @@ pub fn extract_utxo_outputs_from_wallet_state(
 }
 
 /// Extract script input data and script lock height from script bytes
-#[cfg(all(feature = "grpc", feature = "storage"))]
 fn extract_script_data(script_bytes: &[u8]) -> LightweightWalletResult<(Vec<u8>, u64)> {
     // If script is empty, return empty data
     if script_bytes.is_empty() {
@@ -276,7 +269,6 @@ fn extract_script_data(script_bytes: &[u8]) -> LightweightWalletResult<(Vec<u8>,
 }
 
 /// Generate a deterministic transaction ID from block height and input index
-#[cfg(all(feature = "grpc", feature = "storage"))]
 fn generate_transaction_id(block_height: u64, input_index: usize) -> u64 {
     // Create a deterministic transaction ID by combining block height and input index
     // This is a simplified approach - in a real implementation, you'd use the actual transaction hash
@@ -297,7 +289,6 @@ fn generate_transaction_id(block_height: u64, input_index: usize) -> u64 {
 
 /// Derive spending keys for a UTXO output using wallet entropy
 /// For view-key mode (entropy all zeros), returns zero keys since spending is not possible
-#[cfg(all(feature = "grpc", feature = "storage"))]
 fn derive_utxo_spending_keys(
     entropy: &[u8; 16],
     output_index: u64,
@@ -347,7 +338,6 @@ fn derive_utxo_spending_keys(
 }
 
 /// Compute output hash for UTXO identification
-#[cfg(all(feature = "grpc", feature = "storage"))]
 fn compute_output_hash(output: &LightweightTransactionOutput) -> LightweightWalletResult<Vec<u8>> {
     // Compute hash of output fields for identification
     let mut hasher = Blake2b::<U32>::new();
@@ -539,25 +529,21 @@ impl ScanResult {
     }
 
     /// Display result in JSON format
-    #[cfg(feature = "grpc")]
     pub fn display_json(&self) {
         display_json_results(self.wallet_state())
     }
 
     /// Display result in summary format
-    #[cfg(feature = "grpc")]
     pub fn display_summary(&self, config: &BinaryScanConfig) {
         display_summary_results(self.wallet_state(), config)
     }
 
     /// Display result in detailed format
-    #[cfg(feature = "grpc")]
     pub fn display_detailed(&self, config: &BinaryScanConfig) {
         display_wallet_activity(self.wallet_state(), config.from_block, config.to_block)
     }
 
     /// Display result in the specified format
-    #[cfg(feature = "grpc")]
     pub fn display(&self, config: &BinaryScanConfig) {
         match config.output_format {
             crate::scanning::OutputFormat::Json => self.display_json(),
@@ -613,7 +599,6 @@ impl ScanResult {
     }
 
     /// Export scan result to JSON string
-    #[cfg(feature = "grpc")]
     pub fn to_json_string(&self) -> String {
         let wallet_state = self.wallet_state();
         let (total_received, total_spent, balance, unspent_count, spent_count) =
@@ -2292,19 +2277,16 @@ fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_speci
 // =============================================================================
 
 /// Calculate wallet balance summary
-#[cfg(feature = "grpc")]
 fn calculate_wallet_summary(wallet_state: &WalletState) -> (u64, u64, i64, usize, usize) {
     wallet_state.get_summary()
 }
 
 /// Calculate transaction direction counts
-#[cfg(feature = "grpc")]
 fn calculate_direction_counts(wallet_state: &WalletState) -> (usize, usize, usize) {
     wallet_state.get_direction_counts()
 }
 
 /// Format currency amount for display
-#[cfg(feature = "grpc")]
 fn format_currency_amount(amount: u64) -> String {
     format!(
         "{} μT ({:.6} T)",
@@ -2314,13 +2296,11 @@ fn format_currency_amount(amount: u64) -> String {
 }
 
 /// Check if wallet has any activity in the scanned range
-#[cfg(feature = "grpc")]
 fn has_wallet_activity(wallet_state: &WalletState) -> bool {
     !wallet_state.transactions.is_empty()
 }
 
 /// Display no activity message
-#[cfg(feature = "grpc")]
 fn display_no_activity_message(from_block: u64, to_block: u64) {
     println!(
         "💡 No wallet activity found in blocks {} to {}",
@@ -2334,7 +2314,6 @@ fn display_no_activity_message(from_block: u64, to_block: u64) {
 }
 
 /// Display wallet activity summary header
-#[cfg(feature = "grpc")]
 fn display_activity_header(from_block: u64, to_block: u64) {
     println!("🏦 WALLET ACTIVITY SUMMARY");
     println!("========================");
@@ -2347,7 +2326,6 @@ fn display_activity_header(from_block: u64, to_block: u64) {
 }
 
 /// Display transaction breakdown by direction
-#[cfg(feature = "grpc")]
 fn display_transaction_breakdown(
     inbound_count: usize,
     outbound_count: usize,
@@ -2367,7 +2345,6 @@ fn display_transaction_breakdown(
 }
 
 /// Display current balance and total activity
-#[cfg(feature = "grpc")]
 fn display_balance_and_totals(balance: i64, total_count: usize) {
     println!(
         "💰 Current balance: {}",
@@ -2381,8 +2358,6 @@ fn display_balance_and_totals(balance: i64, total_count: usize) {
 }
 
 /// Display wallet activity summary
-#[cfg(feature = "grpc")]
-#[allow(dead_code)]
 fn display_wallet_activity(wallet_state: &WalletState, from_block: u64, to_block: u64) {
     if !has_wallet_activity(wallet_state) {
         display_no_activity_message(from_block, to_block);
@@ -2406,7 +2381,6 @@ fn display_wallet_activity(wallet_state: &WalletState, from_block: u64, to_block
 // =============================================================================
 
 /// Display scan results in JSON format
-#[cfg(feature = "grpc")]
 fn display_json_results(wallet_state: &WalletState) {
     let (total_received, total_spent, balance, unspent_count, spent_count) =
         wallet_state.get_summary();
@@ -2430,7 +2404,6 @@ fn display_json_results(wallet_state: &WalletState) {
 }
 
 /// Display scan results in summary format
-#[cfg(feature = "grpc")]
 fn display_summary_results(wallet_state: &WalletState, config: &BinaryScanConfig) {
     let (total_received, total_spent, balance, unspent_count, spent_count) =
         wallet_state.get_summary();

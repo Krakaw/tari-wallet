@@ -47,7 +47,7 @@ pub mod http_scanner;
 // Scanner refactoring modules (for binary refactoring)
 pub mod scan_config;
 
-#[cfg(all(feature = "grpc", feature = "storage"))]
+#[cfg(feature = "storage")]
 pub mod storage_manager;
 
 #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
