@@ -21,6 +21,7 @@ use crate::{
     wallet::Wallet,
 };
 
+#[allow(unused)]
 use crate::scanning::{
     data_processor::{BlockData, CompletionData, DataProcessor, ProgressData},
     progress::ProgressTracker,
