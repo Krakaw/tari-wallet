@@ -16,7 +16,7 @@
 //! at key points in the scanning process:
 //!
 //! ```rust,no_run
-//! use lightweight_wallet_libs::event_emitter::ScanEventEmitter;
+//! use lightweight_wallet_libs::scanning::event_emitter::ScanEventEmitter;
 //! use lightweight_wallet_libs::events::EventDispatcher;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {

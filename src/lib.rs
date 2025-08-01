@@ -31,7 +31,6 @@ pub use errors::*;
 pub use extraction::*;
 pub use hex_utils::*;
 pub use key_management::*;
-#[cfg(feature = "grpc")]
 pub use scanning::*;
 #[cfg(feature = "storage")]
 pub use storage::*;
