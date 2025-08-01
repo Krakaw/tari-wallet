@@ -26,10 +26,10 @@ use crate::{
 #[cfg(feature = "storage")]
 use crate::events::types::{AddressInfo, BlockInfo, OutputData, SpentOutputData, TransactionData};
 
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 use crate::scanning::background_writer::{BackgroundWriter, BackgroundWriterCommand};
 
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 use tokio::sync::{mpsc, oneshot};
 
 /// Database storage listener that persists scan results to SQLite
@@ -88,7 +88,7 @@ pub struct DatabaseStorageListener {
     operation_metrics: HashMap<String, usize>,
 
     /// Background writer for non-WASM32 architectures
-    #[cfg(all(feature = "grpc", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     background_writer: Option<BackgroundWriter>,
 }
 
@@ -119,7 +119,7 @@ impl DatabaseStorageListener {
             verbose: false,
             error_recovery: ErrorRecoveryManager::with_config(ErrorRecoveryConfig::production()),
             operation_metrics: HashMap::new(),
-            #[cfg(all(feature = "grpc", not(target_arch = "wasm32")))]
+            #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
             background_writer: None,
         })
     }
@@ -197,7 +197,7 @@ impl DatabaseStorageListener {
     ///
     /// This starts an async background service for database operations
     /// to avoid blocking the main scanning thread.
-    #[cfg(all(feature = "grpc", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     pub async fn start_background_writer(&mut self) -> LightweightWalletResult<()> {
         if self.background_writer.is_some() || self.database_path == ":memory:" {
             return Ok(()); // Already started or in-memory database
@@ -226,7 +226,7 @@ impl DatabaseStorageListener {
     }
 
     /// Stop the background writer service (non-WASM32 only)
-    #[cfg(all(feature = "grpc", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     pub async fn stop_background_writer(&mut self) -> LightweightWalletResult<()> {
         if let Some(writer) = self.background_writer.take() {
             let (response_tx, response_rx) = oneshot::channel();

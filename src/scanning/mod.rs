@@ -51,7 +51,7 @@ pub mod scan_config;
 #[cfg(all(feature = "grpc", feature = "storage"))]
 pub mod storage_manager;
 
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 pub mod background_writer;
 
 #[cfg(feature = "grpc")]
