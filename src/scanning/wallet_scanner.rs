@@ -21,7 +21,6 @@ use crate::{
     wallet::Wallet,
 };
 
-#[cfg(all(feature = "grpc", feature = "storage"))]
 use crate::scanning::{
     data_processor::{BlockData, CompletionData, DataProcessor, ProgressData},
     progress::ProgressTracker,
