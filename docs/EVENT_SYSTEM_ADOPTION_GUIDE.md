@@ -84,17 +84,141 @@ async fn example_usage() -> Result<(), Box<dyn std::error::Error>> {
 The system defines structured event types for different stages of wallet operations:
 
 ```rust
-use lightweight_wallet_libs::events::types::WalletScanEvent;
+use lightweight_wallet_libs::events::types::{
+    WalletScanEvent, ScanConfig, OutputData, BlockInfo, 
+    AddressInfo, TransactionData, SpentOutputData
+};
+use std::collections::HashMap;
+use std::time::Duration;
 
-// Scan lifecycle events
-let scan_started = WalletScanEvent::scan_started(config, range, wallet_id);
-let block_processed = WalletScanEvent::block_processed(height, hash, timestamp, duration, outputs);
-let output_found = WalletScanEvent::output_found(output_data, block_info, address_info);
-let spent_output_found = WalletScanEvent::spent_output_found(spent_transaction, block_info, input_index, match_method);
-let scan_progress = WalletScanEvent::scan_progress(current, total, percentage, speed, eta);
-let scan_completed = WalletScanEvent::scan_completed(success, stats, wallet_state);
-let scan_error = WalletScanEvent::scan_error(error, block_height, retry_info);
-let scan_cancelled = WalletScanEvent::scan_cancelled(reason, partial_stats);
+// Scan lifecycle events with constructor functions
+let scan_started = WalletScanEvent::scan_started(config, (start_block, end_block), wallet_context);
+let block_processed = WalletScanEvent::block_processed(height, hash, timestamp, duration, outputs_count);
+let output_found = WalletScanEvent::output_found(output_data, block_info, address_info, transaction_data);
+let spent_output_found = WalletScanEvent::spent_output_found(spent_output_data, spending_block_info, original_output_info, spending_transaction_data);
+let scan_progress = WalletScanEvent::scan_progress(current_block, total_blocks, percentage, speed_blocks_per_second, estimated_time_remaining);
+let scan_completed = WalletScanEvent::scan_completed(final_statistics, success, total_duration);
+let scan_error = WalletScanEvent::scan_error(error_message, error_code, block_height, retry_info, is_recoverable);
+let scan_cancelled = WalletScanEvent::scan_cancelled(reason, final_statistics, partial_completion);
+```
+
+#### Event Variants
+
+Each event variant contains rich structured data:
+
+**ScanStarted**
+- `config: ScanConfig` - Scan configuration parameters
+- `block_range: (u64, u64)` - Start and end block heights  
+- `wallet_context: String` - Wallet identifier or context
+
+**BlockProcessed**
+- `height: u64` - Block height
+- `hash: String` - Block hash
+- `timestamp: u64` - Block timestamp
+- `processing_duration: Duration` - Time to process this block
+- `outputs_count: usize` - Number of outputs in the block
+
+**OutputFound**
+- `output_data: OutputData` - Complete output information (commitment, range proof, value, etc.)
+- `block_info: BlockInfo` - Block details where output was found
+- `address_info: AddressInfo` - Address and derivation information
+- `transaction_data: TransactionData` - Transaction details for wallet storage
+
+**SpentOutputFound**
+- `spent_output_data: SpentOutputData` - Details about the spent output
+- `spending_block_info: BlockInfo` - Block where spending occurred
+- `original_output_info: OutputData` - Original output that was spent
+- `spending_transaction_data: TransactionData` - Spending transaction details
+
+**ScanProgress**
+- `current_block: u64` - Current block being processed
+- `total_blocks: u64` - Total blocks to process
+- `percentage: f64` - Completion percentage (0.0 to 100.0)
+- `speed_blocks_per_second: f64` - Processing speed
+- `estimated_time_remaining: Option<Duration>` - ETA to completion
+
+**ScanCompleted**
+- `final_statistics: HashMap<String, u64>` - Summary statistics
+- `success: bool` - Whether scan completed successfully
+- `total_duration: Duration` - Total time taken
+
+**ScanError**
+- `error_message: String` - Human-readable error description
+- `error_code: Option<String>` - Machine-readable error code
+- `block_height: Option<u64>` - Block where error occurred (if applicable)
+- `retry_info: Option<String>` - Retry information or suggestions
+- `is_recoverable: bool` - Whether the error can be retried
+
+**ScanCancelled**
+- `reason: String` - Cancellation reason
+- `final_statistics: HashMap<String, u64>` - Partial statistics
+- `partial_completion: Option<f64>` - Percentage completed before cancellation
+
+#### Supporting Data Structures
+
+**OutputData**
+```rust
+pub struct OutputData {
+    pub commitment: String,           // Output commitment value
+    pub range_proof: String,          // Range proof data
+    pub encrypted_value: Option<Vec<u8>>, // Encrypted value (if available)
+    pub script: Option<String>,       // Output script (if any)
+    pub features: u32,                // Output features flags
+    pub maturity_height: Option<u64>, // Maturity height (if applicable)
+    pub amount: Option<u64>,          // Decrypted amount value
+    pub is_mine: bool,                // Whether this belongs to our wallet
+}
+```
+
+**SpentOutputData**
+```rust
+pub struct SpentOutputData {
+    pub spent_commitment: String,        // Commitment of spent output
+    pub spent_output_hash: Option<String>, // Output hash (if available)
+    pub input_index: usize,              // Index in spending transaction
+    pub spent_amount: Option<u64>,       // Amount that was spent
+    pub original_block_height: u64,      // Block where output was found
+    pub spending_block_height: u64,      // Block where output was spent
+    pub match_method: String,            // "output_hash" or "commitment"
+}
+```
+
+**BlockInfo**
+```rust
+pub struct BlockInfo {
+    pub height: u64,                     // Block height
+    pub hash: String,                    // Block hash
+    pub timestamp: u64,                  // Block timestamp
+    pub transaction_index: Option<usize>, // Transaction index in block
+    pub output_index: usize,             // Output index in transaction
+    pub difficulty: Option<u64>,         // Block difficulty
+}
+```
+
+**AddressInfo**
+```rust
+pub struct AddressInfo {
+    pub address: String,                 // Wallet address
+    pub address_type: String,            // Address type (stealth, standard, script)
+    pub network: String,                 // Network (mainnet, testnet, localnet)
+    pub derivation_path: Option<String>, // Derivation path
+    pub public_spend_key: Option<String>, // Public spend key
+    pub view_key: Option<String>,        // View key
+}
+```
+
+**TransactionData**
+```rust
+pub struct TransactionData {
+    pub value: u64,                      // Transaction value in microTari
+    pub status: String,                  // Transaction status (Unspent, Spent, Pending)
+    pub direction: String,               // Direction (Inbound, Outbound)
+    pub output_index: Option<usize>,     // Output index in transaction
+    pub payment_id: Option<String>,      // Payment ID for tracking
+    pub fee: Option<u64>,                // Transaction fee (if outbound)
+    pub kernel_excess: Option<String>,   // Kernel excess
+    pub timestamp: u64,                  // Transaction timestamp
+}
 ```
 
 ### Event Dispatcher
@@ -176,7 +300,7 @@ impl MyScanner {
     pub fn new(dispatcher: EventDispatcher) -> Self {
         Self {
             event_emitter: ScanEventEmitter::new(dispatcher, "my_scanner".to_string())
-                .with_fire_and_forget(false), // Synchronous event emission for critical events
+                .with_fire_and_forget(true), // Optimal performance with reliable delivery
         }
     }
     
@@ -782,19 +906,21 @@ impl Scanner {
 
 ### Event Emission Performance
 
-- **Fire-and-forget mode**: Use `ScanEventEmitter::with_fire_and_forget(true)` for non-blocking event emission
-  - **Important**: Use `with_fire_and_forget(false)` for critical events like `SpentOutputFound` to ensure database consistency
+- **Fire-and-forget mode**: Use `ScanEventEmitter::with_fire_and_forget(true)` for optimal performance
+  - **How it works**: Spawns background async tasks for event dispatch, allowing the scanner to continue immediately
+  - **Database safety**: Events are still reliably delivered to all listeners, including `DatabaseStorageListener`
+  - **Best practice**: Use `fire_and_forget(true)` by default for all scanning operations
 - **Event filtering**: Implement `wants_event()` in listeners to skip unnecessary events
 - **Batch processing**: Group related events where possible
 
 ```rust
-// Efficient event emission for non-critical events
+// Optimal event emission (recommended for all scanning operations)
 let emitter = ScanEventEmitter::new(dispatcher, "scanner".to_string())
-    .with_fire_and_forget(true);  // Non-blocking for progress updates
+    .with_fire_and_forget(true);  // Non-blocking performance with reliable delivery
 
-// Critical event emission (spent outputs, errors)
-let critical_emitter = ScanEventEmitter::new(dispatcher, "scanner".to_string())
-    .with_fire_and_forget(false);  // Synchronous for data consistency
+// Synchronous event emission (only needed for special cases)
+let sync_emitter = ScanEventEmitter::new(dispatcher, "scanner".to_string())
+    .with_fire_and_forget(false);  // Blocks scanner until all listeners complete
 
 // Efficient listener
 impl EventListener for EfficientListener {
@@ -866,14 +992,14 @@ impl EventListener for CrossPlatformListener {
 
 2. **Spent outputs not being detected**
    - Verify the scanner is loading existing wallet state from the database
-   - Ensure `with_fire_and_forget(false)` is used for `SpentOutputFound` events
    - Check that commitment-based matching is working as fallback to output hash matching
    - Verify that wallet transactions have proper commitment values
+   - Ensure the scanner binary is using database storage (not memory-only mode)
 
 3. **Database inconsistencies**
-   - Use synchronous event emission (`with_fire_and_forget(false)`) for critical events
    - Ensure `DatabaseStorageListener` is registered before scanning
    - Check for UNIQUE constraint errors (should be handled automatically with `INSERT OR REPLACE`)
+   - Verify that the database file has proper write permissions
 
 4. **Performance issues**
    - Use fire-and-forget mode for non-critical events (progress updates)
@@ -946,18 +1072,26 @@ A critical issue was resolved where spent outputs were not being properly detect
 
 **Key Learning**: When using view-only scanning, wallet transactions have `output_hash=None` while GRPC inputs have actual output hash values, requiring commitment-based matching as a fallback.
 
-### Event System Synchronization
+### Fire-and-Forget Mode Performance
 
-**Critical**: For database consistency, `SpentOutputFound` events must use synchronous emission:
+**Key Insight**: Fire-and-forget mode provides optimal performance while maintaining data integrity:
 
 ```rust
-// Correct: Use synchronous emission for critical events
-let emitter = ScanEventEmitter::new(dispatcher, "scanner".to_string())
-    .with_fire_and_forget(false);
-
-// Incorrect: Async emission can cause race conditions for spent detection
+// Optimal: Use fire-and-forget for all scanning operations
 let emitter = ScanEventEmitter::new(dispatcher, "scanner".to_string())
     .with_fire_and_forget(true);
+
+// How it works:
+// 1. Scanner emits event and continues immediately (non-blocking)
+// 2. Background async task delivers event to all listeners
+// 3. DatabaseStorageListener processes event synchronously
+// 4. Database updates are reliably persisted
 ```
+
+**Benefits**:
+- **Performance**: Scanner doesn't wait for database I/O
+- **Reliability**: Events are guaranteed to reach all listeners  
+- **Consistency**: Database operations are still atomic within each listener
+- **Scalability**: Multiple events can be processed concurrently
 
 This guide provides comprehensive documentation for adopting the event system across the codebase. For specific implementation questions, refer to the module documentation in `src/events/` or examine the built-in listeners as examples.
