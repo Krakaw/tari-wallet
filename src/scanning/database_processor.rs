@@ -4,7 +4,7 @@
 //! to a SQLite database, maintaining compatibility with the existing storage
 //! infrastructure while using the new callback-based approach.
 
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 use crate::{
     errors::LightweightWalletResult,
     scanning::{
@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 use async_trait::async_trait;
 
 /// Database data processor that stores scan results to SQLite
@@ -21,36 +21,30 @@ use async_trait::async_trait;
 /// This processor wraps the existing ScannerStorage functionality and provides
 /// a bridge between the new callback-based scanning approach and the existing
 /// database storage infrastructure.
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 pub struct DatabaseDataProcessor {
     /// The underlying storage backend
     storage: ScannerStorage,
-    /// Whether to enable verbose logging
-    verbose: bool,
 }
 
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 impl DatabaseDataProcessor {
     /// Create a new database data processor with the given storage backend
-    pub fn new(storage: ScannerStorage, verbose: bool) -> Self {
-        Self { storage, verbose }
+    pub fn new(storage: ScannerStorage) -> Self {
+        Self { storage }
     }
 
     /// Create a new database data processor with in-memory storage
-    pub fn new_memory(verbose: bool) -> Self {
+    pub fn new_memory() -> Self {
         Self {
             storage: ScannerStorage::new_memory(),
-            verbose,
         }
     }
 
     /// Create a new database data processor with SQLite database
-    pub async fn new_with_database(
-        database_path: &str,
-        verbose: bool,
-    ) -> LightweightWalletResult<Self> {
+    pub async fn new_with_database(database_path: &str) -> LightweightWalletResult<Self> {
         let storage = ScannerStorage::new_with_database(database_path).await?;
-        Ok(Self { storage, verbose })
+        Ok(Self { storage })
     }
 
     /// Get a reference to the underlying storage
@@ -140,20 +134,12 @@ impl DatabaseDataProcessor {
     }
 }
 
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 #[async_trait]
 impl DataProcessor for DatabaseDataProcessor {
     async fn process_block(&mut self, block_data: BlockData) -> LightweightWalletResult<()> {
         // Only save transactions if we found any wallet activity
         if block_data.has_activity() {
-            if self.verbose {
-                println!(
-                    "💾 Saving {} transactions from block {}",
-                    block_data.transactions.len(),
-                    block_data.height
-                );
-            }
-
             // Save transactions incrementally
             self.storage
                 .save_transactions_incremental(&block_data.transactions)
@@ -177,13 +163,6 @@ impl DataProcessor for DatabaseDataProcessor {
     ) -> LightweightWalletResult<()> {
         // Update the wallet's latest scanned block if scan completed successfully
         if completion_data.is_completed() && !self.storage.is_memory_only {
-            if self.verbose {
-                println!(
-                    "💾 Updating wallet scanned block to {}",
-                    completion_data.to_block
-                );
-            }
-
             self.storage
                 .update_wallet_scanned_block(completion_data.to_block)
                 .await?;
@@ -203,6 +182,10 @@ impl DataProcessor for DatabaseDataProcessor {
         // Any cleanup needed can be done here
         Ok(())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// In-memory data processor that just collects transactions
@@ -215,17 +198,14 @@ pub struct MemoryStorageProcessor {
     pub transactions: Vec<crate::data_structures::wallet_transaction::WalletTransaction>,
     /// Latest block scanned
     pub latest_block: Option<u64>,
-    /// Whether to enable verbose logging
-    verbose: bool,
 }
 
 impl MemoryStorageProcessor {
     /// Create a new memory storage processor
-    pub fn new(verbose: bool) -> Self {
+    pub fn new() -> Self {
         Self {
             transactions: Vec::new(),
             latest_block: None,
-            verbose,
         }
     }
 
@@ -258,14 +238,6 @@ impl DataProcessor for MemoryStorageProcessor {
     async fn process_block(&mut self, block_data: BlockData) -> LightweightWalletResult<()> {
         // Store all transactions from this block
         if block_data.has_activity() {
-            if self.verbose {
-                println!(
-                    "📝 Storing {} transactions from block {} in memory",
-                    block_data.transactions.len(),
-                    block_data.height
-                );
-            }
-
             self.transactions.extend(block_data.transactions);
         }
 
@@ -282,15 +254,13 @@ impl DataProcessor for MemoryStorageProcessor {
 
     async fn process_completion(
         &mut self,
-        completion_data: CompletionData,
+        _completion_data: CompletionData,
     ) -> LightweightWalletResult<()> {
-        if self.verbose {
-            println!(
-                "📊 Scan completed: {} total transactions stored in memory",
-                completion_data.total_transactions
-            );
-        }
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -301,7 +271,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_storage_processor() {
-        let mut processor = MemoryStorageProcessor::new(false);
+        let mut processor = MemoryStorageProcessor::new();
 
         // Process a block with no activity
         let empty_block = BlockData::empty(1000, "hash1".to_string(), 1234567890);
@@ -317,7 +287,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_storage_processor_clear() {
-        let mut processor = MemoryStorageProcessor::new(false);
+        let mut processor = MemoryStorageProcessor::new();
 
         // Add some data
         let empty_block = BlockData::empty(1000, "hash1".to_string(), 1234567890);
@@ -330,10 +300,10 @@ mod tests {
         assert_eq!(processor.get_latest_block(), None);
     }
 
-    #[cfg(feature = "storage")]
+    #[cfg(all(feature = "grpc", feature = "storage"))]
     #[tokio::test]
     async fn test_database_processor_memory_only() {
-        let processor = DatabaseDataProcessor::new_memory(false);
+        let processor = DatabaseDataProcessor::new_memory();
 
         assert!(processor.is_memory_only());
     }

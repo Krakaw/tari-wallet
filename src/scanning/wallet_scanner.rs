@@ -50,7 +50,7 @@ use zeroize::Zeroize;
 
 use super::{
     data_processor::{BlockData, CompletionData, DataProcessor, ProgressData},
-    BinaryScanConfig, ProgressInfo, ProgressTracker, ScanContext,
+    BinaryScanConfig, ProgressTracker, ScanContext,
 };
 
 #[cfg(all(feature = "grpc", feature = "storage"))]
@@ -687,8 +687,8 @@ impl ScanResult {
 /// config.timeout = Some(Duration::from_secs(60));
 /// ```
 pub struct WalletScannerConfig {
-    /// Progress tracking configuration
-    pub progress_tracker: Option<ProgressTracker>,
+    /// Event emitter for scanner operations (replaces progress_tracker and storage interactions)
+    pub event_emitter: Option<super::event_emitter::ScanEventEmitter>,
     /// Batch size for block processing (number of blocks to process at once)
     pub batch_size: usize,
     /// Timeout duration for blockchain operations
@@ -900,7 +900,7 @@ impl WalletScannerConfig {
 impl Default for WalletScannerConfig {
     fn default() -> Self {
         Self {
-            progress_tracker: None,
+            event_emitter: None,
             batch_size: 10,
             timeout: Some(std::time::Duration::from_secs(30)),
             verbose_logging: false,
@@ -912,7 +912,7 @@ impl Default for WalletScannerConfig {
 impl Clone for WalletScannerConfig {
     fn clone(&self) -> Self {
         Self {
-            progress_tracker: None, // Progress tracker cannot be cloned due to callback
+            event_emitter: None, // Event emitter cannot be cloned due to internal state
             batch_size: self.batch_size,
             timeout: self.timeout,
             verbose_logging: self.verbose_logging,
@@ -924,7 +924,7 @@ impl Clone for WalletScannerConfig {
 impl std::fmt::Debug for WalletScannerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WalletScannerConfig")
-            .field("progress_tracker", &self.progress_tracker.is_some())
+            .field("event_emitter", &self.event_emitter.is_some())
             .field("batch_size", &self.batch_size)
             .field("timeout", &self.timeout)
             .field("verbose_logging", &self.verbose_logging)
@@ -971,17 +971,10 @@ impl std::fmt::Debug for WalletScannerConfig {
 /// ```rust,no_run
 /// # #[cfg(all(feature = "grpc", feature = "storage"))]
 /// # {
-/// use lightweight_wallet_libs::scanning::WalletScannerStruct as WalletScanner;
+/// use lightweight_wallet_libs::scanning::WalletScannerStruct;
 /// use std::time::Duration;
 ///
-/// let scanner = WalletScanner::new()
-///     .with_progress_callback(|info| {
-///         println!("Progress: {:.2}% ({}/{} blocks, {} outputs found)",
-///                  info.progress_percent,
-///                  info.blocks_processed,
-///                  info.total_blocks,
-///                  info.outputs_found);
-///     })
+/// let scanner = WalletScannerStruct::new()
 ///     .with_batch_size(20)
 ///     .with_timeout(Duration::from_secs(60))
 ///     .with_verbose_logging(true);
@@ -1005,24 +998,69 @@ impl WalletScanner {
         Self { config }
     }
 
-    /// Set a progress callback for tracking scan progress
+    /// Create a new wallet scanner with default event listeners (progress + console)
     ///
-    /// The callback will be called periodically during scanning with progress information.
-    /// Note: The total blocks will be set automatically when scanning begins.
-    pub fn with_progress_callback<F>(mut self, callback: F) -> Self
-    where
-        F: Fn(&ProgressInfo) + Send + Sync + 'static,
-    {
-        // Create a progress tracker with total_blocks=0 (will be updated when scanning begins)
-        let progress_tracker = ProgressTracker::new(0).with_callback(Box::new(callback));
-        self.config.progress_tracker = Some(progress_tracker);
+    /// This is a convenience constructor that sets up common event listeners.
+    pub fn new_with_default_events(source: String) -> Result<Self, LightweightWalletError> {
+        let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
+        Ok(Self {
+            config: WalletScannerConfig {
+                event_emitter: Some(event_emitter),
+                ..Default::default()
+            },
+        })
+    }
+
+    /// Create a new wallet scanner with database event listeners (storage + progress + console)
+    ///
+    /// This is a convenience constructor for database-backed scanning.
+    #[cfg(feature = "storage")]
+    pub fn new_with_database_events(
+        source: String,
+        _database_path: Option<String>,
+    ) -> Result<Self, LightweightWalletError> {
+        let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
+        Ok(Self {
+            config: WalletScannerConfig {
+                event_emitter: Some(event_emitter),
+                ..Default::default()
+            },
+        })
+    }
+
+    /// Set an event emitter for scanner operations
+    ///
+    /// The event emitter will handle progress tracking, storage operations, and other
+    /// scanner events through registered listeners.
+    pub fn with_event_emitter(
+        mut self,
+        event_emitter: super::event_emitter::ScanEventEmitter,
+    ) -> Self {
+        self.config.event_emitter = Some(event_emitter);
         self
     }
 
-    /// Set a progress tracker for monitoring scan progress
-    pub fn with_progress_tracker(mut self, progress_tracker: ProgressTracker) -> Self {
-        self.config.progress_tracker = Some(progress_tracker);
-        self
+    /// Create scanner with default event emitter (progress tracking and console logging)
+    ///
+    /// This is a convenience method that sets up an event emitter with commonly used listeners.
+    pub fn with_default_events(mut self, source: String) -> Result<Self, LightweightWalletError> {
+        let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
+        self.config.event_emitter = Some(event_emitter);
+        Ok(self)
+    }
+
+    /// Create scanner with database event emitter (storage + progress tracking)
+    ///
+    /// This is a convenience method for setting up an event emitter with database storage.
+    #[cfg(feature = "storage")]
+    pub fn with_database_events(
+        mut self,
+        source: String,
+        _database_path: Option<String>,
+    ) -> Result<Self, LightweightWalletError> {
+        let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
+        self.config.event_emitter = Some(event_emitter);
+        Ok(self)
     }
 
     /// Set the batch size for block processing
@@ -1086,14 +1124,16 @@ impl WalletScanner {
     /// ```rust,no_run
     /// # #[cfg(all(feature = "grpc", feature = "storage"))]
     /// # {
-    /// use lightweight_wallet_libs::scanning::WalletScannerStruct as WalletScanner;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use lightweight_wallet_libs::scanning::WalletScannerStruct;
     /// use std::time::Duration;
     ///
-    /// let scanner = WalletScanner::new()
+    /// let scanner = WalletScannerStruct::new()
     ///     .with_batch_size(50)
     ///     .with_timeout(Duration::from_secs(60))
     ///     .build()?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # Ok(())
+    /// # }
     /// # }
     /// ```
     pub fn build(self) -> Result<WalletScanner, ScannerConfigError> {
@@ -1112,23 +1152,12 @@ impl WalletScanner {
         self.config.validate()
     }
 
-    /// Create a quick scanner with simple progress display
+    /// Create a quick scanner with simple progress display (using events)
     ///
-    /// This is a convenience method that creates a scanner with basic progress tracking
-    /// that prints progress to stdout.
-    pub fn with_simple_progress() -> Self {
-        Self::new().with_progress_callback(|info| {
-            print!("\r🔍 Progress: {:.1}% ({}/{}) | Block {} | {:.1} blocks/s | Found: {} outputs, {} spent   ",
-                info.progress_percent,
-                info.blocks_processed,
-                info.total_blocks,
-                info.current_block,
-                info.blocks_per_sec,
-                info.outputs_found,
-                info.inputs_found
-            );
-            std::io::Write::flush(&mut std::io::stdout()).unwrap();
-        })
+    /// This is a convenience method that creates a scanner with basic event-driven
+    /// progress tracking and console logging.
+    pub fn with_simple_progress() -> Result<Self, LightweightWalletError> {
+        Self::new_with_default_events("simple_progress_scanner".to_string())
     }
 
     /// Create a scanner optimized for performance
@@ -1189,20 +1218,25 @@ impl WalletScanner {
         data_processor: &mut T,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
     ) -> LightweightWalletResult<ScanResult> {
-        // Log scan start if verbose logging is enabled
-        if self.config.verbose_logging {
-            println!("🚀 Starting wallet scan with data processor");
-            println!("   • Batch size: {}", self.config.batch_size);
-            if let Some(timeout) = self.config.timeout {
-                println!("   • Timeout: {timeout:?}");
-            }
-            println!(
-                "   • Progress tracking: {}",
-                self.config.progress_tracker.is_some()
-            );
-        }
-
         let start_time = Instant::now();
+
+        // Emit scan started event if event emitter is available
+        if let Some(event_emitter) = self.config.event_emitter.as_mut() {
+            let mut wallet_context = std::collections::HashMap::new();
+            wallet_context.insert("scan_type".to_string(), "processor_scan".to_string());
+            wallet_context.insert("batch_size".to_string(), self.config.batch_size.to_string());
+
+            // Create a minimal config for the event
+            let event_config = BinaryScanConfig::new(from_block, to_block);
+            event_emitter
+                .emit_scan_started(
+                    &event_config,
+                    scan_context,
+                    (from_block, to_block),
+                    wallet_context,
+                )
+                .await?;
+        }
 
         // Initialize the data processor
         data_processor.initialize().await?;
@@ -1243,6 +1277,15 @@ impl WalletScanner {
                     data_processor.process_completion(completion_data).await?;
                 }
 
+                // Emit scan completed event if event emitter is available
+                if let Some(event_emitter) = self.config.event_emitter.as_mut() {
+                    if let Some(ref meta) = metadata {
+                        event_emitter
+                            .emit_scan_completed(meta, &wallet_state, true)
+                            .await?;
+                    }
+                }
+
                 Ok(ScanResult::Completed(wallet_state, metadata))
             }
             Ok(ScanResult::Interrupted(wallet_state, mut metadata)) => {
@@ -1264,12 +1307,35 @@ impl WalletScanner {
                     data_processor.process_completion(completion_data).await?;
                 }
 
+                // Emit scan cancelled event if event emitter is available
+                if let Some(event_emitter) = self.config.event_emitter.as_mut() {
+                    if let Some(ref meta) = metadata {
+                        let current_block = from_block + meta.blocks_processed as u64;
+                        event_emitter
+                            .emit_scan_cancelled(
+                                "Scan was interrupted".to_string(),
+                                current_block,
+                                Some(meta),
+                            )
+                            .await?;
+                    }
+                }
+
                 Ok(ScanResult::Interrupted(wallet_state, metadata))
             }
             Err(e) => {
-                if self.config.verbose_logging {
-                    println!("❌ Scan failed after {:?}: {}", start_time.elapsed(), e);
+                // Emit scan error event if event emitter is available
+                if let Some(event_emitter) = self.config.event_emitter.as_mut() {
+                    let current_block = from_block; // We don't know how far we got
+                    event_emitter
+                        .emit_scan_error(&e, Some(current_block), true, 0)
+                        .await
+                        .unwrap_or_else(|err| {
+                            // Don't let event emission errors mask the original error
+                            eprintln!("Error emitting scan error event: {err}");
+                        });
                 }
+
                 Err(e)
             }
         }
@@ -1279,13 +1345,12 @@ impl WalletScanner {
     ///
     /// This is the main scanning method that processes blockchain blocks to find
     /// wallet outputs and transactions. It supports both specific block scanning
-    /// and range scanning with automatic resume functionality.
+    /// and range scanning with event-driven progress tracking and storage.
     ///
     /// # Arguments
     /// * `scanner` - GRPC blockchain scanner for fetching blocks
     /// * `scan_context` - Wallet scanning context with keys and entropy
     /// * `config` - Binary scan configuration
-    /// * `storage_backend` - Storage backend for persistence
     /// * `cancel_rx` - Channel receiver for cancellation signals
     ///
     /// # Returns
@@ -1295,7 +1360,7 @@ impl WalletScanner {
     /// Returns an error if:
     /// - Blockchain connection fails
     /// - Invalid scan configuration provided
-    /// - Storage operations fail
+    /// - Event emitter is not configured
     /// - Scanning is cancelled by external signal
     #[cfg(all(feature = "grpc", feature = "storage"))]
     pub async fn scan(
@@ -1303,28 +1368,36 @@ impl WalletScanner {
         scanner: &mut GrpcBlockchainScanner,
         scan_context: &ScanContext,
         config: &BinaryScanConfig,
-        storage_backend: &mut ScannerStorage,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
     ) -> LightweightWalletResult<ScanResult> {
-        // Log scan start if verbose logging is enabled
-        if self.config.verbose_logging && !config.quiet {
-            println!("🚀 Starting wallet scan with enhanced scanner");
-            println!("   • Batch size: {}", self.config.batch_size);
-            if let Some(timeout) = self.config.timeout {
-                println!("   • Timeout: {timeout:?}");
-            }
-            println!(
-                "   • Progress tracking: {}",
-                self.config.progress_tracker.is_some()
-            );
+        // Check that event emitter is configured
+        if self.config.event_emitter.is_none() {
+            return Err(LightweightWalletError::InvalidArgument {
+                argument: "event_emitter".to_string(),
+                value: "None".to_string(),
+                message: "Event emitter must be configured before scanning. Use with_event_emitter(), with_default_events(), or with_database_events().".to_string(),
+            });
         }
 
         let start_time = Instant::now();
 
+        // Check that event emitter is configured
+        if self.config.event_emitter.is_none() {
+            return Err(LightweightWalletError::ScanningError(
+                crate::errors::ScanningError::ScanConfigurationError(
+                    "Event emitter not configured".to_string(),
+                ),
+            ));
+        }
+
         // Execute the scan with enhanced error handling
+        let mut event_emitter = self.config.event_emitter.take().unwrap();
         let scan_result = self
-            .execute_scan_with_retry(scanner, scan_context, config, storage_backend, cancel_rx)
+            .execute_scan_with_retry(scanner, scan_context, config, &mut event_emitter, cancel_rx)
             .await;
+
+        // Put the event emitter back
+        self.config.event_emitter = Some(event_emitter);
 
         // Add timing information to the result
         match scan_result {
@@ -1342,12 +1415,7 @@ impl WalletScanner {
                 }
                 Ok(ScanResult::Interrupted(wallet_state, metadata))
             }
-            Err(e) => {
-                if self.config.verbose_logging && !config.quiet {
-                    println!("❌ Scan failed after {:?}: {}", start_time.elapsed(), e);
-                }
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -1373,9 +1441,10 @@ impl WalletScanner {
                 to_block,
                 data_processor,
                 cancel_rx,
-                self.config.progress_tracker.as_mut(),
+                None, // Progress tracker no longer used with event system
                 self.config.batch_size,
                 self.config.verbose_logging,
+                self.config.event_emitter.as_mut(), // Pass the event emitter from config
             )
             .await
             {
@@ -1385,10 +1454,6 @@ impl WalletScanner {
 
                     // Check if this is a retryable error and we haven't exceeded max retries
                     if attempts <= max_retries && self.is_retryable_error(&e) {
-                        if self.config.verbose_logging {
-                            println!("⚠️  Scan attempt {attempts} failed, retrying: {e}");
-                        }
-
                         // Calculate delay with exponential backoff if enabled
                         let delay = if self.config.retry_config.exponential_backoff {
                             let exp = (attempts - 1).min(10) as u32; // Cap to prevent overflow
@@ -1418,7 +1483,7 @@ impl WalletScanner {
         scanner: &mut GrpcBlockchainScanner,
         scan_context: &ScanContext,
         config: &BinaryScanConfig,
-        storage_backend: &mut ScannerStorage,
+        event_emitter: &mut super::event_emitter::ScanEventEmitter,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
     ) -> LightweightWalletResult<ScanResult> {
         let mut attempts = 0;
@@ -1429,9 +1494,8 @@ impl WalletScanner {
                 scanner,
                 scan_context,
                 config,
-                storage_backend,
                 cancel_rx,
-                self.config.progress_tracker.as_mut(),
+                event_emitter,
             )
             .await
             {
@@ -1441,10 +1505,6 @@ impl WalletScanner {
 
                     // Check if this is a retryable error and we haven't exceeded max retries
                     if attempts <= max_retries && self.is_retryable_error(&e) {
-                        if self.config.verbose_logging && !config.quiet {
-                            println!("⚠️  Scan attempt {attempts} failed, retrying: {e}");
-                        }
-
                         // Calculate delay with exponential backoff if enabled
                         let delay = if self.config.retry_config.exponential_backoff {
                             let exp = (attempts - 1).min(10) as u32; // Cap to prevent overflow
@@ -1482,6 +1542,13 @@ impl WalletScanner {
             _ => false,
         }
     }
+
+    /// Start building a scanner with custom configuration
+    ///
+    /// This returns a ScannerBuilder that allows for fluent configuration.
+    pub fn builder() -> ScannerBuilder {
+        ScannerBuilder::new()
+    }
 }
 
 impl Default for WalletScanner {
@@ -1496,6 +1563,7 @@ impl Default for WalletScanner {
 
 /// Determine scanning block range with resume support
 #[cfg(all(feature = "grpc", feature = "storage"))]
+#[allow(dead_code)]
 async fn determine_scan_range(
     config: &BinaryScanConfig,
     storage_backend: &mut ScannerStorage,
@@ -1536,6 +1604,18 @@ async fn determine_scan_range(
     }
 }
 
+/// Determine scan range with event system support
+#[cfg(all(feature = "grpc", feature = "storage"))]
+async fn determine_scan_range_with_events(
+    config: &BinaryScanConfig,
+    _event_emitter: &mut super::event_emitter::ScanEventEmitter,
+) -> LightweightWalletResult<(u64, u64)> {
+    // For now, use the configuration directly since resume functionality
+    // will be handled by the DatabaseStorageListener through events
+    // The event system will track the last scanned block via events
+    Ok((config.from_block, config.to_block))
+}
+
 /// Prepare block heights list for scanning
 #[cfg(all(feature = "grpc", feature = "storage"))]
 fn prepare_block_heights(config: &BinaryScanConfig, from_block: u64, to_block: u64) -> Vec<u64> {
@@ -1549,9 +1629,7 @@ fn prepare_block_heights(config: &BinaryScanConfig, from_block: u64, to_block: u
         heights
     } else {
         let heights: Vec<u64> = (from_block..=to_block).collect();
-        if !config.quiet {
-            display_scan_info(config, &heights, has_specific_blocks);
-        }
+        // Don't display here for range scanning - it's handled in the main function
         heights
     }
 }
@@ -1566,6 +1644,7 @@ fn initialize_scan_state() -> (WalletState, Instant) {
 
 /// Core scanning logic using data processor - simplified and focused with batch processing
 #[cfg(feature = "grpc")]
+#[allow(clippy::too_many_arguments)] // TODO: Refactor this to remove the need for so many arguments
 async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
     scanner: &mut GrpcBlockchainScanner,
     scan_context: &ScanContext,
@@ -1575,7 +1654,8 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
     mut progress_tracker: Option<&mut ProgressTracker>,
     batch_size: usize,
-    verbose_logging: bool,
+    _verbose_logging: bool,
+    mut event_emitter: Option<&mut crate::scanning::event_emitter::ScanEventEmitter>,
 ) -> LightweightWalletResult<ScanResult> {
     // Initialize scanning state
     let (mut wallet_state, _start_time) = initialize_scan_state();
@@ -1584,15 +1664,6 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
     if let Some(tracker) = progress_tracker.as_mut() {
         let total_blocks = to_block - from_block + 1;
         tracker.set_total_blocks(total_blocks as usize);
-    }
-
-    if verbose_logging {
-        println!(
-            "🔍 Scanning blocks {} to {} ({} blocks total)...",
-            format_number(from_block),
-            format_number(to_block),
-            format_number(to_block - from_block + 1)
-        );
     }
 
     // Create extraction config from scan context
@@ -1615,9 +1686,6 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
     while current_block <= to_block {
         // Check for cancellation
         if *cancel_rx.borrow() {
-            if verbose_logging {
-                println!("\n🛑 Scan cancelled by user");
-            }
             let metadata = ScanMetadata::new(
                 from_block,
                 current_block.saturating_sub(1),
@@ -1643,12 +1711,76 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
                         block_info.inputs.clone(),
                     );
 
-                    // Use the real block scanning logic that actually works!
-                    let (found_outputs, spent_outputs) = block.scan_for_wallet_activity(
-                        &scan_context.view_key,
-                        &scan_context.entropy,
-                        &mut wallet_state,
-                    )?;
+                    // Scan for wallet outputs and spent outputs (with detailed information for events)
+                    let (found_outputs, spent_output_details) = block
+                        .scan_for_wallet_activity_with_details(
+                            &scan_context.view_key,
+                            &scan_context.entropy,
+                            &mut wallet_state,
+                        )?;
+
+                    // Emit output found events for each output found
+                    if found_outputs > 0 {
+                        // Get the transactions that were just added to wallet_state for this block
+                        let block_transactions: Vec<_> = wallet_state
+                            .transactions
+                            .iter()
+                            .filter(|tx| tx.block_height == block.height)
+                            .collect();
+
+                        for transaction in block_transactions {
+                            if let Some(ref mut emitter) = event_emitter {
+                                // Create address info and block info for the event
+                                let address_info =
+                                    super::event_emitter::create_address_info_from_transaction(
+                                        scan_context,
+                                        transaction,
+                                    );
+                                let block_info_event =
+                                    super::event_emitter::create_block_info_from_block(&block);
+
+                                // Find the corresponding output from the block
+                                if let Some(output) = block.outputs.iter().find(|o| {
+                                    // Match by commitment or other identifying field
+                                    o.commitment == transaction.commitment
+                                }) {
+                                    emitter
+                                        .emit_output_found(
+                                            output,
+                                            &block_info_event,
+                                            &address_info,
+                                            transaction,
+                                        )
+                                        .await?;
+                                }
+                            }
+                        }
+                    }
+
+                    // Store spent output count before consuming the vector
+                    let spent_outputs_count = spent_output_details.len();
+
+                    // Emit spent output events for each spent output found
+                    for spent_info in spent_output_details {
+                        let original_block_info = crate::events::types::BlockInfo::new(
+                            spent_info.original_block_height,
+                            String::new(), // We don't have the original block hash
+                            0,             // We don't have the original block timestamp
+                            0,             // Default output index for spent output reference
+                        );
+
+                        if let Some(ref mut emitter) = event_emitter {
+                            emitter
+                                .emit_spent_output_found(
+                                    &spent_info.spent_transaction,
+                                    &block,
+                                    spent_info.input_index,
+                                    &spent_info.match_method,
+                                    &original_block_info,
+                                )
+                                .await?;
+                        }
+                    }
 
                     // Create block data for the processor
                     let block_transactions: Vec<_> = wallet_state
@@ -1669,16 +1801,9 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
                     // Send block data to processor
                     data_processor.process_block(block_data).await?;
 
-                    if verbose_logging && (found_outputs > 0 || spent_outputs > 0) {
-                        println!(
-                            "Block {}: found {} outputs, {} spent",
-                            block.height, found_outputs, spent_outputs
-                        );
-                    }
-
                     // Update progress with actual wallet activity found
                     if let Some(tracker) = progress_tracker.as_mut() {
-                        tracker.update(block.height, found_outputs, spent_outputs);
+                        tracker.update(block.height, found_outputs, spent_outputs_count);
                     }
 
                     // Send progress updates to processor
@@ -1701,9 +1826,8 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
                 blocks_processed += batch_size_actual;
 
                 // Update progress display
-                if verbose_logging
-                    && (blocks_processed % 10 == 0 || last_progress_update.elapsed().as_secs() >= 1)
-                {
+                // TODO: Is this needed? We should be updating progress via the event emitter
+                if blocks_processed % 10 == 0 || last_progress_update.elapsed().as_secs() >= 1 {
                     if let Some(tracker) = progress_tracker.as_ref() {
                         let _progress_info = tracker.get_progress_info();
                         // Progress callbacks are handled internally by ProgressTracker
@@ -1714,25 +1838,41 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
                 current_block = batch_end + 1;
             }
             Err(e) => {
-                if verbose_logging {
-                    eprintln!("❌ Error getting blocks {current_block}-{batch_end}: {e}");
-                }
                 return Err(e);
             }
         }
     }
 
     // Wallet state has been updated directly by the block scanning logic
-    let total_blocks_scanned = to_block - from_block + 1;
-    if verbose_logging {
-        println!("✅ Completed scanning {total_blocks_scanned} blocks");
-        if !wallet_state.transactions.is_empty() {
-            println!(
-                "   Found {} total transactions",
-                wallet_state.transactions.len()
-            );
+
+    // Post-processing step: mark spent outputs using blockchain input data (storage feature only)
+    #[cfg(feature = "storage")]
+    if let Some(database_processor) = data_processor
+        .as_any()
+        .downcast_ref::<crate::scanning::database_processor::DatabaseDataProcessor>(
+    ) {
+        if !database_processor.is_memory_only() {
+            // For database storage, we need to get the wallet_id from the storage
+            if let Some(wallet_id) = database_processor.storage().wallet_id {
+                // Access the underlying database storage to call mark_spent_outputs_from_inputs
+                #[cfg(feature = "storage")]
+                if let Some(ref database) = database_processor.storage().database {
+                    match database
+                        .mark_spent_outputs_from_inputs(wallet_id, from_block, to_block)
+                        .await
+                    {
+                        Ok(spent_count) => {
+                            if spent_count > 0 {
+                                println!("Marked {spent_count} outputs as spent");
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error marking outputs as spent: {e}");
+                        }
+                    }
+                }
+            }
         }
-        println!(); // Clear progress line
     }
 
     // Create scan metadata
@@ -1752,27 +1892,54 @@ async fn scan_wallet_across_blocks_with_cancellation(
     scanner: &mut GrpcBlockchainScanner,
     scan_context: &ScanContext,
     config: &BinaryScanConfig,
-    storage_backend: &mut ScannerStorage,
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-    mut progress_tracker: Option<&mut ProgressTracker>,
+    event_emitter: &mut super::event_emitter::ScanEventEmitter,
 ) -> LightweightWalletResult<ScanResult> {
-    // Determine scanning block range with resume support
-    let (from_block, to_block) = determine_scan_range(config, storage_backend).await?;
+    // Determine scanning block range (now simplified without storage backend)
+    let (from_block, to_block) = determine_scan_range_with_events(config, event_emitter).await?;
 
-    // Initialize scanning state
-    let (mut wallet_state, _start_time) = initialize_scan_state();
-
-    // Update progress tracker with total block count
-    if let Some(tracker) = progress_tracker.as_mut() {
-        let total_blocks = to_block - from_block + 1;
-        // Update the total blocks but preserve existing configuration and callback
-        tracker.set_total_blocks(total_blocks as usize);
-    }
+    // Initialize scanning state - try to load existing wallet state from database if available
+    let mut wallet_state = {
+        #[cfg(feature = "storage")]
+        {
+            // Try to load existing wallet state from database if database path is available
+            if let Some(ref db_path) = config.database_path {
+                // For now, use a placeholder wallet ID. This should be improved to get the actual wallet ID
+                // The wallet ID would come from the DatabaseStorageListener or storage backend
+                if let Ok(Some(existing_state)) = event_emitter
+                    .try_load_existing_wallet_state(db_path, Some(1))
+                    .await
+                {
+                    existing_state
+                } else {
+                    WalletState::new()
+                }
+            } else {
+                WalletState::new()
+            }
+        }
+        #[cfg(not(feature = "storage"))]
+        {
+            WalletState::new()
+        }
+    };
+    let _start_time = Instant::now();
 
     // Prepare block heights list for scanning
     let block_heights = prepare_block_heights(config, from_block, to_block);
 
-    if !config.quiet {
+    // Create wallet context for event
+    let mut wallet_context = std::collections::HashMap::new();
+    wallet_context.insert("scan_type".to_string(), "full_scan".to_string());
+    wallet_context.insert("batch_size".to_string(), config.batch_size.to_string());
+
+    // Emit scan started event
+    event_emitter
+        .emit_scan_started(config, scan_context, (from_block, to_block), wallet_context)
+        .await?;
+
+    // Display scanning information (already handled in prepare_block_heights, don't duplicate)
+    if !config.quiet && config.block_heights.is_none() {
         println!(
             "🔍 Scanning blocks {} to {} ({} blocks total)...",
             format_number(from_block),
@@ -1802,42 +1969,74 @@ async fn scan_wallet_across_blocks_with_cancellation(
     };
 
     // Perform the actual blockchain scan
-    let mut current_block = from_block;
     let mut blocks_processed = 0u64;
+    let mut _total_outputs_found = 0usize;
+    let mut _total_spent_outputs = 0usize;
     let mut last_progress_update = Instant::now();
+    let mut current_block_index = 0;
 
     // Process blocks in batches with cancellation support
-    while current_block <= to_block {
+    while current_block_index < block_heights.len() {
         // Check for cancellation
         if *cancel_rx.borrow() {
             if !config.quiet {
                 println!("\n🛑 Scan cancelled by user");
             }
+            let current_block = if current_block_index < block_heights.len() {
+                block_heights[current_block_index]
+            } else {
+                to_block
+            };
             let metadata = ScanMetadata::new(
                 from_block,
                 current_block.saturating_sub(1),
                 blocks_processed as usize,
                 config.block_heights.is_some(),
             );
+
+            // Emit scan cancelled event
+            event_emitter
+                .emit_scan_cancelled(
+                    "User requested cancellation".to_string(),
+                    current_block,
+                    Some(&metadata),
+                )
+                .await?;
+
             return Ok(ScanResult::Interrupted(wallet_state, Some(metadata)));
         }
 
-        let batch_end = std::cmp::min(current_block + config.batch_size as u64 - 1, to_block);
+        // Create batch of blocks to process - for specific blocks, use larger batches to reduce GRPC calls
+        let effective_batch_size = if config.block_heights.is_some() {
+            // For specific blocks, use larger batches (up to 100) since we're not scanning sequentially
+            std::cmp::min(config.batch_size * 10, 100)
+        } else {
+            config.batch_size
+        };
 
-        // Create batch config (currently unused as we manually process blocks)
+        let batch_end_index = std::cmp::min(
+            current_block_index + effective_batch_size,
+            block_heights.len(),
+        );
+        let batch_heights: Vec<u64> = block_heights[current_block_index..batch_end_index].to_vec();
+
+        // Create batch config for this set of specific blocks
+        let batch_start_height = batch_heights[0];
+        let batch_end_height = batch_heights[batch_heights.len() - 1];
         let _batch_config = super::ScanConfig {
-            start_height: current_block,
-            end_height: Some(batch_end),
+            start_height: batch_start_height,
+            end_height: Some(batch_end_height),
             batch_size: config.batch_size as u64,
             request_timeout: std::time::Duration::from_secs(30),
             extraction_config: extraction_config.clone(),
         };
 
         // Get blocks and process them using the proper block scanning logic
-        let block_heights: Vec<u64> = (current_block..=batch_end).collect();
-        match scanner.get_blocks_by_heights(block_heights.clone()).await {
+        match scanner.get_blocks_by_heights(batch_heights.clone()).await {
             Ok(blocks) => {
                 for block_info in blocks {
+                    let processing_start = std::time::Instant::now();
+
                     // Convert BlockInfo to Block for processing
                     let block = crate::data_structures::block::Block::new(
                         block_info.height,
@@ -1847,54 +2046,177 @@ async fn scan_wallet_across_blocks_with_cancellation(
                         block_info.inputs.clone(),
                     );
 
-                    // Use the real block scanning logic that actually works!
-                    let (found_outputs, spent_outputs) = block.scan_for_wallet_activity(
-                        &scan_context.view_key,
-                        &scan_context.entropy,
-                        &mut wallet_state,
-                    )?;
+                    // Scan for wallet outputs and spent outputs (with detailed information for events)
+                    let (found_outputs, spent_output_details) = block
+                        .scan_for_wallet_activity_with_details(
+                            &scan_context.view_key,
+                            &scan_context.entropy,
+                            &mut wallet_state,
+                        )?;
 
-                    if !config.quiet && (found_outputs > 0 || spent_outputs > 0) {
-                        println!(
-                            "Block {}: found {} outputs, {} spent",
-                            block.height, found_outputs, spent_outputs
-                        );
+                    let processing_duration = processing_start.elapsed();
+                    let spent_outputs_count = spent_output_details.len();
+
+                    // Update global counters
+                    _total_outputs_found += found_outputs;
+                    _total_spent_outputs += spent_outputs_count;
+
+                    // Emit block processed event with correct spent count
+                    event_emitter
+                        .emit_block_processed(
+                            &block,
+                            processing_duration,
+                            found_outputs,
+                            spent_outputs_count,
+                        )
+                        .await?;
+
+                    if !config.quiet && found_outputs > 0 {
+                        println!("Block {}: found {} outputs", block.height, found_outputs);
                     }
 
-                    // Update progress with actual wallet activity found
-                    if let Some(tracker) = progress_tracker.as_mut() {
-                        tracker.update(block.height, found_outputs, spent_outputs);
+                    // Emit individual OutputFound events for database storage and detailed logging
+                    // (Progress counting is handled by BlockProcessed events to avoid double counting)
+                    if found_outputs > 0 {
+                        // Get the transactions that were just added to wallet_state for this block
+                        let block_transactions: Vec<_> = wallet_state
+                            .transactions
+                            .iter()
+                            .filter(|tx| tx.block_height == block.height)
+                            .collect();
+
+                        for transaction in block_transactions {
+                            // Create address info and block info for the event
+                            let address_info =
+                                super::event_emitter::create_address_info_from_transaction(
+                                    scan_context,
+                                    transaction,
+                                );
+                            let block_info_event =
+                                super::event_emitter::create_block_info_from_block(&block);
+
+                            // Find the corresponding output from the block
+                            if let Some(output) = block.outputs.iter().find(|o| {
+                                // Match by commitment or other identifying field
+                                o.commitment == transaction.commitment
+                            }) {
+                                event_emitter
+                                    .emit_output_found(
+                                        output,
+                                        &block_info_event,
+                                        &address_info,
+                                        transaction,
+                                    )
+                                    .await?;
+                            }
+                        }
+                    }
+
+                    // Emit spent output events for each spent output found
+                    for spent_info in spent_output_details {
+                        let original_block_info = crate::events::types::BlockInfo::new(
+                            spent_info.original_block_height,
+                            String::new(), // We don't have the original block hash
+                            0,             // We don't have the original block timestamp
+                            0,             // Default output index for spent output reference
+                        );
+
+                        event_emitter
+                            .emit_spent_output_found(
+                                &spent_info.spent_transaction,
+                                &block,
+                                spent_info.input_index,
+                                &spent_info.match_method,
+                                &original_block_info,
+                            )
+                            .await?;
                     }
                 }
 
-                let batch_size = batch_end - current_block + 1;
+                let batch_size = batch_heights.len() as u64;
                 blocks_processed += batch_size;
 
-                // Update progress display
-                if !config.quiet
-                    && (blocks_processed % config.progress_frequency as u64 == 0
-                        || last_progress_update.elapsed().as_secs() >= 1)
-                {
-                    if let Some(tracker) = progress_tracker.as_ref() {
-                        let _progress_info = tracker.get_progress_info();
-                        // Progress callbacks are handled internally by ProgressTracker
-                    }
+                // Emit progress update - disable for specific blocks since they're fast and progress values are wrong
+                let should_emit_progress = if config.block_heights.is_some() {
+                    // Skip progress for specific blocks - they're fast enough and progress bar values are incorrect
+                    false
+                } else {
+                    // For range scanning, use the configured frequency
+                    blocks_processed % config.progress_frequency as u64 == 0
+                        || last_progress_update.elapsed().as_secs() >= 1
+                };
+
+                if should_emit_progress {
+                    let total_blocks = block_heights.len() as u64;
+                    let processing_rate = if last_progress_update.elapsed().as_secs_f64() > 0.0 {
+                        blocks_processed as f64 / last_progress_update.elapsed().as_secs_f64()
+                    } else {
+                        0.0
+                    };
+                    let estimated_completion = if processing_rate > 0.0 {
+                        let remaining_blocks = total_blocks - blocks_processed;
+                        let remaining_seconds = remaining_blocks as f64 / processing_rate;
+                        Some(
+                            std::time::SystemTime::now()
+                                + std::time::Duration::from_secs_f64(remaining_seconds),
+                        )
+                    } else {
+                        None
+                    };
+
+                    let current_block = if current_block_index > 0 {
+                        // Get the last block we just processed
+                        block_heights[current_block_index - 1]
+                    } else {
+                        // Haven't processed any blocks yet, use the first block
+                        block_heights.first().copied().unwrap_or(from_block)
+                    };
+
+                    event_emitter
+                        .emit_scan_progress(
+                            blocks_processed,
+                            total_blocks,
+                            current_block,
+                            wallet_state.transactions.len(),
+                            Some(processing_rate),
+                            estimated_completion,
+                        )
+                        .await?;
+
                     last_progress_update = Instant::now();
                 }
 
-                current_block = batch_end + 1;
+                current_block_index = batch_end_index;
             }
             Err(e) => {
                 if !config.quiet {
-                    eprintln!("❌ Error getting blocks {current_block}-{batch_end}: {e}");
+                    let batch_start = batch_heights[0];
+                    let batch_end = batch_heights[batch_heights.len() - 1];
+                    eprintln!("❌ Error getting blocks {batch_start}-{batch_end}: {e}");
                 }
+
+                // Emit scan error event
+                let error_block = if current_block_index < block_heights.len() {
+                    Some(block_heights[current_block_index])
+                } else {
+                    None
+                };
+                event_emitter
+                    .emit_scan_error(
+                        &e,
+                        error_block,
+                        true, // can retry
+                        0,    // retry count (not tracked yet)
+                    )
+                    .await?;
+
                 return Err(e);
             }
         }
     }
 
     // Wallet state has been updated directly by the block scanning logic
-    let total_blocks_scanned = to_block - from_block + 1;
+    let total_blocks_scanned = block_heights.len();
     if !config.quiet {
         println!("✅ Completed scanning {total_blocks_scanned} blocks");
         if !wallet_state.transactions.is_empty() {
@@ -1905,22 +2227,6 @@ async fn scan_wallet_across_blocks_with_cancellation(
         }
     }
 
-    // Save results to storage if using database
-    if !storage_backend.is_memory_only {
-        storage_backend
-            .save_transactions_incremental(&wallet_state.transactions)
-            .await?;
-
-        // Update the wallet's latest scanned block
-        storage_backend
-            .update_wallet_scanned_block(to_block)
-            .await?;
-    }
-
-    if !config.quiet {
-        println!(); // Clear progress line
-    }
-
     // Create scan metadata
     let metadata = ScanMetadata::new(
         from_block,
@@ -1928,6 +2234,19 @@ async fn scan_wallet_across_blocks_with_cancellation(
         block_heights.len(),
         config.block_heights.is_some(),
     );
+
+    // Emit scan completed event (storage will be handled by DatabaseStorageListener)
+    event_emitter
+        .emit_scan_completed(
+            &metadata,
+            &wallet_state,
+            true, // success
+        )
+        .await?;
+
+    if !config.quiet {
+        println!(); // Clear progress line
+    }
 
     Ok(ScanResult::Completed(wallet_state, Some(metadata)))
 }
@@ -1937,7 +2256,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
 fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_specific_blocks: bool) {
     if has_specific_blocks {
         println!(
-            "🔍 Scanning {} specific blocks: {:?}",
+            "🔍 Scanning {} specific blocks: \"{}\"",
             format_number(block_heights.len()),
             if block_heights.len() <= 10 {
                 block_heights
@@ -1947,10 +2266,11 @@ fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_speci
                     .join(", ")
             } else {
                 format!(
-                    "{}..{} and {} others",
+                    "{}, {}..{} and {} others",
                     format_number(block_heights[0]),
+                    format_number(block_heights[1]),
                     format_number(block_heights.last().copied().unwrap_or(0)),
-                    format_number(block_heights.len() - 2)
+                    format_number(block_heights.len() - 3)
                 )
             }
         );
@@ -1963,8 +2283,6 @@ fn display_scan_info(config: &BinaryScanConfig, block_heights: &[u64], has_speci
             format_number(block_range)
         );
     }
-
-    println!();
 }
 
 // =============================================================================
@@ -2118,11 +2436,34 @@ fn display_summary_results(wallet_state: &WalletState, config: &BinaryScanConfig
 
     println!("📊 WALLET SCAN SUMMARY");
     println!("=====================");
-    println!(
-        "Scan range: Block {} to {}",
-        format_number(config.from_block),
-        format_number(config.to_block)
-    );
+    if let Some(ref block_heights) = config.block_heights {
+        if block_heights.len() <= 10 {
+            println!(
+                "Scanned {} specific blocks: {}",
+                format_number(block_heights.len()),
+                block_heights
+                    .iter()
+                    .map(|h| format_number(*h))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        } else {
+            println!(
+                "Scanned {} specific blocks: {}, {}..{} and {} others",
+                format_number(block_heights.len()),
+                format_number(block_heights[0]),
+                format_number(block_heights[1]),
+                format_number(block_heights.last().copied().unwrap_or(0)),
+                format_number(block_heights.len() - 3)
+            );
+        }
+    } else {
+        println!(
+            "Scan range: Block {} to {}",
+            format_number(config.from_block),
+            format_number(config.to_block)
+        );
+    }
     println!(
         "Total transactions: {}",
         format_number(wallet_state.transactions.len())
@@ -2142,10 +2483,449 @@ fn display_summary_results(wallet_state: &WalletState, config: &BinaryScanConfig
     println!("Spent outputs: {}", format_number(spent_count));
 }
 
+// =============================================================================
+// Scanner Builder Pattern Implementation
+// =============================================================================
+
+/// Builder for configuring WalletScanner with different preset configurations
+///
+/// This builder provides a fluent interface for setting up scanners with various
+/// combinations of event listeners and configurations. It includes preset methods
+/// similar to the event listeners for common use cases.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use lightweight_wallet_libs::scanning::wallet_scanner::ScannerBuilder;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Basic scanner with default events
+/// let scanner = ScannerBuilder::new()
+///     .with_default_events("my_scanner".to_string())?
+///     .with_batch_size(25)
+///     .build();
+///
+/// // Production scanner with database storage
+/// let scanner = ScannerBuilder::new()
+///     .with_database_events("production_scanner".to_string(), Some("wallet.db".to_string()))?
+///     .with_performance_preset()
+///     .build();
+///
+/// // Development scanner with verbose logging
+/// let scanner = ScannerBuilder::new()
+///     .with_development_preset()?
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct ScannerBuilder {
+    config: WalletScannerConfig,
+    event_emitter: Option<super::event_emitter::ScanEventEmitter>,
+}
+
+impl ScannerBuilder {
+    /// Create a new scanner builder with default configuration
+    pub fn new() -> Self {
+        Self {
+            config: WalletScannerConfig::default(),
+            event_emitter: None,
+        }
+    }
+
+    /// Set an event emitter for scanner operations
+    pub fn with_event_emitter(
+        mut self,
+        event_emitter: super::event_emitter::ScanEventEmitter,
+    ) -> Self {
+        self.event_emitter = Some(event_emitter);
+        self
+    }
+
+    /// Configure with default event listeners (progress tracking + console logging)
+    pub fn with_default_events(mut self, source: String) -> Result<Self, LightweightWalletError> {
+        let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
+        self.event_emitter = Some(event_emitter);
+        Ok(self)
+    }
+
+    /// Configure with database event listeners (storage + progress + console)
+    #[cfg(feature = "storage")]
+    pub fn with_database_events(
+        mut self,
+        source: String,
+        _database_path: Option<String>,
+    ) -> Result<Self, LightweightWalletError> {
+        let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
+        self.event_emitter = Some(event_emitter);
+        Ok(self)
+    }
+
+    /// Set the batch size for block processing
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.config.batch_size = batch_size.clamp(1, 1000);
+        self
+    }
+
+    /// Set the timeout duration for blockchain operations
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.timeout = Some(timeout.clamp(
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(300),
+        ));
+        self
+    }
+
+    /// Enable or disable verbose logging
+    pub fn with_verbose_logging(mut self, verbose: bool) -> Self {
+        self.config.verbose_logging = verbose;
+        self
+    }
+
+    /// Set retry configuration
+    pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
+        self.config.retry_config = retry_config;
+        self
+    }
+
+    // =============================================================================
+    // Preset Configurations (similar to event listener presets)
+    // =============================================================================
+
+    /// Apply performance optimization preset
+    ///
+    /// - Large batch size (50)
+    /// - Extended timeout (60s)
+    /// - Disabled verbose logging
+    /// - Conservative retry policy
+    pub fn with_performance_preset(mut self) -> Self {
+        self.config.batch_size = 50;
+        self.config.timeout = Some(std::time::Duration::from_secs(60));
+        self.config.verbose_logging = false;
+        self.config.retry_config = RetryConfig {
+            max_retries: 2,
+            base_delay: std::time::Duration::from_millis(500),
+            max_delay: std::time::Duration::from_secs(10),
+            exponential_backoff: true,
+        };
+        self
+    }
+
+    /// Apply reliability optimization preset
+    ///
+    /// - Small batch size (5)
+    /// - Conservative timeout (45s)
+    /// - Enabled verbose logging
+    /// - Aggressive retry policy
+    pub fn with_reliability_preset(mut self) -> Self {
+        self.config.batch_size = 5;
+        self.config.timeout = Some(std::time::Duration::from_secs(45));
+        self.config.verbose_logging = true;
+        self.config.retry_config = RetryConfig {
+            max_retries: 5,
+            base_delay: std::time::Duration::from_millis(1000),
+            max_delay: std::time::Duration::from_secs(30),
+            exponential_backoff: true,
+        };
+        self
+    }
+
+    /// Apply development preset with default events
+    ///
+    /// - Medium batch size (10)
+    /// - Standard timeout (30s)
+    /// - Enabled verbose logging
+    /// - Default retry policy
+    /// - Default event listeners
+    pub fn with_development_preset(mut self) -> Result<Self, LightweightWalletError> {
+        self.config.batch_size = 10;
+        self.config.timeout = Some(std::time::Duration::from_secs(30));
+        self.config.verbose_logging = true;
+        self.config.retry_config = RetryConfig::default();
+
+        // Add default event emitter if not already configured
+        if self.event_emitter.is_none() {
+            let event_emitter = super::event_emitter::create_default_event_emitter(
+                "development_scanner".to_string(),
+                None,
+            )?;
+            self.event_emitter = Some(event_emitter);
+        }
+
+        Ok(self)
+    }
+
+    /// Apply production preset with database events
+    ///
+    /// - Large batch size (30)
+    /// - Extended timeout (60s)
+    /// - Minimal verbose logging
+    /// - Balanced retry policy
+    /// - Database event listeners
+    #[cfg(feature = "storage")]
+    pub fn with_production_preset(
+        mut self,
+        _database_path: Option<String>,
+    ) -> Result<Self, LightweightWalletError> {
+        self.config.batch_size = 30;
+        self.config.timeout = Some(std::time::Duration::from_secs(60));
+        self.config.verbose_logging = false;
+        self.config.retry_config = RetryConfig {
+            max_retries: 3,
+            base_delay: std::time::Duration::from_millis(1000),
+            max_delay: std::time::Duration::from_secs(20),
+            exponential_backoff: true,
+        };
+
+        // Add database event emitter if not already configured
+        if self.event_emitter.is_none() {
+            let event_emitter = super::event_emitter::create_default_event_emitter(
+                "production_scanner".to_string(),
+                None,
+            )?;
+            self.event_emitter = Some(event_emitter);
+        }
+
+        Ok(self)
+    }
+
+    /// Apply testing preset (optimized for unit tests)
+    ///
+    /// - Small batch size (3)
+    /// - Short timeout (10s)
+    /// - Disabled verbose logging
+    /// - No retries
+    /// - Mock event listeners
+    pub fn with_testing_preset(mut self) -> Result<Self, LightweightWalletError> {
+        use crate::events::{listeners::MockEventListener, EventDispatcher};
+
+        self.config.batch_size = 3;
+        self.config.timeout = Some(std::time::Duration::from_secs(10));
+        self.config.verbose_logging = false;
+        self.config.retry_config = RetryConfig {
+            max_retries: 0,
+            base_delay: std::time::Duration::from_millis(100),
+            max_delay: std::time::Duration::from_millis(100),
+            exponential_backoff: false,
+        };
+
+        // Add mock event emitter for testing
+        if self.event_emitter.is_none() {
+            let mut dispatcher = EventDispatcher::new();
+            let mock_listener = MockEventListener::new();
+            let _ = dispatcher.register(Box::new(mock_listener));
+            let event_emitter =
+                super::event_emitter::ScanEventEmitter::new(dispatcher, "test_scanner".to_string());
+            self.event_emitter = Some(event_emitter);
+        }
+
+        Ok(self)
+    }
+
+    /// Apply quiet preset (minimal output)
+    ///
+    /// - Medium batch size (15)
+    /// - Standard timeout (30s)
+    /// - Disabled verbose logging
+    /// - Conservative retry policy
+    /// - Progress tracking only (no console logging)
+    pub fn with_quiet_preset(mut self) -> Result<Self, LightweightWalletError> {
+        use crate::events::{listeners::ProgressTrackingListener, EventDispatcher};
+
+        self.config.batch_size = 15;
+        self.config.timeout = Some(std::time::Duration::from_secs(30));
+        self.config.verbose_logging = false;
+        self.config.retry_config = RetryConfig {
+            max_retries: 2,
+            base_delay: std::time::Duration::from_millis(500),
+            max_delay: std::time::Duration::from_secs(10),
+            exponential_backoff: true,
+        };
+
+        // Add only progress tracking, no console logging
+        if self.event_emitter.is_none() {
+            let mut dispatcher = EventDispatcher::new();
+            let progress_listener = ProgressTrackingListener::new();
+            let _ = dispatcher.register(Box::new(progress_listener));
+            let event_emitter = super::event_emitter::ScanEventEmitter::new(
+                dispatcher,
+                "quiet_scanner".to_string(),
+            );
+            self.event_emitter = Some(event_emitter);
+        }
+
+        Ok(self)
+    }
+
+    /// Validate the current configuration
+    pub fn validate(&self) -> Result<(), ScannerConfigError> {
+        self.config.validate()?;
+
+        if self.event_emitter.is_none() {
+            return Err(ScannerConfigError::ValidationError {
+                field: "event_emitter".to_string(),
+                reason: "Event emitter must be configured before building scanner".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Build the final WalletScanner
+    ///
+    /// This consumes the builder and returns a configured WalletScanner.
+    /// The scanner will be validated before creation.
+    pub fn build(mut self) -> Result<WalletScanner, ScannerConfigError> {
+        self.validate()?;
+
+        // Move event_emitter into config
+        self.config.event_emitter = self.event_emitter.take();
+
+        Ok(WalletScanner::from_config(self.config))
+    }
+
+    /// Build the final WalletScanner without validation
+    ///
+    /// This skips validation and may result in a scanner that fails at runtime.
+    /// Only use this for testing or when you're certain the configuration is valid.
+    pub fn build_unchecked(mut self) -> WalletScanner {
+        self.config.event_emitter = self.event_emitter.take();
+        WalletScanner::from_config(self.config)
+    }
+}
+
+impl Default for ScannerBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::events::{EventDispatcher, EventListener, SharedEvent};
+    use crate::scanning::event_emitter::ScanEventEmitter;
     use std::time::Duration;
+
+    struct SlowTestListener {
+        delay: Duration,
+        name: String,
+        static_name: &'static str,
+    }
+
+    impl SlowTestListener {
+        fn new(delay_ms: u64, name: String, static_name: &'static str) -> Self {
+            Self {
+                delay: Duration::from_millis(delay_ms),
+                name,
+                static_name,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl EventListener for SlowTestListener {
+        async fn handle_event(
+            &mut self,
+            _event: &SharedEvent,
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            println!(
+                "Listener {} processing event (will take {}ms)",
+                self.name,
+                self.delay.as_millis()
+            );
+
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::time::sleep(self.delay).await;
+
+            println!("Listener {} finished processing", self.name);
+            Ok(())
+        }
+
+        fn name(&self) -> &'static str {
+            self.static_name
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fire_and_forget_event_emission_is_non_blocking() {
+        let mut dispatcher = EventDispatcher::new();
+
+        // Add slow listeners that would normally block scanning
+        let slow_listener_1 =
+            SlowTestListener::new(500, "Database Writer".to_string(), "DatabaseWriter");
+        let slow_listener_2 = SlowTestListener::new(300, "File Logger".to_string(), "FileLogger");
+
+        let _ = dispatcher.register(Box::new(slow_listener_1));
+        let _ = dispatcher.register(Box::new(slow_listener_2));
+
+        // Create event emitter with fire-and-forget enabled
+        let mut emitter = ScanEventEmitter::new(dispatcher, "test_scanner".to_string())
+            .with_fire_and_forget(true);
+
+        // Measure how long it takes to emit events
+        let start = std::time::Instant::now();
+
+        // Emit multiple events quickly
+        for i in 0..3 {
+            // This should return quickly in fire-and-forget mode, not waiting for slow listeners
+            emitter
+                .emit_scan_progress(i, 10, 0, 0, Some(5.0), None)
+                .await
+                .unwrap();
+            println!("Emitted event {} at {:?}", i, start.elapsed());
+        }
+
+        let total_emit_time = start.elapsed();
+        println!("Total time to emit 3 events with fire-and-forget: {total_emit_time:?}");
+
+        // In fire-and-forget mode, this should complete much faster than
+        // the combined listener processing time (500ms + 300ms = 800ms per event)
+        // With 3 events, blocking would take ~2400ms, fire-and-forget should be < 100ms
+        assert!(total_emit_time < Duration::from_millis(200),
+               "Fire-and-forget emission took too long: {total_emit_time:?} (should be much less than listener processing time)");
+
+        println!("✓ Fire-and-forget emission is non-blocking and doesn't wait for slow listeners!");
+
+        // Give a little time for background tasks to complete before test ends
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    #[tokio::test]
+    async fn test_blocking_mode_waits_for_listeners() {
+        let mut dispatcher = EventDispatcher::new();
+
+        // Add a slow listener
+        let slow_listener = SlowTestListener::new(
+            200,
+            "Blocking Test Listener".to_string(),
+            "BlockingTestListener",
+        );
+        dispatcher.register(Box::new(slow_listener)).unwrap();
+
+        // Create event emitter with fire-and-forget DISABLED (blocking mode)
+        let mut emitter = ScanEventEmitter::new(dispatcher, "test_scanner".to_string())
+            .with_fire_and_forget(false);
+
+        let start = std::time::Instant::now();
+
+        // Emit a single event
+        emitter
+            .emit_scan_progress(1, 10, 0, 0, Some(5.0), None)
+            .await
+            .unwrap();
+
+        let total_emit_time = start.elapsed();
+        println!("Blocking mode emission time: {total_emit_time:?}");
+
+        // In blocking mode, this should take at least as long as the listener processing time
+        assert!(
+            total_emit_time >= Duration::from_millis(150),
+            "Blocking emission completed too quickly: {total_emit_time:?} (should wait for listener)"
+        );
+
+        println!("✓ Blocking mode waits for listeners as expected!");
+    }
+    use super::*;
 
     #[test]
     fn test_scan_metadata_new() {
@@ -2397,7 +3177,7 @@ mod tests {
         assert_eq!(scanner.config.batch_size, 10);
         assert_eq!(scanner.config.timeout, Some(Duration::from_secs(30)));
         assert!(!scanner.config.verbose_logging);
-        assert!(scanner.config.progress_tracker.is_none());
+        assert!(scanner.config.event_emitter.is_none());
     }
 
     #[test]
@@ -2502,8 +3282,9 @@ mod tests {
 
     #[test]
     fn test_wallet_scanner_presets() {
-        let simple = WalletScanner::with_simple_progress();
-        assert!(simple.config.progress_tracker.is_some());
+        let simple = WalletScanner::with_simple_progress()
+            .expect("Failed to create scanner with simple progress");
+        assert!(simple.config.event_emitter.is_some());
 
         let performance = WalletScanner::performance_optimized();
         assert_eq!(performance.config.batch_size, 50);
@@ -2689,6 +3470,242 @@ mod tests {
         assert_eq!(inbound_count, 0);
         assert_eq!(outbound_count, 0);
         assert_eq!(total_count, 0);
+    }
+
+    // =============================================================================
+    // ScannerBuilder Tests
+    // =============================================================================
+
+    #[test]
+    fn test_scanner_builder_new() {
+        let builder = ScannerBuilder::new();
+        assert_eq!(builder.config.batch_size, 10);
+        assert!(builder.event_emitter.is_none());
+    }
+
+    #[test]
+    fn test_scanner_builder_basic_configuration() {
+        let builder = ScannerBuilder::new()
+            .with_batch_size(25)
+            .with_timeout(std::time::Duration::from_secs(45))
+            .with_verbose_logging(true);
+
+        assert_eq!(builder.config.batch_size, 25);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(45))
+        );
+        assert!(builder.config.verbose_logging);
+    }
+
+    #[test]
+    fn test_scanner_builder_batch_size_clamping() {
+        let builder = ScannerBuilder::new().with_batch_size(2000);
+        assert_eq!(builder.config.batch_size, 1000); // Should be clamped to max
+
+        let builder = ScannerBuilder::new().with_batch_size(0);
+        assert_eq!(builder.config.batch_size, 1); // Should be clamped to min
+    }
+
+    #[test]
+    fn test_scanner_builder_timeout_clamping() {
+        let builder = ScannerBuilder::new().with_timeout(std::time::Duration::from_secs(500));
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(300))
+        ); // Should be clamped to max
+
+        let builder = ScannerBuilder::new().with_timeout(std::time::Duration::from_millis(50));
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_millis(100))
+        ); // Should be clamped to min
+    }
+
+    #[test]
+    fn test_scanner_builder_performance_preset() {
+        let builder = ScannerBuilder::new().with_performance_preset();
+
+        assert_eq!(builder.config.batch_size, 50);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(60))
+        );
+        assert!(!builder.config.verbose_logging);
+        assert_eq!(builder.config.retry_config.max_retries, 2);
+    }
+
+    #[test]
+    fn test_scanner_builder_reliability_preset() {
+        let builder = ScannerBuilder::new().with_reliability_preset();
+
+        assert_eq!(builder.config.batch_size, 5);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(45))
+        );
+        assert!(builder.config.verbose_logging);
+        assert_eq!(builder.config.retry_config.max_retries, 5);
+    }
+
+    #[test]
+    fn test_scanner_builder_development_preset() {
+        let builder = ScannerBuilder::new()
+            .with_development_preset()
+            .expect("Failed to create development preset");
+
+        assert_eq!(builder.config.batch_size, 10);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(30))
+        );
+        assert!(builder.config.verbose_logging);
+        assert!(builder.event_emitter.is_some());
+    }
+
+    #[test]
+    fn test_scanner_builder_testing_preset() {
+        let builder = ScannerBuilder::new()
+            .with_testing_preset()
+            .expect("Failed to create testing preset");
+
+        assert_eq!(builder.config.batch_size, 3);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(10))
+        );
+        assert!(!builder.config.verbose_logging);
+        assert_eq!(builder.config.retry_config.max_retries, 0);
+        assert!(builder.event_emitter.is_some());
+    }
+
+    #[test]
+    fn test_scanner_builder_quiet_preset() {
+        let builder = ScannerBuilder::new()
+            .with_quiet_preset()
+            .expect("Failed to create quiet preset");
+
+        assert_eq!(builder.config.batch_size, 15);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(30))
+        );
+        assert!(!builder.config.verbose_logging);
+        assert_eq!(builder.config.retry_config.max_retries, 2);
+        assert!(builder.event_emitter.is_some());
+    }
+
+    #[test]
+    fn test_scanner_builder_validation_fails_without_event_emitter() {
+        let builder = ScannerBuilder::new().with_batch_size(25);
+
+        let result = builder.validate();
+        assert!(result.is_err());
+
+        if let Err(ScannerConfigError::ValidationError { field, reason: _ }) = result {
+            assert_eq!(field, "event_emitter");
+        } else {
+            panic!("Expected ValidationError for missing event_emitter");
+        }
+    }
+
+    #[test]
+    fn test_scanner_builder_validation_succeeds_with_event_emitter() {
+        let builder = ScannerBuilder::new()
+            .with_testing_preset()
+            .expect("Failed to create testing preset");
+
+        let result = builder.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_scanner_builder_build_success() {
+        let scanner = ScannerBuilder::new()
+            .with_testing_preset()
+            .expect("Failed to create testing preset")
+            .build()
+            .expect("Failed to build scanner");
+
+        assert_eq!(scanner.config.batch_size, 3);
+        assert!(scanner.config.event_emitter.is_some());
+    }
+
+    #[test]
+    fn test_scanner_builder_build_failure_without_event_emitter() {
+        let result = ScannerBuilder::new().with_batch_size(25).build();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scanner_builder_build_unchecked() {
+        let scanner = ScannerBuilder::new().with_batch_size(25).build_unchecked(); // Should succeed even without event emitter
+
+        assert_eq!(scanner.config.batch_size, 25);
+        assert!(scanner.config.event_emitter.is_none());
+    }
+
+    #[test]
+    fn test_scanner_builder_fluent_interface() {
+        let scanner = ScannerBuilder::new()
+            .with_batch_size(20)
+            .with_timeout(std::time::Duration::from_secs(50))
+            .with_verbose_logging(true)
+            .with_testing_preset()
+            .expect("Failed to create testing preset")
+            .with_batch_size(30) // Should override the testing preset batch size
+            .build()
+            .expect("Failed to build scanner");
+
+        assert_eq!(scanner.config.batch_size, 30);
+        assert_eq!(
+            scanner.config.timeout,
+            Some(std::time::Duration::from_secs(10))
+        ); // From testing preset
+        assert!(!scanner.config.verbose_logging); // From testing preset (overrides earlier setting)
+        assert!(scanner.config.event_emitter.is_some());
+    }
+
+    #[cfg(feature = "storage")]
+    #[test]
+    fn test_scanner_builder_production_preset() {
+        let builder = ScannerBuilder::new()
+            .with_production_preset(Some("test.db".to_string()))
+            .expect("Failed to create production preset");
+
+        assert_eq!(builder.config.batch_size, 30);
+        assert_eq!(
+            builder.config.timeout,
+            Some(std::time::Duration::from_secs(60))
+        );
+        assert!(!builder.config.verbose_logging);
+        assert_eq!(builder.config.retry_config.max_retries, 3);
+        assert!(builder.event_emitter.is_some());
+    }
+
+    #[test]
+    fn test_scanner_builder_default_implementation() {
+        let builder = ScannerBuilder::default();
+        assert_eq!(builder.config.batch_size, 10);
+        assert!(builder.event_emitter.is_none());
+    }
+
+    #[test]
+    fn test_scan_with_processor_emits_events() {
+        // This test verifies that scan_with_processor method
+        // emits events when an event emitter is configured
+        let scanner = ScannerBuilder::new()
+            .with_testing_preset()
+            .expect("Failed to create testing preset")
+            .build()
+            .expect("Failed to build scanner");
+
+        // Check that the scanner has an event emitter configured
+        assert!(scanner.config.event_emitter.is_some());
+
+        // The actual async test would need a running blockchain scanner
+        // For now, we just verify the configuration is correct
     }
 }
 

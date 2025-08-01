@@ -1038,6 +1038,102 @@ impl WalletStorage for SqliteStorage {
         self.get_transactions(Some(filter)).await
     }
 
+    async fn mark_spent_outputs_from_inputs(
+        &self,
+        wallet_id: u32,
+        from_block: u64,
+        to_block: u64,
+    ) -> LightweightWalletResult<usize> {
+        self.connection
+            .call(move |conn| {
+                let mut spent_count = 0;
+                // Now we properly match blockchain inputs (stored during scanning) against our outputs
+                // 
+                // During scanning we store:
+                // - Our outputs as transaction_direction = 0 (Inbound)
+                // - All blockchain inputs as transaction_direction = 1 (Outbound)
+                //
+                // This allows us to find when our outputs have been spent by matching commitments
+                let mut stmt = conn.prepare(
+                    r#"
+                    UPDATE wallet_transactions AS outputs
+                    SET is_spent = TRUE,
+                        spent_in_block = inputs.block_height,
+                        spent_in_input = inputs.input_index,
+                        updated_at = CURRENT_TIMESTAMP
+                    FROM wallet_transactions AS inputs
+                    WHERE outputs.wallet_id = ?
+                    AND outputs.transaction_direction = 0  -- Our received outputs
+                    AND outputs.is_spent = FALSE
+                    AND inputs.wallet_id = ?
+                    AND inputs.transaction_direction = 1  -- Blockchain inputs
+                    AND inputs.block_height BETWEEN ? AND ?
+                    AND inputs.input_index IS NOT NULL    -- Ensure this is actually an input record
+                    AND outputs.commitment_hex = inputs.commitment_hex  -- Match commitments
+                    "#,
+                )?;
+
+                spent_count += stmt.execute(params![
+                    wallet_id,    // wallet_id for outputs
+                    wallet_id,    // wallet_id for inputs
+                    from_block,   // from_block for input search
+                    to_block      // to_block for input search
+                ])?;
+
+                // Also update the outputs table for consistency
+                let mut output_stmt = conn.prepare(
+                    r#"
+                    UPDATE outputs 
+                    SET status = 1,
+                        spent_in_tx_id = (
+                            SELECT inputs.block_height
+                            FROM wallet_transactions AS inputs
+                            WHERE inputs.wallet_id = ?
+                            AND inputs.transaction_direction = 1
+                            AND inputs.block_height BETWEEN ? AND ?
+                            AND inputs.commitment_bytes = outputs.commitment
+                            LIMIT 1
+                        ),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE wallet_id = ?
+                    AND status = 0
+                    AND commitment IN (
+                        SELECT DISTINCT outputs.commitment_bytes
+                        FROM wallet_transactions AS outputs
+                        INNER JOIN wallet_transactions AS inputs ON (
+                            outputs.commitment_hex = inputs.commitment_hex
+                            AND outputs.wallet_id = inputs.wallet_id
+                            AND outputs.transaction_direction = 0
+                            AND inputs.transaction_direction = 1
+                            AND inputs.block_height BETWEEN ? AND ?
+                        )
+                        WHERE outputs.wallet_id = ?
+                        AND outputs.is_spent = TRUE
+                        AND outputs.updated_at >= datetime('now', '-1 minute')  -- Recently marked as spent
+                    )
+                    "#,
+                )?;
+
+                output_stmt.execute(params![
+                    wallet_id,    // wallet_id for subquery input search
+                    from_block,   // from_block for subquery
+                    to_block,     // to_block for subquery
+                    wallet_id,    // wallet_id for outputs table
+                    from_block,   // from_block for inner join
+                    to_block,     // to_block for inner join
+                    wallet_id     // wallet_id for inner join
+                ])?;
+
+                Ok(spent_count)
+            })
+            .await
+            .map_err(|e| {
+                LightweightWalletError::StorageError(format!(
+                    "Failed to mark spent outputs from inputs: {e}"
+                ))
+            })
+    }
+
     async fn get_unspent_transactions(&self) -> LightweightWalletResult<Vec<WalletTransaction>> {
         let filter = TransactionFilter::new()
             .with_spent_status(false)
@@ -1304,7 +1400,7 @@ impl WalletStorage for SqliteStorage {
                         output_ids.push(output_id);
                     }
                 } else {
-                    // Insert new
+                    // Insert new with ON CONFLICT handling to update existing outputs
                     tx.execute(
                         r#"
                         INSERT INTO outputs
@@ -1315,6 +1411,11 @@ impl WalletStorage for SqliteStorage {
                          metadata_signature_u_y, encrypted_data, minimum_value_promise, rangeproof,
                          status, mined_height, spent_in_tx_id)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(wallet_id, commitment) DO UPDATE SET
+                            status = EXCLUDED.status,
+                            mined_height = COALESCE(EXCLUDED.mined_height, mined_height),
+                            spent_in_tx_id = COALESCE(EXCLUDED.spent_in_tx_id, spent_in_tx_id),
+                            updated_at = CURRENT_TIMESTAMP
                         "#,
                         params![
                             output.wallet_id as i64,
@@ -1345,7 +1446,19 @@ impl WalletStorage for SqliteStorage {
                         ],
                     )?;
 
-                    output_ids.push(tx.last_insert_rowid() as u32);
+                    // Get the row ID (either newly inserted or existing)
+                    let row_id = if tx.changes() > 0 {
+                        // New insert
+                        tx.last_insert_rowid() as u32
+                    } else {
+                        // Conflict occurred, get existing ID
+                        let mut stmt = tx.prepare("SELECT id FROM outputs WHERE wallet_id = ? AND commitment = ?")?;
+                        let existing_id: i64 = stmt.query_row(params![output.wallet_id as i64, output.commitment], |row| {
+                            row.get(0)
+                        })?;
+                        existing_id as u32
+                    };
+                    output_ids.push(row_id);
                 }
             }
 

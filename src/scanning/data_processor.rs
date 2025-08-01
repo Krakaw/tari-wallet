@@ -225,6 +225,11 @@ pub trait DataProcessor: Send + Sync {
     async fn finalize(&mut self) -> LightweightWalletResult<()> {
         Ok(())
     }
+
+    /// Allow downcasting to concrete types
+    ///
+    /// This enables type-specific operations during post-processing.
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// A simple in-memory data processor that collects all data
@@ -300,6 +305,10 @@ impl DataProcessor for MemoryDataProcessor {
         self.completion = Some(completion_data);
         Ok(())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// A no-op data processor that discards all data
@@ -319,6 +328,10 @@ impl NoOpDataProcessor {
 impl DataProcessor for NoOpDataProcessor {
     async fn process_block(&mut self, _block_data: BlockData) -> LightweightWalletResult<()> {
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -394,6 +407,10 @@ impl DataProcessor for CompositeDataProcessor {
             processor.finalize().await?;
         }
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

@@ -6,13 +6,13 @@
 //!
 //! This module is part of the scanner.rs binary refactoring effort.
 
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 use crate::{
     data_structures::{types::CompressedCommitment, wallet_transaction::WalletTransaction},
     errors::LightweightWalletResult,
     storage::{StoredOutput, WalletStorage},
 };
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 use tokio::sync::{mpsc, oneshot};
 
 /// Background writer commands for non-WASM32 architectures
@@ -20,7 +20,7 @@ use tokio::sync::{mpsc, oneshot};
 /// These commands are sent through a channel to the background writer thread
 /// to perform database operations asynchronously without blocking the main
 /// scanning thread.
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 #[derive(Debug)]
 pub enum BackgroundWriterCommand {
     /// Save wallet transactions to the database
@@ -101,7 +101,7 @@ pub enum BackgroundWriterCommand {
 /// 1. **Creation**: Spawned by `ScannerStorage` when database mode is enabled
 /// 2. **Operation**: Processes commands throughout the scanning operation
 /// 3. **Shutdown**: Gracefully terminated when scanning completes or errors occur
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 pub struct BackgroundWriter {
     /// Command sender for communicating with the background writer thread
     pub command_tx: mpsc::UnboundedSender<BackgroundWriterCommand>,
@@ -109,7 +109,7 @@ pub struct BackgroundWriter {
     pub join_handle: tokio::task::JoinHandle<()>,
 }
 
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 impl BackgroundWriter {
     /// Background writer main loop (non-WASM32 only)
     ///
@@ -190,16 +190,16 @@ mod tests {
     type BatchMarked = Arc<Mutex<Vec<Vec<(CompressedCommitment, u64, usize)>>>>;
     type ShouldFail = Arc<Mutex<bool>>;
 
-    #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     use crate::data_structures::WalletState;
-    #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     use crate::storage::{OutputFilter, StorageStats, StoredWallet, TransactionFilter};
-    #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     use async_trait::async_trait;
-    #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     use std::sync::{Arc, Mutex};
 
-    #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     #[derive(Debug, Clone)]
     struct MockStorage {
         transactions_saved: TransactionsSaved,
@@ -210,7 +210,7 @@ mod tests {
         should_fail: ShouldFail,
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     impl MockStorage {
         fn new() -> Self {
             Self {
@@ -248,7 +248,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     #[async_trait]
     impl WalletStorage for MockStorage {
         async fn initialize(&self) -> LightweightWalletResult<()> {
@@ -569,6 +569,14 @@ mod tests {
         async fn get_output_count(&self, _wallet_id: u32) -> LightweightWalletResult<usize> {
             Ok(0)
         }
+        async fn mark_spent_outputs_from_inputs(
+            &self,
+            _wallet_id: u32,
+            _from_block: u64,
+            _to_block: u64,
+        ) -> LightweightWalletResult<usize> {
+            Ok(0)
+        }
     }
 
     #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
@@ -845,7 +853,7 @@ mod tests {
         writer_task.await.unwrap();
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     #[tokio::test]
     async fn test_background_writer_shutdown() {
         let mock_storage = MockStorage::new();
@@ -873,7 +881,7 @@ mod tests {
         writer_task.await.unwrap();
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     #[tokio::test]
     async fn test_background_writer_multiple_commands() {
         let mock_storage = MockStorage::new();
@@ -934,7 +942,7 @@ mod tests {
         writer_task.await.unwrap();
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     #[tokio::test]
     async fn test_background_writer_channel_closed() {
         let mock_storage = MockStorage::new();

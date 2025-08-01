@@ -13,7 +13,7 @@
 - `cargo build --release` - Production build
 
 ### WASM Commands
-- `wasm-pack test --node --features wasm` - WASM-specific tests
+- `wasm-pack test --node --features http` - WASM-specific tests
 - `wasm-pack build --target web --out-dir examples/wasm/pkg --features http` - Build WASM module for web
 - `wasm-pack build --target nodejs --out-dir examples/wasm/pkg --features http` - Build WASM module for node
 

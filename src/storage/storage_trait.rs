@@ -489,6 +489,17 @@ pub trait WalletStorage: Send + Sync {
         to_block: u64,
     ) -> LightweightWalletResult<Vec<WalletTransaction>>;
 
+    /// Process all inputs in the specified block range and mark corresponding outputs as spent
+    ///
+    /// This method should be called after scanning to identify which outputs have been spent
+    /// by inputs in the scanned blocks. It returns the number of outputs marked as spent.
+    async fn mark_spent_outputs_from_inputs(
+        &self,
+        wallet_id: u32,
+        from_block: u64,
+        to_block: u64,
+    ) -> LightweightWalletResult<usize>;
+
     /// Get unspent transactions only
     async fn get_unspent_transactions(&self) -> LightweightWalletResult<Vec<WalletTransaction>>;
 

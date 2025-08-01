@@ -51,7 +51,7 @@ pub mod scan_config;
 #[cfg(all(feature = "grpc", feature = "storage"))]
 pub mod storage_manager;
 
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 pub mod background_writer;
 
 #[cfg(feature = "grpc")]
@@ -64,7 +64,7 @@ pub mod progress;
 pub mod data_processor;
 
 // Database data processor implementation
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 pub mod database_processor;
 
 // Re-export GRPC scanner types
@@ -81,21 +81,21 @@ pub use scan_config::{BinaryScanConfig, OutputFormat, ScanContext};
 #[cfg(feature = "grpc")]
 pub use wallet_scanner::{
     create_wallet_from_seed_phrase, create_wallet_from_view_key, RetryConfig, ScanMetadata,
-    ScanResult, ScannerConfigError, WalletScannerConfig,
+    ScanResult, ScannerBuilder, ScannerConfigError, WalletScannerConfig,
 };
 
 #[cfg(feature = "grpc")]
 pub use wallet_scanner::WalletScanner as WalletScannerStruct;
 
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 pub use wallet_scanner::extract_utxo_outputs_from_wallet_state;
 
 // Re-export background writer types for scanner binary operations
-#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
 pub use background_writer::{BackgroundWriter, BackgroundWriterCommand};
 
 // Re-export storage manager types for scanner binary operations
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 pub use storage_manager::ScannerStorage;
 
 // Re-export progress tracking types for scanner binary operations
@@ -109,8 +109,22 @@ pub use data_processor::{
 };
 
 // Re-export database processor types
-#[cfg(feature = "storage")]
+#[cfg(all(feature = "grpc", feature = "storage"))]
 pub use database_processor::{DatabaseDataProcessor, MemoryStorageProcessor};
+
+// Event emitter module for scanner integration with event system
+#[cfg(feature = "grpc")]
+pub mod event_emitter;
+
+// Re-export event emitter types
+#[cfg(feature = "grpc")]
+pub use event_emitter::{
+    create_address_info_from_transaction, create_block_info_from_block,
+    create_default_event_emitter, ScanEventEmitter,
+};
+
+#[cfg(all(feature = "grpc", feature = "storage"))]
+pub use event_emitter::create_database_event_emitter;
 
 /// Legacy progress callback for scanning operations (for compatibility)
 pub type LegacyProgressCallback = Box<dyn Fn(ScanProgress) + Send + Sync>;
