@@ -971,17 +971,10 @@ impl std::fmt::Debug for WalletScannerConfig {
 /// ```rust,no_run
 /// # #[cfg(all(feature = "grpc", feature = "storage"))]
 /// # {
-/// use lightweight_wallet_libs::scanning::WalletScannerStruct as WalletScanner;
+/// use lightweight_wallet_libs::scanning::WalletScannerStruct;
 /// use std::time::Duration;
 ///
-/// let scanner = WalletScanner::new()
-///     .with_progress_callback(|info| {
-///         println!("Progress: {:.2}% ({}/{} blocks, {} outputs found)",
-///                  info.progress_percent,
-///                  info.blocks_processed,
-///                  info.total_blocks,
-///                  info.outputs_found);
-///     })
+/// let scanner = WalletScannerStruct::new()
 ///     .with_batch_size(20)
 ///     .with_timeout(Duration::from_secs(60))
 ///     .with_verbose_logging(true);
@@ -1131,14 +1124,16 @@ impl WalletScanner {
     /// ```rust,no_run
     /// # #[cfg(all(feature = "grpc", feature = "storage"))]
     /// # {
-    /// use lightweight_wallet_libs::scanning::WalletScannerStruct as WalletScanner;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use lightweight_wallet_libs::scanning::WalletScannerStruct;
     /// use std::time::Duration;
     ///
-    /// let scanner = WalletScanner::new()
+    /// let scanner = WalletScannerStruct::new()
     ///     .with_batch_size(50)
     ///     .with_timeout(Duration::from_secs(60))
     ///     .build()?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # Ok(())
+    /// # }
     /// # }
     /// ```
     pub fn build(self) -> Result<WalletScanner, ScannerConfigError> {
