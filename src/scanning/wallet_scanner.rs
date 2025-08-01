@@ -2173,7 +2173,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
                         block_heights[current_block_index - 1]
                     } else {
                         // Haven't processed any blocks yet, use the first block
-                        block_heights.get(0).copied().unwrap_or(from_block)
+                        block_heights.first().copied().unwrap_or(from_block)
                     };
 
                     event_emitter
