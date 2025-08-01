@@ -427,7 +427,7 @@ mod integration_examples {
         // Verify all aspects of the test
         let verify_result = scenario.verify(&test_mock).await;
         if let Err(e) = &verify_result {
-            println!("Scenario verification failed: {}", e);
+            println!("Scenario verification failed: {e}");
         }
         assert!(verify_result.is_ok());
 

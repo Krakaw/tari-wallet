@@ -304,16 +304,18 @@ impl ErrorRecoveryManager {
             self.circuit_state = CircuitBreakerState::Open;
             self.circuit_opened_at = Some(now);
             self.log(&format!(
-                "Circuit breaker opened after {} consecutive errors",
-                self.consecutive_errors
+                "Circuit breaker opened after {consecutive_errors} consecutive errors",
+                consecutive_errors = self.consecutive_errors
             ));
         }
 
         // Log the error if enabled
         if self.config.enable_error_logging {
             self.log(&format!(
-                "Error recorded: {} (recoverable: {}, consecutive: {})",
-                error_record.error_message, error_record.is_recoverable, self.consecutive_errors
+                "Error recorded: {message} (recoverable: {recoverable}, consecutive: {consecutive})",
+                message = error_record.error_message,
+                recoverable = error_record.is_recoverable,
+                consecutive = self.consecutive_errors
             ));
         }
 
@@ -408,13 +410,13 @@ impl ErrorRecoveryManager {
     /// Internal logging method
     fn log(&self, message: &str) {
         if self.config.enable_error_logging {
-            let log_message = format!("[ErrorRecovery] {}", message);
+            let log_message = format!("[ErrorRecovery] {message}");
 
             #[cfg(target_arch = "wasm32")]
             web_sys::console::log_1(&log_message.into());
 
             #[cfg(not(target_arch = "wasm32"))]
-            println!("{}", log_message);
+            println!("{log_message}");
         }
     }
 }

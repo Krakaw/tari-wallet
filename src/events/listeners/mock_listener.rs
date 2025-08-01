@@ -218,7 +218,7 @@ impl CapturedEvent {
     pub fn contains_content(&self, text: &str) -> bool {
         self.content
             .as_ref()
-            .map_or(false, |content| content.contains(text))
+            .is_some_and(|content| content.contains(text))
     }
 
     /// Get the event as a compact summary string
@@ -511,8 +511,7 @@ impl MockEventListener {
             tokio::time::sleep(poll_interval).await;
         }
         Err(format!(
-            "Timeout waiting for {} events, got {}",
-            expected_count,
+            "Timeout waiting for {expected_count} events, got {}",
             self.event_count()
         ))
     }
@@ -555,8 +554,7 @@ impl MockEventListener {
             tokio::time::sleep(poll_interval).await;
         }
         Err(format!(
-            "Timeout waiting for event type '{}', got {} total events",
-            event_type,
+            "Timeout waiting for event type '{event_type}', got {} total events",
             self.event_count()
         ))
     }
@@ -579,9 +577,7 @@ impl MockEventListener {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
         Err(format!(
-            "Maximum iterations ({}) reached waiting for {} events, got {}",
-            max_iterations,
-            expected_count,
+            "Maximum iterations ({max_iterations}) reached waiting for {expected_count} events, got {}",
             self.event_count()
         ))
     }
@@ -611,9 +607,7 @@ impl MockEventListener {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
         Err(format!(
-            "Maximum iterations ({}) reached waiting for event type '{}', got {} total events",
-            max_iterations,
-            event_type,
+            "Maximum iterations ({max_iterations}) reached waiting for event type '{event_type}', got {} total events",
             self.event_count()
         ))
     }
@@ -633,10 +627,7 @@ impl MockEventListener {
     pub fn assert_event_count(&self, expected: usize) -> Result<(), String> {
         let actual = self.event_count();
         if actual != expected {
-            return Err(format!(
-                "Expected {} events, but captured {}",
-                expected, actual
-            ));
+            return Err(format!("Expected {expected} events, but captured {actual}"));
         }
         Ok(())
     }
@@ -646,8 +637,7 @@ impl MockEventListener {
         let actual = self.event_count();
         if actual < min_expected {
             return Err(format!(
-                "Expected at least {} events, but captured {}",
-                min_expected, actual
+                "Expected at least {min_expected} events, but captured {actual}"
             ));
         }
         Ok(())
@@ -658,8 +648,7 @@ impl MockEventListener {
         let actual = self.event_type_count(event_type);
         if actual != expected {
             return Err(format!(
-                "Expected {} '{}' events, but captured {}",
-                expected, event_type, actual
+                "Expected {expected} '{event_type}' events, but captured {actual}"
             ));
         }
         Ok(())
@@ -669,7 +658,7 @@ impl MockEventListener {
     pub fn assert_contains_event_with_content(&self, content: &str) -> Result<(), String> {
         let matching_events = self.find_events_with_content(content);
         if matching_events.is_empty() {
-            return Err(format!("No events found containing content: '{}'", content));
+            return Err(format!("No events found containing content: '{content}'"));
         }
         Ok(())
     }
@@ -680,8 +669,8 @@ impl MockEventListener {
             Some(event) => {
                 if event.event_type != expected_type {
                     return Err(format!(
-                        "Last event was '{}', expected '{}'",
-                        event.event_type, expected_type
+                        "Last event was '{}', expected '{expected_type}'",
+                        event.event_type
                     ));
                 }
                 Ok(())
@@ -696,8 +685,8 @@ impl MockEventListener {
             Some(event) => {
                 if event.event_type != expected_type {
                     return Err(format!(
-                        "First event was '{}', expected '{}'",
-                        event.event_type, expected_type
+                        "First event was '{}', expected '{expected_type}'",
+                        event.event_type
                     ));
                 }
                 Ok(())
@@ -720,8 +709,8 @@ impl MockEventListener {
         for (i, expected_type) in expected_types.iter().enumerate() {
             if events[i].event_type != *expected_type {
                 return Err(format!(
-                    "Event at position {} was '{}', expected '{}'",
-                    i, events[i].event_type, expected_type
+                    "Event at position {i} was '{}', expected '{expected_type}'",
+                    events[i].event_type
                 ));
             }
         }
@@ -886,9 +875,9 @@ mod tests {
             .include_timing(false)
             .build();
 
-        assert_eq!(mock.config.capture_content, false);
+        assert!(!mock.config.capture_content);
         assert_eq!(mock.config.max_events, Some(50));
-        assert_eq!(mock.config.include_timing, false);
+        assert!(!mock.config.include_timing);
     }
 
     #[test]
@@ -1098,9 +1087,9 @@ mod tests {
                     .lock()
                     .unwrap()
                     .push(CapturedEvent::new(
-                        format!("Event{}", i),
+                        format!("Event{i}"),
                         None,
-                        format!("id-{}", i),
+                        format!("id-{i}"),
                         "test_source".to_string(),
                         None,
                     ));
@@ -1261,9 +1250,9 @@ mod tests {
         // Add more events than the limit
         for i in 0..5 {
             captured_events.lock().unwrap().push(CapturedEvent::new(
-                format!("Event{}", i),
+                format!("Event{i}"),
                 None,
-                format!("id-{}", i),
+                format!("id-{i}"),
                 "test_source".to_string(),
                 None,
             ));

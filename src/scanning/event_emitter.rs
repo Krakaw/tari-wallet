@@ -160,7 +160,7 @@ impl ScanEventEmitter {
             metadata,
             config: scan_config,
             block_range,
-            wallet_context: format!("{:?}", wallet_context),
+            wallet_context: format!("{wallet_context:?}"),
         };
 
         self.dispatch_event(event).await;
@@ -175,7 +175,7 @@ impl ScanEventEmitter {
         block: &Block,
         processing_duration: Duration,
         outputs_found: usize,
-        _transactions_found: usize,
+        spent_outputs_count: usize,
     ) -> Result<(), LightweightWalletError> {
         let metadata = self.create_metadata();
         let event = WalletScanEvent::BlockProcessed {
@@ -185,6 +185,7 @@ impl ScanEventEmitter {
             timestamp: block.timestamp,
             processing_duration,
             outputs_count: outputs_found,
+            spent_outputs_count,
         };
 
         self.dispatch_event(event).await;
@@ -203,10 +204,10 @@ impl ScanEventEmitter {
     ) -> Result<(), LightweightWalletError> {
         let metadata = self.create_metadata();
         let output_data = OutputData {
-            commitment: hex::encode(&output.commitment.as_bytes()),
-            range_proof: hex::encode(&output.proof.as_ref().map_or(vec![], |p| p.bytes.clone())),
+            commitment: hex::encode(output.commitment.as_bytes()),
+            range_proof: hex::encode(output.proof.as_ref().map_or(vec![], |p| p.bytes.clone())),
             encrypted_value: Some(output.encrypted_data.to_byte_vec()),
-            script: Some(hex::encode(&output.script.bytes)),
+            script: Some(hex::encode(output.script.bytes.clone())),
             features: output.features.bytes().len() as u32, // Use bytes length as substitute
             maturity_height: Some(output.features.maturity),
             amount: Some(transaction.value),
@@ -253,16 +254,11 @@ impl ScanEventEmitter {
         match_method: &str,
         original_block_info: &BlockInfo,
     ) -> Result<(), LightweightWalletError> {
-        println!(
-            "🚨 DEBUG: emit_spent_output_found called for commitment: {} at block {}",
-            hex::encode(&spent_output.commitment.as_bytes()),
-            spending_block.height
-        );
         let metadata = self.create_metadata();
 
         // Create spent output data
         let spent_output_data = SpentOutputData::new(
-            hex::encode(&spent_output.commitment.as_bytes()),
+            hex::encode(spent_output.commitment.as_bytes()),
             input_index,
             original_block_info.height,
             spending_block.height,
@@ -273,7 +269,7 @@ impl ScanEventEmitter {
             spent_output
                 .output_hash
                 .as_ref()
-                .map(|h| hex::encode(h))
+                .map(hex::encode)
                 .unwrap_or_default(),
         );
 
@@ -287,7 +283,7 @@ impl ScanEventEmitter {
 
         // Create original output info
         let original_output_info = OutputData::new(
-            hex::encode(&spent_output.commitment.as_bytes()),
+            hex::encode(spent_output.commitment.as_bytes()),
             String::new(), // range_proof not needed for spent events
             0,             // features not needed for spent events
             true,          // is_mine (we only track our own outputs)
@@ -404,9 +400,8 @@ impl ScanEventEmitter {
         let retry_info = if can_retry {
             if let Some(block) = current_block {
                 Some(format!(
-                    "Retry attempt {} - scan can be resumed from block {}",
+                    "Retry attempt {} - scan can be resumed from block {block}",
                     retry_count + 1,
-                    block
                 ))
             } else {
                 Some(format!("Retry attempt {}", retry_count + 1))
@@ -418,7 +413,7 @@ impl ScanEventEmitter {
         let event = WalletScanEvent::ScanError {
             metadata,
             error_message: error.to_string(),
-            error_code: Some(format!("{:?}", error)),
+            error_code: Some(format!("{error:?}")),
             block_height: current_block,
             retry_info,
             is_recoverable: can_retry,
@@ -551,8 +546,8 @@ pub fn create_address_info_from_transaction(
         address_type: "dual".to_string(),
         network: "localnet".to_string(), // Default for testing
         derivation_path: None,
-        public_spend_key: Some(hex::encode(&context.view_key.as_bytes())),
-        view_key: Some(hex::encode(&context.view_key.as_bytes())),
+        public_spend_key: Some(hex::encode(context.view_key.as_bytes())),
+        view_key: Some(hex::encode(context.view_key.as_bytes())),
     }
 }
 
@@ -641,6 +636,17 @@ pub async fn create_database_event_emitter(
     Ok(emitter)
 }
 
+impl std::fmt::Debug for ScanEventEmitter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScanEventEmitter")
+            .field("source", &self.source)
+            .field("correlation_id", &self.correlation_id)
+            .field("scan_start_time", &self.scan_start_time)
+            .field("current_config", &self.current_config)
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -650,7 +656,7 @@ mod tests {
     fn create_test_emitter() -> ScanEventEmitter {
         let mut dispatcher = EventDispatcher::new();
         let mock_listener = MockEventListener::new();
-        dispatcher.register(Box::new(mock_listener));
+        let _ = dispatcher.register(Box::new(mock_listener));
         ScanEventEmitter::new(dispatcher, "test_scanner".to_string())
     }
 
@@ -698,16 +704,5 @@ mod tests {
         let view_key = PrivateKey::new([1u8; 32]);
 
         ScanContext { view_key, entropy }
-    }
-}
-
-impl std::fmt::Debug for ScanEventEmitter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ScanEventEmitter")
-            .field("source", &self.source)
-            .field("correlation_id", &self.correlation_id)
-            .field("scan_start_time", &self.scan_start_time)
-            .field("current_config", &self.current_config)
-            .finish()
     }
 }

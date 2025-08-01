@@ -330,8 +330,10 @@ impl EventDispatcher {
     ///
     /// * `max_trace_entries` - Maximum number of trace entries to keep in memory
     pub fn new_with_trace_limit(max_trace_entries: usize) -> Self {
-        let mut memory_config = MemoryConfig::default();
-        memory_config.max_trace_entries = max_trace_entries;
+        let memory_config = MemoryConfig {
+            max_trace_entries,
+            ..MemoryConfig::default()
+        };
 
         Self {
             listeners: Vec::new(),
@@ -391,11 +393,9 @@ impl EventDispatcher {
         // Registration is valid, proceed
         if self.debug_mode {
             #[cfg(target_arch = "wasm32")]
-            web_sys::console::log_1(
-                &format!("Registering event listener: {}", listener_name).into(),
-            );
+            web_sys::console::log_1(&format!("Registering event listener: {listener_name}").into());
             #[cfg(not(target_arch = "wasm32"))]
-            println!("Registering event listener: {}", listener_name);
+            println!("Registering event listener: {listener_name}");
         }
 
         self.registered_names.insert(listener_name);
@@ -417,10 +417,10 @@ impl EventDispatcher {
         if self.debug_mode {
             #[cfg(target_arch = "wasm32")]
             web_sys::console::log_1(
-                &format!("Registering event listener (unchecked): {}", listener_name).into(),
+                &format!("Registering event listener (unchecked): {listener_name}").into(),
             );
             #[cfg(not(target_arch = "wasm32"))]
-            println!("Registering event listener (unchecked): {}", listener_name);
+            println!("Registering event listener (unchecked): {listener_name}");
         }
 
         self.registered_names.insert(listener_name);
@@ -443,9 +443,9 @@ impl EventDispatcher {
 
         if self.debug_mode {
             #[cfg(target_arch = "wasm32")]
-            web_sys::console::log_1(&format!("Dispatching event: {:?}", shared_event).into());
+            web_sys::console::log_1(&format!("Dispatching event: {shared_event:?}").into());
             #[cfg(not(target_arch = "wasm32"))]
-            println!("Dispatching event: {:?}", shared_event);
+            println!("Dispatching event: {shared_event:?}");
         }
 
         // Update statistics
@@ -486,10 +486,10 @@ impl EventDispatcher {
                     // Log the error but continue with other listeners
                     #[cfg(target_arch = "wasm32")]
                     web_sys::console::error_1(
-                        &format!("Event listener '{}' failed: {}", listener_name, e).into(),
+                        &format!("Event listener '{listener_name}' failed: {e}").into(),
                     );
                     #[cfg(not(target_arch = "wasm32"))]
-                    eprintln!("Event listener '{}' failed: {}", listener_name, e);
+                    eprintln!("Event listener '{listener_name}' failed: {e}");
 
                     (false, Some(e.to_string()))
                 }
@@ -511,15 +511,13 @@ impl EventDispatcher {
                 #[cfg(target_arch = "wasm32")]
                 web_sys::console::log_1(
                     &format!(
-                        "Listener '{}' processed {} in {:?} - Success: {}",
-                        listener_name, event_type, processing_duration, success
+                        "Listener '{listener_name}' processed {event_type} in {processing_duration:?} - Success: {success}"
                     )
                     .into(),
                 );
                 #[cfg(not(target_arch = "wasm32"))]
                 println!(
-                    "Listener '{}' processed {} in {:?} - Success: {}",
-                    listener_name, event_type, processing_duration, success
+                    "Listener '{listener_name}' processed {event_type} in {processing_duration:?} - Success: {success}"
                 );
             }
         }
@@ -543,17 +541,11 @@ impl EventDispatcher {
         if self.debug_mode {
             #[cfg(target_arch = "wasm32")]
             web_sys::console::log_1(
-                &format!(
-                    "Event {} dispatch completed in {:?}",
-                    event_type, total_dispatch_duration
-                )
-                .into(),
+                &format!("Event {event_type} dispatch completed in {total_dispatch_duration:?}")
+                    .into(),
             );
             #[cfg(not(target_arch = "wasm32"))]
-            println!(
-                "Event {} dispatch completed in {:?}",
-                event_type, total_dispatch_duration
-            );
+            println!("Event {event_type} dispatch completed in {total_dispatch_duration:?}");
         }
     }
 
@@ -664,31 +656,32 @@ impl EventDispatcher {
     /// Get debugging summary as a formatted string
     pub fn get_debug_summary(&self) -> String {
         let stats = &self.stats;
+        let total_events_dispatched = stats.total_events_dispatched;
+        let total_listener_calls = stats.total_listener_calls;
+        let total_listener_errors = stats.total_listener_errors;
+        let total_processing_time = stats.total_processing_time;
+        let avg_time_per_event = if stats.total_events_dispatched > 0 {
+            stats.total_processing_time / stats.total_events_dispatched as u32
+        } else {
+            Duration::ZERO
+        };
+        let events_by_type = &stats.events_by_type;
+        let errors_by_listener = &stats.errors_by_listener;
+        let active_listeners = self.listeners.len();
+        let trace_entries = self.event_traces.len();
+        let max_trace_entries = self.memory_config.max_trace_entries;
+
         format!(
             "Event Dispatcher Debug Summary:\n\
-             - Total events dispatched: {}\n\
-             - Total listener calls: {}\n\
-             - Total listener errors: {}\n\
-             - Total processing time: {:?}\n\
-             - Average time per event: {:?}\n\
-             - Events by type: {:?}\n\
-             - Errors by listener: {:?}\n\
-             - Active listeners: {}\n\
-             - Trace entries: {}/{}",
-            stats.total_events_dispatched,
-            stats.total_listener_calls,
-            stats.total_listener_errors,
-            stats.total_processing_time,
-            if stats.total_events_dispatched > 0 {
-                stats.total_processing_time / stats.total_events_dispatched as u32
-            } else {
-                Duration::ZERO
-            },
-            stats.events_by_type,
-            stats.errors_by_listener,
-            self.listeners.len(),
-            self.event_traces.len(),
-            self.memory_config.max_trace_entries
+             - Total events dispatched: {total_events_dispatched}\n\
+             - Total listener calls: {total_listener_calls}\n\
+             - Total listener errors: {total_listener_errors}\n\
+             - Total processing time: {total_processing_time:?}\n\
+             - Average time per event: {avg_time_per_event:?}\n\
+             - Events by type: {events_by_type:?}\n\
+             - Errors by listener: {errors_by_listener:?}\n\
+             - Active listeners: {active_listeners}\n\
+             - Trace entries: {trace_entries}/{max_trace_entries}"
         )
     }
 
@@ -777,19 +770,13 @@ impl EventDispatcher {
         }
 
         if self.debug_mode {
+            let removed_entries = current_size - self.event_traces.len();
             #[cfg(target_arch = "wasm32")]
             web_sys::console::log_1(
-                &format!(
-                    "Auto cleanup: removed {} trace entries",
-                    current_size - self.event_traces.len()
-                )
-                .into(),
+                &format!("Auto cleanup: removed {removed_entries} trace entries").into(),
             );
             #[cfg(not(target_arch = "wasm32"))]
-            println!(
-                "Auto cleanup: removed {} trace entries",
-                current_size - self.event_traces.len()
-            );
+            println!("Auto cleanup: removed {removed_entries} trace entries");
         }
     }
 
@@ -1121,7 +1108,7 @@ mod native_tests {
             let event = WalletScanEvent::scan_started(
                 ScanConfig::default(),
                 (i, i + 1),
-                format!("test_{}", i),
+                format!("test_{i}"),
             );
             dispatcher.dispatch(event).await;
         }
@@ -1236,7 +1223,7 @@ mod native_tests {
             let event = WalletScanEvent::scan_started(
                 ScanConfig::default(),
                 (i, i + 1),
-                format!("test_{}", i),
+                format!("test_{i}"),
             );
             dispatcher.dispatch(event).await;
         }
@@ -1268,11 +1255,11 @@ mod native_tests {
                 0 => WalletScanEvent::scan_started(
                     ScanConfig::default(),
                     (i, i + 1),
-                    format!("test_{}", i),
+                    format!("test_{i}"),
                 ),
                 1 => WalletScanEvent::block_processed(
                     i,
-                    format!("hash_{}", i),
+                    format!("hash_{i}"),
                     i,
                     std::time::Duration::from_millis(100),
                     1,
@@ -1323,7 +1310,7 @@ mod native_tests {
             let event = WalletScanEvent::scan_started(
                 ScanConfig::default(),
                 (i, i + 1),
-                format!("test_{}", i),
+                format!("test_{i}"),
             );
             dispatcher.dispatch(event).await;
         }

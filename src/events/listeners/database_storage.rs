@@ -220,10 +220,6 @@ impl DatabaseStorageListener {
             join_handle,
         });
 
-        if self.verbose {
-            self.log("Background writer started");
-        }
-
         Ok(())
     }
 
@@ -240,10 +236,6 @@ impl DatabaseStorageListener {
                 let _ = response_rx.await;
             }
             let _ = writer.join_handle.await;
-
-            if self.verbose {
-                self.log("Background writer stopped");
-            }
         }
         Ok(())
     }
@@ -251,24 +243,15 @@ impl DatabaseStorageListener {
     /// Handle ScanStarted event
     async fn handle_scan_started(
         &mut self,
-        config: &crate::events::types::ScanConfig,
-        block_range: (u64, u64),
-        wallet_context: &str,
+        _config: &crate::events::types::ScanConfig,
+        _block_range: (u64, u64),
+        _wallet_context: &str,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        if self.verbose {
-            self.log(&format!(
-                "Scan started: wallet={}, blocks={}-{}, config={:?}",
-                wallet_context, block_range.0, block_range.1, config
-            ));
-        }
-
         // Initialize or select wallet based on context
         // For now, we'll use a simple approach - this could be enhanced
         // to handle more complex wallet selection logic
         if self.wallet_id.is_none() {
-            if self.verbose {
-                self.log("No wallet selected - scan operations will be skipped");
-            }
+            self.log("No wallet selected - scan operations will be skipped");
         }
 
         Ok(())
@@ -286,14 +269,6 @@ impl DatabaseStorageListener {
         // Update wallet's scanned block height
         if let Some(wallet_id) = self.wallet_id {
             self.update_wallet_scanned_block(wallet_id, height).await?;
-
-            if self.verbose && height % 100 == 0 {
-                // Log every 100 blocks to avoid spam
-                self.log(&format!(
-                    "Updated wallet {} scanned block to {}",
-                    wallet_id, height
-                ));
-            }
         }
 
         Ok(())
@@ -325,12 +300,7 @@ impl DatabaseStorageListener {
 
             match (output_result, transaction_result) {
                 (Ok(_), Ok(_)) => {
-                    if self.verbose {
-                        self.log(&format!(
-                            "Successfully saved output and transaction at block {}: commitment={}",
-                            block_info.height, output_data.commitment
-                        ));
-                    }
+                    // No-op
                 }
                 (Err(e), _) => {
                     self.log(&format!(
@@ -363,25 +333,14 @@ impl DatabaseStorageListener {
         _spending_transaction_data: &TransactionData,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let storage = &self.database;
-        self.log(&format!(
-            "🔍 SPENT OUTPUT EVENT: commitment={} at block {} (method: {})",
-            spent_output_data.spent_commitment,
-            spending_block_info.height,
-            spent_output_data.match_method
-        ));
 
         // Mark the output as spent in the database
-        // First, we need to find the output by commitment to get its database ID
-        self.log(&format!(
-            "🔍 Searching for output with commitment: {}",
-            spent_output_data.spent_commitment
-        ));
+
         match self
             .find_output_by_commitment(&spent_output_data.spent_commitment)
             .await
         {
             Ok(Some(output_id)) => {
-                self.log(&format!("✅ Found output with ID: {}", output_id));
                 // Mark the output as spent using the database ID
                 // Note: Using block height as pseudo-transaction ID since we don't have actual spending transaction IDs
                 // This will set outputs.status=1 and outputs.spent_in_tx_id=block_height
@@ -389,12 +348,11 @@ impl DatabaseStorageListener {
                     .mark_output_spent(output_id, spending_block_info.height)
                     .await
                 {
-                    self.log(&format!("Failed to mark output as spent: {}", e));
                     return Err(e.into());
                 }
 
                 // Also update the corresponding wallet transaction to mark it as spent
-                if let Err(e) = self
+                if let Err(_e) = self
                     .mark_transaction_as_spent(
                         &spent_output_data.spent_commitment,
                         spending_block_info.height,
@@ -402,12 +360,11 @@ impl DatabaseStorageListener {
                     )
                     .await
                 {
-                    self.log(&format!("Failed to update transaction spent status: {}", e));
                     // Don't return error here as the output marking succeeded
                 }
 
                 // Create an outbound transaction record for the spending transaction
-                if let Err(e) = self
+                if let Err(_e) = self
                     .create_outbound_transaction(
                         &spent_output_data.spent_commitment,
                         spending_block_info.height,
@@ -416,23 +373,13 @@ impl DatabaseStorageListener {
                     )
                     .await
                 {
-                    self.log(&format!("Failed to create outbound transaction: {}", e));
                     // Don't return error here as the spent marking succeeded
                 }
-
-                self.log(&format!(
-                    "Successfully marked output as spent: {} at block {}",
-                    spent_output_data.spent_commitment, spending_block_info.height
-                ));
             }
             Ok(None) => {
-                self.log(&format!(
-                    "❌ Output not found in database: {} (may not be our output)",
-                    spent_output_data.spent_commitment
-                ));
+                // No-op
             }
             Err(e) => {
-                self.log(&format!("Error finding output by commitment: {}", e));
                 return Err(e.into());
             }
         }
@@ -449,7 +396,6 @@ impl DatabaseStorageListener {
         let commitment_bytes = match hex::decode(commitment) {
             Ok(bytes) => bytes,
             Err(e) => {
-                self.log(&format!("Invalid hex commitment: {}", e));
                 return Err(format!("Invalid hex commitment: {}", e).into());
             }
         };
@@ -462,27 +408,13 @@ impl DatabaseStorageListener {
         {
             Ok(Some(stored_output)) => {
                 if let Some(output_id) = stored_output.id {
-                    self.log(&format!(
-                        "Found output with commitment: {} (ID: {})",
-                        commitment, output_id
-                    ));
                     Ok(Some(output_id))
                 } else {
-                    self.log(&format!(
-                        "Found output with commitment: {} but no ID (not saved yet?)",
-                        commitment
-                    ));
                     Ok(None)
                 }
             }
-            Ok(None) => {
-                self.log(&format!("Output not found with commitment: {}", commitment));
-                Ok(None)
-            }
-            Err(e) => {
-                self.log(&format!("Error searching for output by commitment: {}", e));
-                Err(e.into())
-            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -528,11 +460,6 @@ impl DatabaseStorageListener {
             {
                 return Err(format!("Failed to save outbound transaction: {}", e).into());
             }
-
-            self.log(&format!(
-                "✅ Created outbound transaction for spent output: {} (value: {}, block: {})",
-                commitment_hex, value, spending_block
-            ));
         }
 
         Ok(())
@@ -549,17 +476,12 @@ impl DatabaseStorageListener {
         let commitment_bytes = match hex::decode(commitment) {
             Ok(bytes) => bytes,
             Err(e) => {
-                self.log(&format!("Invalid hex commitment for transaction: {}", e));
                 return Err(format!("Invalid hex commitment: {}", e).into());
             }
         };
 
         // Create CompressedCommitment from bytes (assuming 32-byte commitment)
         if commitment_bytes.len() != 32 {
-            self.log(&format!(
-                "Invalid commitment length: expected 32 bytes, got {}",
-                commitment_bytes.len()
-            ));
             return Err("Invalid commitment length".into());
         }
 
@@ -573,24 +495,11 @@ impl DatabaseStorageListener {
             .mark_transaction_spent(&compressed_commitment, spent_at_block, input_index)
             .await
         {
-            Ok(true) => {
-                self.log(&format!(
-                    "Successfully marked transaction as spent: {} at block {}",
-                    commitment, spent_at_block
-                ));
-                Ok(())
-            }
+            Ok(true) => Ok(()),
             Ok(false) => {
-                self.log(&format!(
-                    "Transaction not found or already spent: {}",
-                    commitment
-                ));
                 Ok(()) // Not an error if transaction doesn't exist or is already spent
             }
-            Err(e) => {
-                self.log(&format!("Error marking transaction as spent: {}", e));
-                Err(e.into())
-            }
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -616,29 +525,10 @@ impl DatabaseStorageListener {
     /// Handle ScanCompleted event
     async fn handle_scan_completed(
         &mut self,
-        final_statistics: &std::collections::HashMap<String, u64>,
-        success: bool,
+        _final_statistics: &std::collections::HashMap<String, u64>,
+        _success: bool,
         _total_duration: std::time::Duration,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        if self.verbose {
-            self.log(&format!(
-                "Scan completed: success={}, stats={:?}",
-                success, final_statistics
-            ));
-        }
-
-        // Perform any cleanup or final storage operations
-        if success {
-            if let Some(wallet_id) = self.wallet_id {
-                // Optionally save final statistics to database
-                // This could be implemented as a separate statistics table
-                if self.verbose {
-                    let stats = self.database.get_wallet_statistics(Some(wallet_id)).await?;
-                    self.log(&format!("Final wallet statistics: {:?}", stats));
-                }
-            }
-        }
-
         Ok(())
     }
 
@@ -918,9 +808,6 @@ impl DatabaseStorageListener {
             {
                 Ok(result) => {
                     self.error_recovery.record_success();
-                    if self.verbose && attempt > 0 {
-                        self.log(&format!("Output save succeeded on attempt {}", attempt + 1));
-                    }
                     return Ok(result);
                 }
                 Err(e) => {
@@ -948,26 +835,11 @@ impl DatabaseStorageListener {
                         || !self.error_recovery.should_retry(attempt, is_recoverable)
                         || attempt >= max_attempts
                     {
-                        if self.verbose {
-                            self.log(&format!(
-                                "Output save failed after {} attempts: {}",
-                                attempt + 1,
-                                error_message
-                            ));
-                        }
                         return Err(e);
                     }
 
                     // Calculate retry delay
                     let delay = self.error_recovery.calculate_retry_delay(attempt);
-                    if self.verbose {
-                        self.log(&format!(
-                            "Output save failed on attempt {}, retrying in {:?}: {}",
-                            attempt + 1,
-                            delay,
-                            error_message
-                        ));
-                    }
 
                     // Wait before retry
                     #[cfg(not(target_arch = "wasm32"))]
@@ -1010,12 +882,6 @@ impl DatabaseStorageListener {
             {
                 Ok(_) => {
                     self.error_recovery.record_success();
-                    if self.verbose && attempt > 0 {
-                        self.log(&format!(
-                            "Transaction save succeeded on attempt {}",
-                            attempt + 1
-                        ));
-                    }
                     return Ok(());
                 }
                 Err(e) => {
@@ -1045,26 +911,11 @@ impl DatabaseStorageListener {
                         || !self.error_recovery.should_retry(attempt, is_recoverable)
                         || attempt >= max_attempts
                     {
-                        if self.verbose {
-                            self.log(&format!(
-                                "Transaction save failed after {} attempts: {}",
-                                attempt + 1,
-                                error_message
-                            ));
-                        }
                         return Err(e);
                     }
 
                     // Calculate retry delay
                     let delay = self.error_recovery.calculate_retry_delay(attempt);
-                    if self.verbose {
-                        self.log(&format!(
-                            "Transaction save failed on attempt {}, retrying in {:?}: {}",
-                            attempt + 1,
-                            delay,
-                            error_message
-                        ));
-                    }
 
                     // Wait before retry
                     #[cfg(not(target_arch = "wasm32"))]

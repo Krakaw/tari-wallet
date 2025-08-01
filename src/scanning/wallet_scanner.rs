@@ -1223,19 +1223,6 @@ impl WalletScanner {
         data_processor: &mut T,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
     ) -> LightweightWalletResult<ScanResult> {
-        // Log scan start if verbose logging is enabled
-        if self.config.verbose_logging {
-            println!("🚀 Starting wallet scan with data processor");
-            println!("   • Batch size: {}", self.config.batch_size);
-            if let Some(timeout) = self.config.timeout {
-                println!("   • Timeout: {timeout:?}");
-            }
-            println!(
-                "   • Event emitter: {}",
-                self.config.event_emitter.is_some()
-            );
-        }
-
         let start_time = Instant::now();
 
         // Emit scan started event if event emitter is available
@@ -1342,21 +1329,15 @@ impl WalletScanner {
                 Ok(ScanResult::Interrupted(wallet_state, metadata))
             }
             Err(e) => {
-                if self.config.verbose_logging {
-                    println!("❌ Scan failed after {:?}: {}", start_time.elapsed(), e);
-                }
-
                 // Emit scan error event if event emitter is available
                 if let Some(event_emitter) = self.config.event_emitter.as_mut() {
                     let current_block = from_block; // We don't know how far we got
                     event_emitter
                         .emit_scan_error(&e, Some(current_block), true, 0)
                         .await
-                        .unwrap_or_else(|err| {
+                        .unwrap_or_else(|_err| {
                             // Don't let event emission errors mask the original error
-                            if self.config.verbose_logging {
-                                println!("⚠️ Failed to emit error event: {}", err);
-                            }
+                            // TODO: Handle this error, does this constitute a critical error?
                         });
                 }
 
@@ -1403,16 +1384,6 @@ impl WalletScanner {
             });
         }
 
-        // Log scan start if verbose logging is enabled
-        if self.config.verbose_logging && !config.quiet {
-            println!("🚀 Starting wallet scan with event-driven scanner");
-            println!("   • Batch size: {}", self.config.batch_size);
-            if let Some(timeout) = self.config.timeout {
-                println!("   • Timeout: {timeout:?}");
-            }
-            println!("   • Event emitter: configured");
-        }
-
         let start_time = Instant::now();
 
         // Check that event emitter is configured
@@ -1449,12 +1420,7 @@ impl WalletScanner {
                 }
                 Ok(ScanResult::Interrupted(wallet_state, metadata))
             }
-            Err(e) => {
-                if self.config.verbose_logging && !config.quiet {
-                    println!("❌ Scan failed after {:?}: {}", start_time.elapsed(), e);
-                }
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -1493,10 +1459,6 @@ impl WalletScanner {
 
                     // Check if this is a retryable error and we haven't exceeded max retries
                     if attempts <= max_retries && self.is_retryable_error(&e) {
-                        if self.config.verbose_logging {
-                            println!("⚠️  Scan attempt {attempts} failed, retrying: {e}");
-                        }
-
                         // Calculate delay with exponential backoff if enabled
                         let delay = if self.config.retry_config.exponential_backoff {
                             let exp = (attempts - 1).min(10) as u32; // Cap to prevent overflow
@@ -1548,10 +1510,6 @@ impl WalletScanner {
 
                     // Check if this is a retryable error and we haven't exceeded max retries
                     if attempts <= max_retries && self.is_retryable_error(&e) {
-                        if self.config.verbose_logging && !config.quiet {
-                            println!("⚠️  Scan attempt {attempts} failed, retrying: {e}");
-                        }
-
                         // Calculate delay with exponential backoff if enabled
                         let delay = if self.config.retry_config.exponential_backoff {
                             let exp = (attempts - 1).min(10) as u32; // Cap to prevent overflow
@@ -1702,7 +1660,7 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
     mut progress_tracker: Option<&mut ProgressTracker>,
     batch_size: usize,
-    verbose_logging: bool,
+    _verbose_logging: bool,
     mut event_emitter: Option<&mut crate::scanning::event_emitter::ScanEventEmitter>,
 ) -> LightweightWalletResult<ScanResult> {
     // Initialize scanning state
@@ -1712,15 +1670,6 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
     if let Some(tracker) = progress_tracker.as_mut() {
         let total_blocks = to_block - from_block + 1;
         tracker.set_total_blocks(total_blocks as usize);
-    }
-
-    if verbose_logging {
-        println!(
-            "🔍 Scanning blocks {} to {} ({} blocks total)...",
-            format_number(from_block),
-            format_number(to_block),
-            format_number(to_block - from_block + 1)
-        );
     }
 
     // Create extraction config from scan context
@@ -1743,9 +1692,6 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
     while current_block <= to_block {
         // Check for cancellation
         if *cancel_rx.borrow() {
-            if verbose_logging {
-                println!("\n🛑 Scan cancelled by user");
-            }
             let metadata = ScanMetadata::new(
                 from_block,
                 current_block.saturating_sub(1),
@@ -1861,10 +1807,6 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
                     // Send block data to processor
                     data_processor.process_block(block_data).await?;
 
-                    if verbose_logging && found_outputs > 0 {
-                        println!("Block {}: found {} outputs", block.height, found_outputs);
-                    }
-
                     // Update progress with actual wallet activity found
                     if let Some(tracker) = progress_tracker.as_mut() {
                         tracker.update(block.height, found_outputs, spent_outputs_count);
@@ -1890,9 +1832,8 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
                 blocks_processed += batch_size_actual;
 
                 // Update progress display
-                if verbose_logging
-                    && (blocks_processed % 10 == 0 || last_progress_update.elapsed().as_secs() >= 1)
-                {
+                // TODO: Is this needed? We should be updating progress via the event emitter
+                if blocks_processed % 10 == 0 || last_progress_update.elapsed().as_secs() >= 1 {
                     if let Some(tracker) = progress_tracker.as_ref() {
                         let _progress_info = tracker.get_progress_info();
                         // Progress callbacks are handled internally by ProgressTracker
@@ -1903,26 +1844,12 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
                 current_block = batch_end + 1;
             }
             Err(e) => {
-                if verbose_logging {
-                    eprintln!("❌ Error getting blocks {current_block}-{batch_end}: {e}");
-                }
                 return Err(e);
             }
         }
     }
 
     // Wallet state has been updated directly by the block scanning logic
-    let total_blocks_scanned = to_block - from_block + 1;
-    if verbose_logging {
-        println!("✅ Completed scanning {total_blocks_scanned} blocks");
-        if !wallet_state.transactions.is_empty() {
-            println!(
-                "   Found {} total transactions",
-                wallet_state.transactions.len()
-            );
-        }
-        println!(); // Clear progress line
-    }
 
     // Post-processing step: mark spent outputs using blockchain input data
     if let Some(database_processor) = data_processor
@@ -1932,10 +1859,6 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
         if !database_processor.is_memory_only() {
             // For database storage, we need to get the wallet_id from the storage
             if let Some(wallet_id) = database_processor.storage().wallet_id {
-                if verbose_logging {
-                    println!("🔍 Post-processing: marking spent outputs from blockchain inputs...");
-                }
-
                 // Access the underlying database storage to call mark_spent_outputs_from_inputs
                 #[cfg(feature = "storage")]
                 if let Some(ref database) = database_processor.storage().database {
@@ -1943,17 +1866,7 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
                         .mark_spent_outputs_from_inputs(wallet_id, from_block, to_block)
                         .await
                     {
-                        Ok(spent_count) => {
-                            if verbose_logging && spent_count > 0 {
-                                println!("   Marked {} outputs as spent", spent_count);
-                            }
-                        }
-                        Err(e) => {
-                            if verbose_logging {
-                                eprintln!("⚠️  Warning: Failed to mark spent outputs: {}", e);
-                            }
-                            // Don't fail the scan for this error - it's post-processing
-                        }
+                        _ => {}
                     }
                 }
             }
@@ -2150,7 +2063,8 @@ async fn scan_wallet_across_blocks_with_cancellation(
                         println!("Block {}: found {} outputs", block.height, found_outputs);
                     }
 
-                    // If outputs were found, emit output found events for each
+                    // Emit individual OutputFound events for database storage and detailed logging
+                    // (Progress counting is handled by BlockProcessed events to avoid double counting)
                     if found_outputs > 0 {
                         // Get the transactions that were just added to wallet_state for this block
                         let block_transactions: Vec<_> = wallet_state

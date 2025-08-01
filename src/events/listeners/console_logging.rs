@@ -321,7 +321,7 @@ impl ConsoleLoggingListener {
                 let secs = duration.as_secs();
                 let millis = duration.subsec_millis();
                 let dt = chrono::DateTime::from_timestamp(secs as i64, 0)
-                    .unwrap_or_else(|| chrono::Utc::now());
+                    .unwrap_or_else(chrono::Utc::now);
                 format!(
                     "{}{}[{}]{} ",
                     self.colors.dim,
@@ -400,8 +400,8 @@ impl ConsoleLoggingListener {
 
         // Use appropriate output stream based on event type
         match event {
-            WalletScanEvent::ScanError { .. } => eprintln!("{}", formatted),
-            _ => println!("{}", formatted),
+            WalletScanEvent::ScanError { .. } => eprintln!("{formatted}"),
+            _ => println!("{formatted}"),
         }
     }
 
@@ -429,15 +429,15 @@ impl ConsoleLoggingListener {
         let block_count = block_range.1.saturating_sub(block_range.0) + 1;
 
         let message = format!(
-            "{}Starting scan{} for '{}' - blocks {}-{} ({} blocks) [batch: {}, timeout: {}]",
-            self.colors.bold,
-            self.colors.reset,
-            wallet_context,
-            block_range.0,
-            block_range.1,
-            block_count,
-            batch_size,
-            timeout
+            "{bold}Starting scan{reset} for '{context}' - blocks {start}-{end} ({count} blocks) [batch: {batch}, timeout: {timeout}]",
+            bold = self.colors.bold,
+            reset = self.colors.reset,
+            context = wallet_context,
+            start = block_range.0,
+            end = block_range.1,
+            count = block_count,
+            batch = batch_size,
+            timeout = timeout
         );
 
         self.log_message(
@@ -485,6 +485,7 @@ impl ConsoleLoggingListener {
                         .as_secs(),
                     processing_duration: *processing_duration,
                     outputs_count,
+                    spent_outputs_count: 0,
                 },
                 self.colors.debug,
                 "DEBUG",

@@ -212,7 +212,6 @@ mod tests {
         // Verify the module is properly accessible
         // This test confirms the module structure is set up correctly
         // Individual listener tests will be added as they are implemented
-        assert!(true, "Listeners module structure is accessible");
     }
 
     #[test]
@@ -223,6 +222,5 @@ mod tests {
 
         // We can't run the actual examples yet since the listeners aren't implemented,
         // but we can verify the module structure is in place for them
-        assert!(true, "Module documentation structure is valid");
     }
 }

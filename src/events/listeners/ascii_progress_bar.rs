@@ -242,9 +242,9 @@ impl AsciiProgressBarListener {
         let filled_width = filled_width.min(self.config.bar_width);
 
         let progress_bar = format!(
-            "{}{}",
-            "█".repeat(filled_width),
-            "░".repeat(self.config.bar_width - filled_width)
+            "{filled}{empty}",
+            filled = "█".repeat(filled_width),
+            empty = "░".repeat(self.config.bar_width - filled_width)
         );
 
         // Format ETA display
@@ -252,15 +252,15 @@ impl AsciiProgressBarListener {
             if let Some(eta) = state.eta {
                 let eta_secs = eta.as_secs();
                 if eta_secs < 60 {
-                    format!(" ETA: {}s", eta_secs)
+                    format!(" ETA: {eta_secs}s")
                 } else if eta_secs < 3600 {
                     let minutes = eta_secs / 60;
                     let seconds = eta_secs % 60;
-                    format!(" ETA: {}m{}s", minutes, seconds)
+                    format!(" ETA: {minutes}m{seconds}s")
                 } else {
                     let hours = eta_secs / 3600;
                     let minutes = (eta_secs % 3600) / 60;
-                    format!(" ETA: {}h{}m", hours, minutes)
+                    format!(" ETA: {hours}h{minutes}m")
                 }
             } else {
                 String::new()
@@ -402,26 +402,22 @@ impl EventListener for AsciiProgressBarListener {
                 );
             }
             WalletScanEvent::OutputFound { .. } => {
-                // Increment output count (we could track this more precisely
-                // by parsing the event data, but for now just trigger a display update)
-                if let Ok(mut state) = self.state.lock() {
-                    state.outputs_found += 1;
-                    // Display updated progress with new output count
-                    self.display_progress(&state);
-                }
+                // Output counts are now tracked via BlockProcessed events to avoid double counting
+                // Individual OutputFound events are used for detailed logging but not counting
             }
             WalletScanEvent::SpentOutputFound { .. } => {
-                // Increment spent output count
-                if let Ok(mut state) = self.state.lock() {
-                    state.spent_found += 1;
-                    // Display updated progress with new spent count
-                    self.display_progress(&state);
-                }
+                // Spent output counts are now tracked via BlockProcessed events to avoid double counting
+                // Individual SpentOutputFound events are used for detailed logging but not counting
             }
-            WalletScanEvent::BlockProcessed { .. } => {
-                // Block processed events might contain output counts
-                // For now, just ensure we display current state
-                if let Ok(state) = self.state.lock() {
+            WalletScanEvent::BlockProcessed {
+                outputs_count,
+                spent_outputs_count,
+                ..
+            } => {
+                // Update output counts from block processing and display progress
+                if let Ok(mut state) = self.state.lock() {
+                    state.outputs_found += outputs_count;
+                    state.spent_found += spent_outputs_count;
                     if state.scan_active {
                         self.display_progress(&state);
                     }

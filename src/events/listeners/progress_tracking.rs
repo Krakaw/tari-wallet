@@ -58,27 +58,31 @@ impl ScanProgressInfo {
     pub fn summary(&self) -> String {
         if self.is_completed {
             format!(
-                "Scan completed: {} blocks processed, {} outputs found in {:?}",
-                self.blocks_processed, self.outputs_found, self.elapsed
+                "Scan completed: {blocks_processed} blocks processed, {outputs_found} outputs found in {elapsed:?}",
+                blocks_processed = self.blocks_processed,
+                outputs_found = self.outputs_found,
+                elapsed = self.elapsed
             )
         } else if self.is_cancelled {
             format!(
-                "Scan cancelled: {} blocks processed, {} outputs found after {:?}",
-                self.blocks_processed, self.outputs_found, self.elapsed
+                "Scan cancelled: {blocks_processed} blocks processed, {outputs_found} outputs found after {elapsed:?}",
+                blocks_processed = self.blocks_processed,
+                outputs_found = self.outputs_found,
+                elapsed = self.elapsed
             )
         } else {
             let eta_str = self
                 .eta
-                .map(|eta| format!(", ETA: {:?}", eta))
+                .map(|eta| format!(", ETA: {eta:?}"))
                 .unwrap_or_default();
             format!(
-                "Progress: {:.1}% ({}/{}), {} outputs found, {:.1} blocks/sec{}",
-                self.progress_percent,
-                self.blocks_processed,
-                self.total_blocks,
-                self.outputs_found,
-                self.blocks_per_sec,
-                eta_str
+                "Progress: {progress_percent:.1}% ({blocks_processed}/{total_blocks}), {outputs_found} outputs found, {blocks_per_sec:.1} blocks/sec{eta_str}",
+                progress_percent = self.progress_percent,
+                blocks_processed = self.blocks_processed,
+                total_blocks = self.total_blocks,
+                outputs_found = self.outputs_found,
+                blocks_per_sec = self.blocks_per_sec,
+                eta_str = eta_str
             )
         }
     }
@@ -179,7 +183,7 @@ pub struct ProgressTrackingListener {
 }
 
 /// Internal state for progress tracking
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct ProgressState {
     /// Current block being processed
     current_block: u64,
@@ -205,25 +209,6 @@ struct ProgressState {
     has_errors: bool,
     /// Block range from scan start
     block_range: Option<(u64, u64)>,
-}
-
-impl Default for ProgressState {
-    fn default() -> Self {
-        Self {
-            current_block: 0,
-            total_blocks: 0,
-            blocks_processed: 0,
-            outputs_found: 0,
-            inputs_found: 0,
-            start_time: None,
-            last_update_time: None,
-            last_block_height: 0,
-            is_completed: false,
-            is_cancelled: false,
-            has_errors: false,
-            block_range: None,
-        }
-    }
 }
 
 impl ProgressTrackingListener {
@@ -347,8 +332,10 @@ impl ProgressTrackingListener {
 
             if self.verbose {
                 self.log(&format!(
-                    "Scan started: blocks {}-{} ({} total)",
-                    block_range.0, block_range.1, state.total_blocks
+                    "Scan started: blocks {from}-{to} ({total} total)",
+                    from = block_range.0,
+                    to = block_range.1,
+                    total = state.total_blocks
                 ));
             }
         }
@@ -409,8 +396,9 @@ impl ProgressTrackingListener {
 
             if self.verbose {
                 self.log(&format!(
-                    "Output found at block {} (total: {})",
-                    state.current_block, state.outputs_found
+                    "Output found at block {current_block} (total: {outputs_found})",
+                    current_block = state.current_block,
+                    outputs_found = state.outputs_found
                 ));
             }
         }
@@ -487,7 +475,7 @@ impl ProgressTrackingListener {
 
         if let Some(progress_info) = progress_info {
             if self.verbose {
-                self.log(&format!("Scan completed: success={}", success));
+                self.log(&format!("Scan completed: success={success}"));
             }
 
             self.trigger_completion_callback(&progress_info).await;
@@ -511,8 +499,7 @@ impl ProgressTrackingListener {
 
         if self.verbose {
             self.log(&format!(
-                "Scan error at block {:?}: {}",
-                block_height, error_message
+                "Scan error at block {block_height:?}: {error_message}"
             ));
         }
 
@@ -549,7 +536,7 @@ impl ProgressTrackingListener {
 
         if let Some(progress_info) = progress_info {
             if self.verbose {
-                self.log(&format!("Scan cancelled: {}", reason));
+                self.log(&format!("Scan cancelled: {reason}"));
             }
 
             self.trigger_completion_callback(&progress_info).await;
@@ -656,13 +643,13 @@ impl ProgressTrackingListener {
 
     /// Log a message (platform-specific)
     fn log(&self, message: &str) {
-        let log_message = format!("[ProgressTrackingListener] {}", message);
+        let log_message = format!("[ProgressTrackingListener] {message}");
 
         #[cfg(target_arch = "wasm32")]
         web_sys::console::log_1(&log_message.into());
 
         #[cfg(not(target_arch = "wasm32"))]
-        println!("{}", log_message);
+        println!("{log_message}");
     }
 }
 
@@ -1349,7 +1336,7 @@ mod tests {
         for i in 1..=5 {
             let block_event = Arc::new(WalletScanEvent::block_processed(
                 1000 + i,
-                format!("block_hash_{}", i),
+                format!("block_hash_{i}"),
                 1697123456,
                 Duration::from_millis(100),
                 0,

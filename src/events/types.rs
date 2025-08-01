@@ -404,6 +404,7 @@ pub enum WalletScanEvent {
         timestamp: u64,
         processing_duration: Duration,
         outputs_count: usize,
+        spent_outputs_count: usize,
     },
     /// Emitted when an output is found for the wallet
     OutputFound {
@@ -490,39 +491,42 @@ impl EventType for WalletScanEvent {
                 wallet_context,
                 ..
             } => Some(format!(
-                "blocks: {}-{}, wallet: {}",
-                block_range.0, block_range.1, wallet_context
+                "blocks: {}-{}, wallet: {wallet_context}",
+                block_range.0, block_range.1
             )),
             WalletScanEvent::BlockProcessed {
                 height,
                 outputs_count,
                 ..
-            } => Some(format!("height: {}, outputs: {}", height, outputs_count)),
+            } => Some(format!("height: {height}, outputs: {outputs_count}")),
             WalletScanEvent::OutputFound {
                 block_info,
                 output_data,
                 ..
-            } => Some(format!(
-                "block: {}, amount: {}, mine: {}",
-                block_info.height,
-                output_data
+            } => {
+                let amount_str = output_data
                     .amount
-                    .map_or("unknown".to_string(), |a| a.to_string()),
-                output_data.is_mine
-            )),
+                    .map_or("unknown".to_string(), |a| a.to_string());
+                Some(format!(
+                    "block: {}, amount: {amount_str}, mine: {}",
+                    block_info.height, output_data.is_mine
+                ))
+            }
             WalletScanEvent::SpentOutputFound {
                 spending_block_info,
                 spent_output_data,
                 ..
-            } => Some(format!(
-                "block: {}, amount: {}, method: {}, input: {}",
-                spending_block_info.height,
-                spent_output_data
+            } => {
+                let amount_str = spent_output_data
                     .spent_amount
-                    .map_or("unknown".to_string(), |a| a.to_string()),
-                spent_output_data.match_method,
-                spent_output_data.input_index
-            )),
+                    .map_or("unknown".to_string(), |a| a.to_string());
+                Some(format!(
+                    "block: {}, amount: {amount_str}, method: {}, input: {}",
+                    spending_block_info.height,
+                    spent_output_data.match_method,
+                    spent_output_data.input_index
+                ))
+            }
             WalletScanEvent::ScanProgress {
                 current_block,
                 total_blocks,
@@ -530,35 +534,32 @@ impl EventType for WalletScanEvent {
                 speed_blocks_per_second,
                 estimated_time_remaining,
                 ..
-            } => Some(format!(
-                "{}/{} ({:.1}%), speed: {:.1} bps, ETA: {}",
-                current_block,
-                total_blocks,
-                percentage,
-                speed_blocks_per_second,
-                estimated_time_remaining
-                    .map_or("unknown".to_string(), |dur| format!("{}s", dur.as_secs()))
-            )),
+            } => {
+                let eta_str = estimated_time_remaining.map_or("unknown".to_string(), |dur| {
+                    let secs = dur.as_secs();
+                    format!("{secs}s")
+                });
+                Some(format!(
+                    "{current_block}/{total_blocks} ({percentage:.1}%), speed: {speed_blocks_per_second:.1} bps, ETA: {eta_str}"
+                ))
+            }
             WalletScanEvent::ScanCompleted {
                 success,
                 final_statistics,
                 total_duration,
                 ..
-            } => Some(format!(
-                "success: {}, duration: {:?}, stats: {} items",
-                success,
-                total_duration,
-                final_statistics.len()
-            )),
+            } => {
+                let stats_count = final_statistics.len();
+                Some(format!(
+                    "success: {success}, duration: {total_duration:?}, stats: {stats_count} items"
+                ))
+            }
             WalletScanEvent::ScanError {
                 error_message,
                 block_height,
                 ..
-            } => Some(format!(
-                "error: {}, block: {:?}",
-                error_message, block_height
-            )),
-            WalletScanEvent::ScanCancelled { reason, .. } => Some(format!("reason: {}", reason)),
+            } => Some(format!("error: {error_message}, block: {block_height:?}")),
+            WalletScanEvent::ScanCancelled { reason, .. } => Some(format!("reason: {reason}")),
         }
     }
 }
@@ -582,8 +583,8 @@ impl SerializableEvent for WalletScanEvent {
                 ..
             } => {
                 format!(
-                    "Scan started for wallet '{}' on blocks {}-{}",
-                    wallet_context, block_range.0, block_range.1
+                    "Scan started for wallet '{wallet_context}' on blocks {}-{}",
+                    block_range.0, block_range.1
                 )
             }
             WalletScanEvent::BlockProcessed {
@@ -591,7 +592,7 @@ impl SerializableEvent for WalletScanEvent {
                 outputs_count,
                 ..
             } => {
-                format!("Processed block {} with {} outputs", height, outputs_count)
+                format!("Processed block {height} with {outputs_count} outputs")
             }
             WalletScanEvent::OutputFound {
                 block_info,
@@ -601,15 +602,15 @@ impl SerializableEvent for WalletScanEvent {
             } => {
                 let amount_str = output_data
                     .amount
-                    .map_or("unknown amount".to_string(), |a| format!("{} units", a));
+                    .map_or("unknown amount".to_string(), |a| format!("{a} units"));
                 let mine_str = if output_data.is_mine {
                     "mine"
                 } else {
                     "not mine"
                 };
                 format!(
-                    "Found output at block {} ({}, {}, addr: {})",
-                    block_info.height, amount_str, mine_str, address_info.address
+                    "Found output at block {} ({amount_str}, {mine_str}, addr: {})",
+                    block_info.height, address_info.address
                 )
             }
             WalletScanEvent::SpentOutputFound {
@@ -621,11 +622,10 @@ impl SerializableEvent for WalletScanEvent {
                 let amount_str = spent_output_data
                     .spent_amount
                     .or(original_output_info.amount)
-                    .map_or("unknown amount".to_string(), |a| format!("{} units", a));
+                    .map_or("unknown amount".to_string(), |a| format!("{a} units"));
                 format!(
-                    "Output spent at block {} ({}, method: {}, input index: {})",
+                    "Output spent at block {} ({amount_str}, method: {}, input index: {})",
                     spending_block_info.height,
-                    amount_str,
                     spent_output_data.match_method,
                     spent_output_data.input_index
                 )
@@ -641,16 +641,19 @@ impl SerializableEvent for WalletScanEvent {
                 let eta_str = estimated_time_remaining.map_or("unknown ETA".to_string(), |dur| {
                     let secs = dur.as_secs();
                     if secs < 60 {
-                        format!("{}s", secs)
+                        format!("{secs}s")
                     } else if secs < 3600 {
-                        format!("{}m {}s", secs / 60, secs % 60)
+                        let mins = secs / 60;
+                        let rem_secs = secs % 60;
+                        format!("{mins}m {rem_secs}s")
                     } else {
-                        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+                        let hours = secs / 3600;
+                        let rem_mins = (secs % 3600) / 60;
+                        format!("{hours}h {rem_mins}m")
                     }
                 });
                 format!(
-                    "Scan progress: {}/{} blocks ({:.1}%) at {:.1} blocks/sec, {}",
-                    current_block, total_blocks, percentage, speed_blocks_per_second, eta_str
+                    "Scan progress: {current_block}/{total_blocks} blocks ({percentage:.1}%) at {speed_blocks_per_second:.1} blocks/sec, {eta_str}"
                 )
             }
             WalletScanEvent::ScanCompleted {
@@ -662,11 +665,15 @@ impl SerializableEvent for WalletScanEvent {
                 let duration_str = {
                     let secs = total_duration.as_secs();
                     if secs < 60 {
-                        format!("{}s", secs)
+                        format!("{secs}s")
                     } else if secs < 3600 {
-                        format!("{}m {}s", secs / 60, secs % 60)
+                        let mins = secs / 60;
+                        let rem_secs = secs % 60;
+                        format!("{mins}m {rem_secs}s")
                     } else {
-                        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+                        let hours = secs / 3600;
+                        let rem_mins = (secs % 3600) / 60;
+                        format!("{hours}h {rem_mins}m")
                     }
                 };
 
@@ -680,18 +687,15 @@ impl SerializableEvent for WalletScanEvent {
                 .filter_map(|(key, unit)| {
                     final_statistics
                         .get(*key)
-                        .map(|value| format!("{} {}", value, unit))
+                        .map(|value| format!("{value} {unit}"))
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
 
                 if key_stats.is_empty() {
-                    format!("Scan completed (success: {}) in {}", success, duration_str)
+                    format!("Scan completed (success: {success}) in {duration_str}")
                 } else {
-                    format!(
-                        "Scan completed (success: {}) in {} - {}",
-                        success, duration_str, key_stats
-                    )
+                    format!("Scan completed (success: {success}) in {duration_str} - {key_stats}")
                 }
             }
             WalletScanEvent::ScanError {
@@ -699,11 +703,11 @@ impl SerializableEvent for WalletScanEvent {
                 block_height,
                 ..
             } => match block_height {
-                Some(height) => format!("Scan error at block {}: {}", height, error_message),
-                None => format!("Scan error: {}", error_message),
+                Some(height) => format!("Scan error at block {height}: {error_message}"),
+                None => format!("Scan error: {error_message}"),
             },
             WalletScanEvent::ScanCancelled { reason, .. } => {
-                format!("Scan cancelled: {}", reason)
+                format!("Scan cancelled: {reason}")
             }
         }
     }
@@ -722,6 +726,138 @@ impl WalletScanEvent {
     /// Create a shared event from JSON string
     pub fn shared_from_json(json: &str) -> Result<SharedEvent, String> {
         Self::from_json(json).map(Arc::new)
+    }
+}
+
+/// Helper functions for creating events with proper metadata
+impl WalletScanEvent {
+    /// Create a new ScanStarted event
+    pub fn scan_started(
+        config: ScanConfig,
+        block_range: (u64, u64),
+        wallet_context: String,
+    ) -> Self {
+        Self::ScanStarted {
+            metadata: EventMetadata::new("wallet_scanner"),
+            config,
+            block_range,
+            wallet_context,
+        }
+    }
+
+    /// Create a new BlockProcessed event
+    pub fn block_processed(
+        height: u64,
+        hash: String,
+        timestamp: u64,
+        processing_duration: Duration,
+        outputs_count: usize,
+    ) -> Self {
+        Self::BlockProcessed {
+            metadata: EventMetadata::new("wallet_scanner"),
+            height,
+            hash,
+            timestamp,
+            processing_duration,
+            outputs_count,
+            spent_outputs_count: 0,
+        }
+    }
+
+    /// Create a new OutputFound event
+    pub fn output_found(
+        output_data: OutputData,
+        block_info: BlockInfo,
+        address_info: AddressInfo,
+        transaction_data: TransactionData,
+    ) -> Self {
+        Self::OutputFound {
+            metadata: EventMetadata::new("wallet_scanner"),
+            output_data,
+            block_info,
+            address_info,
+            transaction_data,
+        }
+    }
+
+    /// Create a new SpentOutputFound event
+    pub fn spent_output_found(
+        spent_output_data: SpentOutputData,
+        spending_block_info: BlockInfo,
+        original_output_info: OutputData,
+        spending_transaction_data: TransactionData,
+    ) -> Self {
+        Self::SpentOutputFound {
+            metadata: EventMetadata::new("wallet_scanner"),
+            spent_output_data,
+            spending_block_info,
+            original_output_info,
+            spending_transaction_data,
+        }
+    }
+
+    /// Create a new ScanProgress event
+    pub fn scan_progress(
+        current_block: u64,
+        total_blocks: u64,
+        percentage: f64,
+        speed_blocks_per_second: f64,
+        estimated_time_remaining: Option<Duration>,
+    ) -> Self {
+        Self::ScanProgress {
+            metadata: EventMetadata::new("wallet_scanner"),
+            current_block,
+            total_blocks,
+            percentage,
+            speed_blocks_per_second,
+            estimated_time_remaining,
+        }
+    }
+
+    /// Create a new ScanCompleted event
+    pub fn scan_completed(
+        final_statistics: HashMap<String, u64>,
+        success: bool,
+        total_duration: Duration,
+    ) -> Self {
+        Self::ScanCompleted {
+            metadata: EventMetadata::new("wallet_scanner"),
+            final_statistics,
+            success,
+            total_duration,
+        }
+    }
+
+    /// Create a new ScanError event
+    pub fn scan_error(
+        error_message: String,
+        error_code: Option<String>,
+        block_height: Option<u64>,
+        retry_info: Option<String>,
+        is_recoverable: bool,
+    ) -> Self {
+        Self::ScanError {
+            metadata: EventMetadata::new("wallet_scanner"),
+            error_message,
+            error_code,
+            block_height,
+            retry_info,
+            is_recoverable,
+        }
+    }
+
+    /// Create a new ScanCancelled event
+    pub fn scan_cancelled(
+        reason: String,
+        final_statistics: HashMap<String, u64>,
+        partial_completion: Option<f64>,
+    ) -> Self {
+        Self::ScanCancelled {
+            metadata: EventMetadata::new("wallet_scanner"),
+            reason,
+            final_statistics,
+            partial_completion,
+        }
     }
 }
 
@@ -1066,7 +1202,7 @@ mod tests {
         for (i, duration) in durations.iter().enumerate() {
             let event = WalletScanEvent::block_processed(
                 i as u64,
-                format!("0x{:016x}", i),
+                format!("0x{i:016x}"),
                 1697000000 + i as u64,
                 *duration,
                 i,
@@ -1408,7 +1544,7 @@ mod tests {
             } => {
                 assert!(!metadata.event_id.is_empty());
                 assert_eq!(metadata.source, "wallet_scanner");
-                assert_eq!(*success, true);
+                assert!(success);
                 assert_eq!(*total_duration, Duration::from_secs(300));
                 assert_eq!(final_statistics.len(), 4);
                 assert_eq!(final_statistics.get("blocks_processed"), Some(&1000));
@@ -1460,7 +1596,7 @@ mod tests {
 
         match &event {
             WalletScanEvent::ScanCompleted { success, .. } => {
-                assert_eq!(*success, false);
+                assert!(!success);
             }
             _ => panic!("Expected ScanCompleted event"),
         }
@@ -1740,136 +1876,5 @@ mod tests {
         let invalid_json = "{invalid json}";
         assert!(WalletScanEvent::from_json(invalid_json).is_err());
         assert!(WalletScanEvent::shared_from_json(invalid_json).is_err());
-    }
-}
-
-/// Helper functions for creating events with proper metadata
-impl WalletScanEvent {
-    /// Create a new ScanStarted event
-    pub fn scan_started(
-        config: ScanConfig,
-        block_range: (u64, u64),
-        wallet_context: String,
-    ) -> Self {
-        Self::ScanStarted {
-            metadata: EventMetadata::new("wallet_scanner"),
-            config,
-            block_range,
-            wallet_context,
-        }
-    }
-
-    /// Create a new BlockProcessed event
-    pub fn block_processed(
-        height: u64,
-        hash: String,
-        timestamp: u64,
-        processing_duration: Duration,
-        outputs_count: usize,
-    ) -> Self {
-        Self::BlockProcessed {
-            metadata: EventMetadata::new("wallet_scanner"),
-            height,
-            hash,
-            timestamp,
-            processing_duration,
-            outputs_count,
-        }
-    }
-
-    /// Create a new OutputFound event
-    pub fn output_found(
-        output_data: OutputData,
-        block_info: BlockInfo,
-        address_info: AddressInfo,
-        transaction_data: TransactionData,
-    ) -> Self {
-        Self::OutputFound {
-            metadata: EventMetadata::new("wallet_scanner"),
-            output_data,
-            block_info,
-            address_info,
-            transaction_data,
-        }
-    }
-
-    /// Create a new SpentOutputFound event
-    pub fn spent_output_found(
-        spent_output_data: SpentOutputData,
-        spending_block_info: BlockInfo,
-        original_output_info: OutputData,
-        spending_transaction_data: TransactionData,
-    ) -> Self {
-        Self::SpentOutputFound {
-            metadata: EventMetadata::new("wallet_scanner"),
-            spent_output_data,
-            spending_block_info,
-            original_output_info,
-            spending_transaction_data,
-        }
-    }
-
-    /// Create a new ScanProgress event
-    pub fn scan_progress(
-        current_block: u64,
-        total_blocks: u64,
-        percentage: f64,
-        speed_blocks_per_second: f64,
-        estimated_time_remaining: Option<Duration>,
-    ) -> Self {
-        Self::ScanProgress {
-            metadata: EventMetadata::new("wallet_scanner"),
-            current_block,
-            total_blocks,
-            percentage,
-            speed_blocks_per_second,
-            estimated_time_remaining,
-        }
-    }
-
-    /// Create a new ScanCompleted event
-    pub fn scan_completed(
-        final_statistics: HashMap<String, u64>,
-        success: bool,
-        total_duration: Duration,
-    ) -> Self {
-        Self::ScanCompleted {
-            metadata: EventMetadata::new("wallet_scanner"),
-            final_statistics,
-            success,
-            total_duration,
-        }
-    }
-
-    /// Create a new ScanError event
-    pub fn scan_error(
-        error_message: String,
-        error_code: Option<String>,
-        block_height: Option<u64>,
-        retry_info: Option<String>,
-        is_recoverable: bool,
-    ) -> Self {
-        Self::ScanError {
-            metadata: EventMetadata::new("wallet_scanner"),
-            error_message,
-            error_code,
-            block_height,
-            retry_info,
-            is_recoverable,
-        }
-    }
-
-    /// Create a new ScanCancelled event
-    pub fn scan_cancelled(
-        reason: String,
-        final_statistics: HashMap<String, u64>,
-        partial_completion: Option<f64>,
-    ) -> Self {
-        Self::ScanCancelled {
-            metadata: EventMetadata::new("wallet_scanner"),
-            reason,
-            final_statistics,
-            partial_completion,
-        }
     }
 }

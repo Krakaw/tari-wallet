@@ -110,36 +110,31 @@ impl std::fmt::Display for EventTestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EventTestError::CountMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "Event count mismatch: expected {}, got {}",
-                    expected, actual
-                )
+                write!(f, "Event count mismatch: expected {expected}, got {actual}")
             }
             EventTestError::TypeNotFound(event_type) => {
-                write!(f, "Event type '{}' not found", event_type)
+                write!(f, "Event type '{event_type}' not found")
             }
             EventTestError::SequenceMismatch { expected, actual } => {
                 write!(
                     f,
-                    "Event sequence mismatch: expected '{}', got '{}'",
-                    expected, actual
+                    "Event sequence mismatch: expected '{expected}', got '{actual}'"
                 )
             }
             EventTestError::ContentNotFound(content) => {
-                write!(f, "Content '{}' not found in any events", content)
+                write!(f, "Content '{content}' not found in any events")
             }
             EventTestError::Timeout(message) => {
-                write!(f, "Timeout: {}", message)
+                write!(f, "Timeout: {message}")
             }
             EventTestError::PatternFailed(message) => {
-                write!(f, "Pattern validation failed: {}", message)
+                write!(f, "Pattern validation failed: {message}")
             }
             EventTestError::PerformanceFailed(message) => {
-                write!(f, "Performance assertion failed: {}", message)
+                write!(f, "Performance assertion failed: {message}")
             }
             EventTestError::AssertionFailed(message) => {
-                write!(f, "Assertion failed: {}", message)
+                write!(f, "Assertion failed: {message}")
             }
         }
     }
@@ -318,8 +313,7 @@ impl EventPattern {
             let found = events.iter().any(|e| e.event_type == *pattern);
             if found {
                 return Err(EventTestError::PatternFailed(format!(
-                    "Forbidden event type '{}' was found",
-                    pattern
+                    "Forbidden event type '{pattern}' was found"
                 )));
             }
         }
@@ -329,7 +323,7 @@ impl EventPattern {
             let found = events.iter().any(|e| {
                 e.content
                     .as_ref()
-                    .map_or(false, |content| content.contains(pattern))
+                    .is_some_and(|content| content.contains(pattern))
             });
             if !found {
                 return Err(EventTestError::ContentNotFound(pattern.clone()));
@@ -392,8 +386,8 @@ impl PerformanceAssertion {
         if let Some(max_total) = self.max_total_duration {
             if stats.total_processing_time > max_total {
                 return Err(EventTestError::PerformanceFailed(format!(
-                    "Total processing time {:?} exceeded maximum {:?}",
-                    stats.total_processing_time, max_total
+                    "Total processing time {total:?} exceeded maximum {max_total:?}",
+                    total = stats.total_processing_time,
                 )));
             }
         }
@@ -403,8 +397,7 @@ impl PerformanceAssertion {
             if let Some(actual_avg) = stats.average_processing_time {
                 if actual_avg > max_avg {
                     return Err(EventTestError::PerformanceFailed(format!(
-                        "Average processing time {:?} exceeded maximum {:?}",
-                        actual_avg, max_avg
+                        "Average processing time {actual_avg:?} exceeded maximum {max_avg:?}"
                     )));
                 }
             }
@@ -415,8 +408,7 @@ impl PerformanceAssertion {
             let actual_rate = stats.total_events as f64 / test_duration.as_secs_f64();
             if actual_rate < min_rate {
                 return Err(EventTestError::PerformanceFailed(format!(
-                    "Event rate {:.2} events/sec was below minimum {:.2} events/sec",
-                    actual_rate, min_rate
+                    "Event rate {actual_rate:.2} events/sec was below minimum {min_rate:.2} events/sec"
                 )));
             }
         }
@@ -425,9 +417,8 @@ impl PerformanceAssertion {
         if let Some(max_memory) = self.max_memory_usage {
             if mock.event_count() > max_memory {
                 return Err(EventTestError::PerformanceFailed(format!(
-                    "Memory usage {} events exceeded maximum {} events",
-                    mock.event_count(),
-                    max_memory
+                    "Memory usage {current} events exceeded maximum {max_memory} events",
+                    current = mock.event_count(),
                 )));
             }
         }
@@ -585,8 +576,7 @@ impl TestScenario {
                 mock.find_events_with_content(&format!("\"block_range\":[{},{}]", start, end));
             if events.is_empty() {
                 return Err(EventTestError::ContentNotFound(format!(
-                    "block range {}-{}",
-                    start, end
+                    "block range {start}-{end}"
                 )));
             }
         }
@@ -689,8 +679,7 @@ impl EventCapture {
             tokio::time::sleep(poll_interval).await;
         }
         Err(EventTestError::Timeout(format!(
-            "Pattern not matched within {:?}",
-            timeout
+            "Pattern not matched within {timeout:?}"
         )))
     }
 
@@ -712,8 +701,7 @@ impl EventCapture {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
         Err(EventTestError::Timeout(format!(
-            "Pattern not matched within {} iterations",
-            max_iterations
+            "Pattern not matched within {max_iterations} iterations"
         )))
     }
 
@@ -800,7 +788,7 @@ impl EventCaptureSummary {
         let serializable_timeline: Vec<(String, String)> = self
             .timeline
             .iter()
-            .map(|(time, event_type)| (format!("{:?}", time), event_type.clone()))
+            .map(|(time, event_type)| (format!("{time:?}"), event_type.clone()))
             .collect();
 
         let summary_data = serde_json::json!({
@@ -824,7 +812,7 @@ macro_rules! assert_event_count {
     ($mock:expr, $expected:expr) => {
         $mock
             .assert_event_count($expected)
-            .map_err(|e| panic!("Event count assertion failed: {}", e))?
+            .map_err(|e| panic!("Event count assertion failed: {e}"))?
     };
 }
 
@@ -834,7 +822,7 @@ macro_rules! assert_min_event_count {
     ($mock:expr, $min_expected:expr) => {
         $mock
             .assert_min_event_count($min_expected)
-            .map_err(|e| panic!("Minimum event count assertion failed: {}", e))?
+            .map_err(|e| panic!("Minimum event count assertion failed: {e}"))?
     };
 }
 
@@ -844,7 +832,7 @@ macro_rules! assert_event_type_count {
     ($mock:expr, $event_type:expr, $expected:expr) => {
         $mock
             .assert_event_type_count($event_type, $expected)
-            .map_err(|e| panic!("Event type count assertion failed: {}", e))?
+            .map_err(|e| panic!("Event type count assertion failed: {e}"))?
     };
 }
 
@@ -853,7 +841,7 @@ macro_rules! assert_event_type_count {
 macro_rules! assert_event_sequence {
     ($mock:expr, [$($event_type:expr),+ $(,)?]) => {
         $mock.assert_event_sequence(&[$($event_type),+])
-            .map_err(|e| panic!("Event sequence assertion failed: {}", e))?
+            .map_err(|e| panic!("Event sequence assertion failed: {e}"))?
     };
 }
 
@@ -863,7 +851,7 @@ macro_rules! assert_event_contains {
     ($mock:expr, $content:expr) => {
         $mock
             .assert_contains_event_with_content($content)
-            .map_err(|e| panic!("Event content assertion failed: {}", e))?
+            .map_err(|e| panic!("Event content assertion failed: {e}"))?
     };
 }
 
@@ -873,7 +861,7 @@ macro_rules! assert_last_event_type {
     ($mock:expr, $event_type:expr) => {
         $mock
             .assert_last_event_type($event_type)
-            .map_err(|e| panic!("Last event type assertion failed: {}", e))?
+            .map_err(|e| panic!("Last event type assertion failed: {e}"))?
     };
 }
 
@@ -883,7 +871,7 @@ macro_rules! assert_first_event_type {
     ($mock:expr, $event_type:expr) => {
         $mock
             .assert_first_event_type($event_type)
-            .map_err(|e| panic!("First event type assertion failed: {}", e))?
+            .map_err(|e| panic!("First event type assertion failed: {e}"))?
     };
 }
 
