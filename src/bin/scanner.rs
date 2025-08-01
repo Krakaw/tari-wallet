@@ -725,7 +725,7 @@ async fn main_with_storage() -> LightweightWalletResult<()> {
 
     // Create event emitter with the configured dispatcher
     let event_emitter = ScanEventEmitter::new(event_dispatcher, "wallet_scanner".to_string())
-        .with_fire_and_forget(false); // Synchronous event emission to ensure database consistency
+        .with_fire_and_forget(true);
 
     // Create wallet scanner with event emitter
     let mut wallet_scanner =

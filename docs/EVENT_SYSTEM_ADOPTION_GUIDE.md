@@ -40,7 +40,7 @@ use lightweight_wallet_libs::events::listeners::{
 async fn setup_event_system() -> Result<EventDispatcher, Box<dyn std::error::Error>> {
     let mut dispatcher = EventDispatcher::new();
     
-    // Add database storage
+    // Add database storage with synchronous event handling
     let db_listener = DatabaseStorageListener::new("wallet.db").await?;
     dispatcher.register(Box::new(db_listener))?;
     
@@ -90,6 +90,7 @@ use lightweight_wallet_libs::events::types::WalletScanEvent;
 let scan_started = WalletScanEvent::scan_started(config, range, wallet_id);
 let block_processed = WalletScanEvent::block_processed(height, hash, timestamp, duration, outputs);
 let output_found = WalletScanEvent::output_found(output_data, block_info, address_info);
+let spent_output_found = WalletScanEvent::spent_output_found(spent_transaction, block_info, input_index, match_method);
 let scan_progress = WalletScanEvent::scan_progress(current, total, percentage, speed, eta);
 let scan_completed = WalletScanEvent::scan_completed(success, stats, wallet_state);
 let scan_error = WalletScanEvent::scan_error(error, block_height, retry_info);
@@ -138,6 +139,11 @@ impl EventListener for MyCustomListener {
                 // Handle output found event
                 println!("Output found: {:?}", output_data);
             }
+            WalletScanEvent::SpentOutputFound { spent_transaction, match_method, .. } => {
+                // Handle spent output event
+                println!("Output spent: {} (method: {})", 
+                    hex::encode(spent_transaction.commitment.as_bytes()), match_method);
+            }
             WalletScanEvent::ScanProgress { percentage, .. } => {
                 // Handle progress updates
                 println!("Progress: {:.1}%", percentage);
@@ -170,7 +176,7 @@ impl MyScanner {
     pub fn new(dispatcher: EventDispatcher) -> Self {
         Self {
             event_emitter: ScanEventEmitter::new(dispatcher, "my_scanner".to_string())
-                .with_fire_and_forget(true), // Non-blocking event emission
+                .with_fire_and_forget(false), // Synchronous event emission for critical events
         }
     }
     
@@ -194,6 +200,17 @@ impl MyScanner {
             // Emit output found events
             for output in outputs {
                 self.event_emitter.emit_output_found(output_data, block_info, address_info).await?;
+            }
+            
+            // Emit spent output events
+            for spent_info in spent_outputs {
+                self.event_emitter.emit_spent_output_found(
+                    &spent_info.spent_transaction,
+                    &block,
+                    spent_info.input_index,
+                    &spent_info.match_method,
+                    &original_block_info,
+                ).await?;
             }
             
             // Emit progress updates
@@ -288,12 +305,12 @@ impl WalletBuilder {
 
 ### DatabaseStorageListener
 
-Replaces direct database storage backends:
+Replaces direct database storage backends and handles both inbound and outbound transactions:
 
 ```rust
 use lightweight_wallet_libs::events::listeners::DatabaseStorageListener;
 
-// Basic usage
+// Basic usage - automatically handles output_found and spent_output_found events
 let db_listener = DatabaseStorageListener::new("wallet.db").await?;
 
 // Builder pattern with custom configuration
@@ -315,6 +332,13 @@ let prod_db = DatabaseStorageListener::builder()
     .database_path("production.db")
     .build().await?;
 ```
+
+**Key Features:**
+- **Inbound transactions**: Created when `OutputFound` events are received
+- **Outbound transactions**: Created when `SpentOutputFound` events are received
+- **Transaction directions**: Automatically sets `Inbound` for outputs, `Outbound` for spent outputs
+- **Spent flags**: Marks original transactions as spent when spending is detected
+- **Conflict resolution**: Uses `INSERT OR REPLACE` to handle duplicate outputs gracefully
 
 ### ProgressTrackingListener
 
@@ -451,6 +475,7 @@ impl EventListener for MetricsListener {
                 self.total_outputs += 1;
                 "output_found"
             },
+            WalletScanEvent::SpentOutputFound { .. } => "spent_output_found",
             WalletScanEvent::ScanProgress { .. } => "scan_progress",
             WalletScanEvent::ScanCompleted { .. } => "scan_completed",
             WalletScanEvent::ScanError { .. } => "scan_error",
@@ -580,6 +605,7 @@ impl WebhookListener {
             WalletScanEvent::ScanStarted { .. } => "scan_started".to_string(),
             WalletScanEvent::BlockProcessed { .. } => "block_processed".to_string(),
             WalletScanEvent::OutputFound { .. } => "output_found".to_string(),
+            WalletScanEvent::SpentOutputFound { .. } => "spent_output_found".to_string(),
             WalletScanEvent::ScanProgress { .. } => "scan_progress".to_string(),
             WalletScanEvent::ScanCompleted { .. } => "scan_completed".to_string(),
             WalletScanEvent::ScanError { .. } => "scan_error".to_string(),
@@ -757,22 +783,30 @@ impl Scanner {
 ### Event Emission Performance
 
 - **Fire-and-forget mode**: Use `ScanEventEmitter::with_fire_and_forget(true)` for non-blocking event emission
+  - **Important**: Use `with_fire_and_forget(false)` for critical events like `SpentOutputFound` to ensure database consistency
 - **Event filtering**: Implement `wants_event()` in listeners to skip unnecessary events
 - **Batch processing**: Group related events where possible
 
 ```rust
-// Efficient event emission
+// Efficient event emission for non-critical events
 let emitter = ScanEventEmitter::new(dispatcher, "scanner".to_string())
-    .with_fire_and_forget(true);  // Non-blocking
+    .with_fire_and_forget(true);  // Non-blocking for progress updates
+
+// Critical event emission (spent outputs, errors)
+let critical_emitter = ScanEventEmitter::new(dispatcher, "scanner".to_string())
+    .with_fire_and_forget(false);  // Synchronous for data consistency
 
 // Efficient listener
 impl EventListener for EfficientListener {
     fn wants_event(&self, event: &SharedEvent) -> bool {
-        matches!(**event, WalletScanEvent::OutputFound { .. })
+        matches!(**event, 
+            WalletScanEvent::OutputFound { .. } | 
+            WalletScanEvent::SpentOutputFound { .. }
+        )
     }
     
     async fn handle_event(&mut self, event: &SharedEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Only receives OutputFound events
+        // Only receives OutputFound and SpentOutputFound events
         Ok(())
     }
 }
@@ -830,12 +864,23 @@ impl EventListener for CrossPlatformListener {
    - Verify `wants_event()` implementation returns `true`
    - Enable debug mode: `EventDispatcher::new_with_debug()`
 
-2. **Performance issues**
-   - Use fire-and-forget mode for non-critical events
+2. **Spent outputs not being detected**
+   - Verify the scanner is loading existing wallet state from the database
+   - Ensure `with_fire_and_forget(false)` is used for `SpentOutputFound` events
+   - Check that commitment-based matching is working as fallback to output hash matching
+   - Verify that wallet transactions have proper commitment values
+
+3. **Database inconsistencies**
+   - Use synchronous event emission (`with_fire_and_forget(false)`) for critical events
+   - Ensure `DatabaseStorageListener` is registered before scanning
+   - Check for UNIQUE constraint errors (should be handled automatically with `INSERT OR REPLACE`)
+
+4. **Performance issues**
+   - Use fire-and-forget mode for non-critical events (progress updates)
    - Implement event filtering in listeners
    - Monitor memory usage with `get_memory_usage()`
 
-3. **Cross-platform compilation errors**
+5. **Cross-platform compilation errors**
    - Ensure `async_trait` is used for all EventListener implementations
    - Use platform-specific logging (web_sys vs println!)
    - Check feature flags for platform-specific dependencies
@@ -882,6 +927,37 @@ async fn test_event_performance() {
     // Assert performance requirements
     perf_assertion.assert_performance(&dispatcher)?;
 }
+```
+
+## Recent Fixes and Improvements
+
+### Spent Output Detection (Fixed)
+
+A critical issue was resolved where spent outputs were not being properly detected during blockchain scanning:
+
+**Root Cause**: The `process_inputs_with_details` method was using an `else if` structure that prevented commitment-based matching when output hash values were present but didn't match wallet transactions.
+
+**Symptoms**:
+- Scanner summary showed spent outputs but database contained only inbound, unspent transactions
+- `SpentOutputFound` events were never emitted
+- All transactions appeared as unspent in the database
+
+**Solution**: Changed the logic in [`src/data_structures/block.rs`](file:///src/data_structures/block.rs) to always attempt commitment matching as a fallback when output hash matching fails.
+
+**Key Learning**: When using view-only scanning, wallet transactions have `output_hash=None` while GRPC inputs have actual output hash values, requiring commitment-based matching as a fallback.
+
+### Event System Synchronization
+
+**Critical**: For database consistency, `SpentOutputFound` events must use synchronous emission:
+
+```rust
+// Correct: Use synchronous emission for critical events
+let emitter = ScanEventEmitter::new(dispatcher, "scanner".to_string())
+    .with_fire_and_forget(false);
+
+// Incorrect: Async emission can cause race conditions for spent detection
+let emitter = ScanEventEmitter::new(dispatcher, "scanner".to_string())
+    .with_fire_and_forget(true);
 ```
 
 This guide provides comprehensive documentation for adopting the event system across the codebase. For specific implementation questions, refer to the module documentation in `src/events/` or examine the built-in listeners as examples.
