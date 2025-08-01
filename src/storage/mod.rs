@@ -5,8 +5,18 @@
 //! The current implementation includes SQLite support with room for additional
 //! backends like PostgreSQL, MongoDB, or other databases.
 
+pub mod output_status;
+#[cfg(feature = "storage")]
 pub mod sqlite;
+#[cfg(feature = "storage")]
 pub mod storage_trait;
+pub mod stored_output;
 
+pub use output_status::*;
+#[cfg(feature = "storage")]
 pub use sqlite::*;
+
+#[cfg(feature = "storage")]
 pub use storage_trait::*;
+
+pub use stored_output::*;

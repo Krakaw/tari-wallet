@@ -7,31 +7,31 @@
 //! This module is part of the scanner.rs binary refactoring effort.
 
 // Required imports for ScannerStorage functionality
-#[cfg(all(feature = "grpc", feature = "storage"))]
+#[cfg(feature = "storage")]
 use crate::{
     data_structures::{types::CompressedCommitment, wallet_transaction::WalletTransaction},
     errors::{LightweightWalletError, LightweightWalletResult},
     storage::{SqliteStorage, StoredOutput, StoredWallet, WalletStorage},
 };
 
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 use super::background_writer::{BackgroundWriter, BackgroundWriterCommand};
 
-#[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 use tokio::sync::{mpsc, oneshot};
 
-#[cfg(all(feature = "grpc", feature = "storage"))]
+#[cfg(feature = "storage")]
 use super::scan_config::{BinaryScanConfig, ScanContext};
 
-#[cfg(all(feature = "grpc", feature = "storage"))]
+#[cfg(feature = "storage")]
 use crate::{
     errors::KeyManagementError,
     key_management::seed_phrase::{mnemonic_to_bytes, CipherSeed},
 };
 
 /// Derive entropy from a seed phrase string
-#[cfg(all(feature = "grpc", feature = "storage"))]
-fn derive_entropy_from_seed_phrase(seed_phrase: &str) -> LightweightWalletResult<[u8; 16]> {
+#[cfg(feature = "storage")]
+pub fn derive_entropy_from_seed_phrase(seed_phrase: &str) -> LightweightWalletResult<[u8; 16]> {
     let encrypted_bytes = mnemonic_to_bytes(seed_phrase)?;
     let cipher_seed = CipherSeed::from_enciphered_bytes(&encrypted_bytes, None)?;
     let entropy = cipher_seed.entropy();
@@ -48,7 +48,7 @@ fn derive_entropy_from_seed_phrase(seed_phrase: &str) -> LightweightWalletResult
 /// This struct manages both memory-only and database-backed storage modes.
 /// It provides a unified interface for wallet management, transaction storage,
 /// and background processing operations.
-#[cfg(feature = "grpc")]
+#[cfg(feature = "storage")]
 pub struct ScannerStorage {
     /// Database storage interface (when storage feature is enabled)
     #[cfg(feature = "storage")]
@@ -65,7 +65,7 @@ pub struct ScannerStorage {
     pub background_writer: Option<BackgroundWriter>,
 }
 
-#[cfg(feature = "grpc")]
+#[cfg(feature = "storage")]
 impl ScannerStorage {
     /// Create a new scanner storage instance (memory-only mode)
     pub fn new_memory() -> Self {
@@ -702,9 +702,11 @@ impl ScannerStorage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::derive_entropy_from_seed_phrase;
+    use super::ScannerStorage;
+    use crate::scanning::BinaryScanConfig;
 
-    #[cfg(feature = "grpc")]
+    #[cfg(feature = "storage")]
     #[test]
     fn test_scanner_storage_new_memory() {
         let storage = ScannerStorage::new_memory();
@@ -720,7 +722,7 @@ mod tests {
         assert!(storage.background_writer.is_none());
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_scanner_storage_new_with_database_memory() {
         let storage = ScannerStorage::new_with_database(":memory:").await;
@@ -733,7 +735,7 @@ mod tests {
         assert_eq!(storage.last_saved_transaction_count, 0);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_scanner_storage_new_with_database_file() {
         let temp_path = std::env::temp_dir().join("test_scanner_storage.db");
@@ -750,7 +752,7 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_list_wallets_no_database() {
         let storage = ScannerStorage::new_memory();
@@ -763,7 +765,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_list_wallets_with_database() {
         let storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -772,7 +774,7 @@ mod tests {
         assert!(wallets.is_empty()); // New database should be empty
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_get_wallet_birthday_no_wallet() {
         let storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -781,7 +783,7 @@ mod tests {
         assert_eq!(birthday, None); // No wallet selected
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_get_wallet_birthday_no_database() {
         let storage = ScannerStorage::new_memory();
@@ -790,7 +792,7 @@ mod tests {
         assert_eq!(birthday, None); // No database
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_set_wallet_id() {
         let mut storage = ScannerStorage::new_memory();
@@ -804,7 +806,7 @@ mod tests {
         assert_eq!(storage.wallet_id, None);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_get_wallet_selection_info_no_database() {
         let storage = ScannerStorage::new_memory();
@@ -813,7 +815,7 @@ mod tests {
         assert!(wallets.is_empty());
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_get_wallet_selection_info_with_database() {
         let storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -822,7 +824,7 @@ mod tests {
         assert!(wallets.is_empty()); // New database should be empty
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_save_transactions_incremental_no_wallet() {
         let mut storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -832,7 +834,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_save_transactions_incremental_empty() {
         let mut storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -843,7 +845,7 @@ mod tests {
         assert_eq!(storage.last_saved_transaction_count, 0);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_save_transactions_incremental_tracking() {
         let mut storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -858,7 +860,7 @@ mod tests {
         assert_eq!(storage.last_saved_transaction_count, 5);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_save_transactions_memory_mode() {
         let storage = ScannerStorage::new_memory();
@@ -868,7 +870,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_save_outputs_memory_mode() {
         let storage = ScannerStorage::new_memory();
@@ -880,7 +882,7 @@ mod tests {
         assert!(output_ids.is_empty());
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_update_wallet_scanned_block_no_wallet() {
         let storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -890,7 +892,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_update_wallet_scanned_block_memory_mode() {
         let storage = ScannerStorage::new_memory();
@@ -900,7 +902,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_get_statistics_memory_mode() {
         let storage = ScannerStorage::new_memory();
@@ -911,7 +913,7 @@ mod tests {
         assert_eq!(stats.latest_scanned_block, None);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_get_statistics_with_database() {
         let storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -922,7 +924,7 @@ mod tests {
         assert_eq!(stats.current_balance, 0);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_get_unspent_outputs_count_memory_mode() {
         let storage = ScannerStorage::new_memory();
@@ -931,7 +933,7 @@ mod tests {
         assert_eq!(count, 0);
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_get_unspent_outputs_count_no_wallet() {
         let storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -940,7 +942,7 @@ mod tests {
         assert_eq!(count, 0); // No wallet selected
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_derive_entropy_from_seed_phrase_invalid() {
         // Test with invalid seed phrase
@@ -948,7 +950,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_load_scan_context_no_database() {
         let storage = ScannerStorage::new_memory();
@@ -958,7 +960,7 @@ mod tests {
         // Should get "No database available" error
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_load_scan_context_no_wallet_selected() {
         let storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -968,7 +970,7 @@ mod tests {
         // Should get "No wallet selected" error
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_handle_wallet_operations_no_database() {
         let mut storage = ScannerStorage::new_memory();
@@ -981,7 +983,7 @@ mod tests {
         assert!(result.is_none()); // No database, should return None
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_select_or_create_wallet_no_database() {
         let storage = ScannerStorage::new_memory();
@@ -992,7 +994,7 @@ mod tests {
         // Should get "No database available" error
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_select_or_create_wallet_named_not_found() {
         let storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -1003,7 +1005,7 @@ mod tests {
         // Should get wallet not found error
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage"))]
+    #[cfg(feature = "storage")]
     #[tokio::test]
     async fn test_select_or_create_wallet_no_wallets_no_keys() {
         let storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -1016,7 +1018,7 @@ mod tests {
         assert!(error_msg.contains("No wallets found"));
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     #[tokio::test]
     async fn test_background_writer_operations() {
         let mut storage = ScannerStorage::new_with_database(":memory:").await.unwrap();
@@ -1030,7 +1032,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[cfg(all(feature = "grpc", feature = "storage", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     #[tokio::test]
     async fn test_background_writer_file_database() {
         let temp_path = std::env::temp_dir().join("test_bg_writer.db");

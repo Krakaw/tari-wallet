@@ -34,20 +34,19 @@ use crate::{
 use blake2::{Blake2b, Digest};
 use tari_crypto::ristretto::{RistrettoPublicKey, RistrettoSecretKey};
 use tari_utilities::ByteArray;
-#[cfg(feature = "tracing")]
-use tracing::{debug, info};
 
 // Include GRPC scanner when the feature is enabled
 #[cfg(feature = "grpc")]
 pub mod grpc_scanner;
 
 // Include HTTP scanner
+#[cfg(feature = "http")]
 pub mod http_scanner;
 
 // Scanner refactoring modules (for binary refactoring)
 pub mod scan_config;
 
-#[cfg(all(feature = "grpc", feature = "storage"))]
+#[cfg(feature = "storage")]
 pub mod storage_manager;
 
 #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
@@ -69,6 +68,7 @@ pub mod database_processor;
 pub use grpc_scanner::{GrpcBlockchainScanner, GrpcScannerBuilder};
 
 // Re-export HTTP scanner types
+#[cfg(feature = "http")]
 pub use http_scanner::{HttpBlockchainScanner, HttpScannerBuilder};
 
 // Re-export configuration types for scanner binary operations
@@ -481,28 +481,18 @@ impl DefaultScanningLogic {
             transaction_output.commitment(),
             transaction_output.encrypted_data(),
         ) {
-            Ok((value, _mask, payment_id)) => {
-                #[cfg(feature = "tracing")]
-                info!(
-                    "Successfully decrypted output with DH approach: value={}, payment_id={:?}",
-                    value.as_u64(),
-                    payment_id
-                );
-
+            Ok((_value, _mask, _payment_id)) => {
                 // Use the extraction logic to create a proper wallet output
                 let extraction_config = ExtractionConfig::with_private_key(encryption_key);
                 match extract_wallet_output(transaction_output, &extraction_config) {
                     Ok(wallet_output) => Ok(Some(wallet_output)),
                     Err(_) => {
-                        #[cfg(feature = "tracing")]
-                        info!("Extraction failed, but decryption succeeded - creating basic wallet output");
                         Ok(None) // For now, return None to avoid constructor complexity
                     }
                 }
             }
-            Err(e) => {
-                #[cfg(feature = "tracing")]
-                debug!("DH decryption failed: {}", e);
+            Err(_e) => {
+                // TODO: Check if we should rather return an error here
                 Ok(None)
             }
         }
@@ -580,11 +570,7 @@ impl DefaultScanningLogic {
             for output in &block.outputs {
                 match extract_wallet_output(output, extraction_config) {
                     Ok(wallet_output) => wallet_outputs.push(wallet_output),
-                    Err(e) => {
-                        // Log error but continue processing other outputs
-                        #[cfg(feature = "tracing")]
-                        tracing::debug!("Failed to extract wallet output: {}", e);
-                    }
+                    Err(_e) => {} // Continue processing other outputs
                 }
             }
 
