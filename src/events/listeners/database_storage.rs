@@ -671,13 +671,13 @@ impl DatabaseStorageListener {
                         response_tx,
                     })
                     .map_err(|_| {
-                        LightweightWalletError::StorageError(
+                        crate::LightweightWalletError::StorageError(
                             "Background writer channel closed".to_string(),
                         )
                     })?;
 
                 return response_rx.await.map_err(|_| {
-                    LightweightWalletError::StorageError(
+                    crate::LightweightWalletError::StorageError(
                         "Background writer response lost".to_string(),
                     )
                 })?;
@@ -694,7 +694,7 @@ impl DatabaseStorageListener {
         wallet_id: u32,
         block_height: u64,
     ) -> LightweightWalletResult<()> {
-        #[cfg(all(feature = "grpc", not(target_arch = "wasm32")))]
+        #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(writer) = &self.background_writer {
                 let (response_tx, response_rx) = oneshot::channel();
@@ -706,13 +706,13 @@ impl DatabaseStorageListener {
                         response_tx,
                     })
                     .map_err(|_| {
-                        LightweightWalletError::StorageError(
+                        crate::LightweightWalletError::StorageError(
                             "Background writer channel closed".to_string(),
                         )
                     })?;
 
                 return response_rx.await.map_err(|_| {
-                    LightweightWalletError::StorageError(
+                    crate::LightweightWalletError::StorageError(
                         "Background writer response lost".to_string(),
                     )
                 })?;
