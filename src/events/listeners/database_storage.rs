@@ -19,7 +19,7 @@ use crate::events::{ErrorRecord, ErrorRecoveryConfig, ErrorRecoveryManager, Wall
 #[cfg(feature = "storage")]
 use crate::{
     data_structures::types::CompressedCommitment,
-    errors::LightweightWalletResult,
+    errors::WalletResult,
     storage::{SqliteStorage, StoredOutput, WalletStorage},
 };
 
@@ -101,7 +101,7 @@ impl DatabaseStorageListener {
     ///
     /// # Returns
     /// A configured DatabaseStorageListener ready for use
-    pub async fn new(database_path: &str) -> LightweightWalletResult<Self> {
+    pub async fn new(database_path: &str) -> WalletResult<Self> {
         let storage: Box<dyn WalletStorage> = if database_path == ":memory:" {
             Box::new(SqliteStorage::new_in_memory().await?)
         } else {
@@ -128,7 +128,7 @@ impl DatabaseStorageListener {
     ///
     /// # Returns
     /// A configured DatabaseStorageListener using in-memory SQLite database
-    pub async fn new_in_memory() -> LightweightWalletResult<Self> {
+    pub async fn new_in_memory() -> WalletResult<Self> {
         Self::new(":memory:").await
     }
 
@@ -198,7 +198,7 @@ impl DatabaseStorageListener {
     /// This starts an async background service for database operations
     /// to avoid blocking the main scanning thread.
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
-    pub async fn start_background_writer(&mut self) -> LightweightWalletResult<()> {
+    pub async fn start_background_writer(&mut self) -> WalletResult<()> {
         if self.background_writer.is_some() || self.database_path == ":memory:" {
             return Ok(()); // Already started or in-memory database
         }
@@ -227,7 +227,7 @@ impl DatabaseStorageListener {
 
     /// Stop the background writer service (non-WASM32 only)
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
-    pub async fn stop_background_writer(&mut self) -> LightweightWalletResult<()> {
+    pub async fn stop_background_writer(&mut self) -> WalletResult<()> {
         if let Some(writer) = self.background_writer.take() {
             let (response_tx, response_rx) = oneshot::channel();
             if writer
@@ -659,7 +659,7 @@ impl DatabaseStorageListener {
     }
 
     /// Save outputs to database using architecture-specific method
-    async fn save_outputs(&self, outputs: &[StoredOutput]) -> LightweightWalletResult<Vec<u32>> {
+    async fn save_outputs(&self, outputs: &[StoredOutput]) -> WalletResult<Vec<u32>> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(writer) = &self.background_writer {
@@ -671,15 +671,13 @@ impl DatabaseStorageListener {
                         response_tx,
                     })
                     .map_err(|_| {
-                        crate::LightweightWalletError::StorageError(
+                        crate::WalletError::StorageError(
                             "Background writer channel closed".to_string(),
                         )
                     })?;
 
                 return response_rx.await.map_err(|_| {
-                    crate::LightweightWalletError::StorageError(
-                        "Background writer response lost".to_string(),
-                    )
+                    crate::WalletError::StorageError("Background writer response lost".to_string())
                 })?;
             }
         }
@@ -693,7 +691,7 @@ impl DatabaseStorageListener {
         &self,
         wallet_id: u32,
         block_height: u64,
-    ) -> LightweightWalletResult<()> {
+    ) -> WalletResult<()> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(writer) = &self.background_writer {
@@ -706,15 +704,13 @@ impl DatabaseStorageListener {
                         response_tx,
                     })
                     .map_err(|_| {
-                        crate::LightweightWalletError::StorageError(
+                        crate::WalletError::StorageError(
                             "Background writer channel closed".to_string(),
                         )
                     })?;
 
                 return response_rx.await.map_err(|_| {
-                    crate::LightweightWalletError::StorageError(
-                        "Background writer response lost".to_string(),
-                    )
+                    crate::WalletError::StorageError("Background writer response lost".to_string())
                 })?;
             }
         }
@@ -737,7 +733,7 @@ impl DatabaseStorageListener {
     }
 
     /// Get database statistics
-    pub async fn get_statistics(&self) -> LightweightWalletResult<crate::storage::StorageStats> {
+    pub async fn get_statistics(&self) -> WalletResult<crate::storage::StorageStats> {
         self.database.get_wallet_statistics(self.wallet_id).await
     }
 
@@ -1367,7 +1363,7 @@ impl DatabaseStorageListenerBuilder {
     }
 
     /// Build the configured DatabaseStorageListener
-    pub async fn build(self) -> LightweightWalletResult<DatabaseStorageListener> {
+    pub async fn build(self) -> WalletResult<DatabaseStorageListener> {
         let mut listener = DatabaseStorageListener::new(&self.database_path).await?;
 
         listener.set_batch_size(self.batch_size);

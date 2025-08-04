@@ -20,7 +20,7 @@ use crate::{
         types::CompressedCommitment,
         wallet_transaction::{WalletState, WalletTransaction},
     },
-    errors::{LightweightWalletError, LightweightWalletResult},
+    errors::{WalletError, WalletResult},
     storage::{
         OutputFilter, OutputStatus, StorageStats, StoredOutput, StoredWallet, TransactionFilter,
         WalletStorage,
@@ -36,27 +36,25 @@ pub struct SqliteStorage {
 #[cfg(feature = "storage")]
 impl SqliteStorage {
     /// Create a new SQLite storage instance
-    pub async fn new<P: AsRef<Path>>(database_path: P) -> LightweightWalletResult<Self> {
+    pub async fn new<P: AsRef<Path>>(database_path: P) -> WalletResult<Self> {
         let connection = Connection::open(database_path).await.map_err(|e| {
-            LightweightWalletError::StorageError(format!("Failed to open SQLite database: {e}"))
+            WalletError::StorageError(format!("Failed to open SQLite database: {e}"))
         })?;
 
         Ok(Self { connection })
     }
 
     /// Create an in-memory SQLite storage instance (useful for testing)
-    pub async fn new_in_memory() -> LightweightWalletResult<Self> {
+    pub async fn new_in_memory() -> WalletResult<Self> {
         let connection = Connection::open(":memory:").await.map_err(|e| {
-            LightweightWalletError::StorageError(format!(
-                "Failed to create in-memory database: {e}"
-            ))
+            WalletError::StorageError(format!("Failed to create in-memory database: {e}"))
         })?;
 
         Ok(Self { connection })
     }
 
     /// Create the database schema
-    async fn create_schema(&self) -> LightweightWalletResult<()> {
+    async fn create_schema(&self) -> WalletResult<()> {
         let sql = r#"
             -- Wallets table
             CREATE TABLE IF NOT EXISTS wallets (
@@ -207,9 +205,7 @@ impl SqliteStorage {
         self.connection
             .call(move |conn| Ok(conn.execute_batch(sql)?))
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to create schema: {e}"))
-            })?;
+            .map_err(|e| WalletError::StorageError(format!("Failed to create schema: {e}")))?;
 
         Ok(())
     }
@@ -425,17 +421,17 @@ impl SqliteStorage {
 #[cfg(feature = "storage")]
 #[async_trait]
 impl WalletStorage for SqliteStorage {
-    async fn initialize(&self) -> LightweightWalletResult<()> {
+    async fn initialize(&self) -> WalletResult<()> {
         self.create_schema().await
     }
 
     // === Wallet Management Methods ===
 
-    async fn save_wallet(&self, wallet: &StoredWallet) -> LightweightWalletResult<u32> {
+    async fn save_wallet(&self, wallet: &StoredWallet) -> WalletResult<u32> {
         // Validate wallet before saving
         wallet
             .validate()
-            .map_err(|e| LightweightWalletError::StorageError(format!("Invalid wallet: {e}")))?;
+            .map_err(|e| WalletError::StorageError(format!("Invalid wallet: {e}")))?;
 
         let wallet_clone = wallet.clone();
         self.connection.call(move |conn| {
@@ -481,13 +477,10 @@ impl WalletStorage for SqliteStorage {
 
                 Ok(conn.last_insert_rowid() as u32)
             }
-        }).await.map_err(|e| LightweightWalletError::StorageError(format!("Failed to save wallet: {e}")))
+        }).await.map_err(|e| WalletError::StorageError(format!("Failed to save wallet: {e}")))
     }
 
-    async fn get_wallet_by_id(
-        &self,
-        wallet_id: u32,
-    ) -> LightweightWalletResult<Option<StoredWallet>> {
+    async fn get_wallet_by_id(&self, wallet_id: u32) -> WalletResult<Option<StoredWallet>> {
         self.connection
             .call(move |conn| {
                 let mut stmt = conn.prepare("SELECT * FROM wallets WHERE id = ?")?;
@@ -500,15 +493,10 @@ impl WalletStorage for SqliteStorage {
                 }
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to get wallet by ID: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get wallet by ID: {e}")))
     }
 
-    async fn get_wallet_by_name(
-        &self,
-        name: &str,
-    ) -> LightweightWalletResult<Option<StoredWallet>> {
+    async fn get_wallet_by_name(&self, name: &str) -> WalletResult<Option<StoredWallet>> {
         let name_owned = name.to_string();
         self.connection
             .call(move |conn| {
@@ -522,12 +510,10 @@ impl WalletStorage for SqliteStorage {
                 }
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to get wallet by name: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get wallet by name: {e}")))
     }
 
-    async fn list_wallets(&self) -> LightweightWalletResult<Vec<StoredWallet>> {
+    async fn list_wallets(&self) -> WalletResult<Vec<StoredWallet>> {
         self.connection
             .call(|conn| {
                 let mut stmt = conn.prepare("SELECT * FROM wallets ORDER BY created_at DESC")?;
@@ -541,12 +527,10 @@ impl WalletStorage for SqliteStorage {
                 Ok(wallets)
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to list wallets: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to list wallets: {e}")))
     }
 
-    async fn delete_wallet(&self, wallet_id: u32) -> LightweightWalletResult<bool> {
+    async fn delete_wallet(&self, wallet_id: u32) -> WalletResult<bool> {
         self.connection
             .call(move |conn| {
                 let tx = conn.transaction()?;
@@ -567,12 +551,10 @@ impl WalletStorage for SqliteStorage {
                 Ok(rows_affected > 0)
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to delete wallet: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to delete wallet: {e}")))
     }
 
-    async fn wallet_name_exists(&self, name: &str) -> LightweightWalletResult<bool> {
+    async fn wallet_name_exists(&self, name: &str) -> WalletResult<bool> {
         let name_owned = name.to_string();
         self.connection
             .call(move |conn| {
@@ -581,16 +563,14 @@ impl WalletStorage for SqliteStorage {
                 Ok(exists)
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to check wallet name: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to check wallet name: {e}")))
     }
 
     async fn update_wallet_scanned_block(
         &self,
         wallet_id: u32,
         block_height: u64,
-    ) -> LightweightWalletResult<()> {
+    ) -> WalletResult<()> {
         self.connection
             .call(move |conn| {
                 let rows_affected = conn.execute(
@@ -608,9 +588,7 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                LightweightWalletError::StorageError(format!(
-                    "Failed to update wallet scanned block: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to update wallet scanned block: {e}"))
             })
     }
 
@@ -620,7 +598,7 @@ impl WalletStorage for SqliteStorage {
         &self,
         wallet_id: u32,
         transaction: &WalletTransaction,
-    ) -> LightweightWalletResult<()> {
+    ) -> WalletResult<()> {
         let tx = transaction.clone();
         self.connection.call(move |conn| {
             let payment_id_json = serde_json::to_string(&tx.payment_id)
@@ -652,7 +630,7 @@ impl WalletStorage for SqliteStorage {
                 ],
             )?;
             Ok(())
-        }).await.map_err(|e| LightweightWalletError::StorageError(format!("Failed to save transaction: {e}")))?;
+        }).await.map_err(|e| WalletError::StorageError(format!("Failed to save transaction: {e}")))?;
 
         Ok(())
     }
@@ -661,7 +639,7 @@ impl WalletStorage for SqliteStorage {
         &self,
         wallet_id: u32,
         transactions: &[WalletTransaction],
-    ) -> LightweightWalletResult<()> {
+    ) -> WalletResult<()> {
         let tx_list = transactions.to_vec();
         self.connection.call(move |conn| {
             let tx = conn.transaction()?;
@@ -699,15 +677,12 @@ impl WalletStorage for SqliteStorage {
 
             tx.commit()?;
             Ok(())
-        }).await.map_err(|e| LightweightWalletError::StorageError(format!("Failed to save transactions batch: {e}")))?;
+        }).await.map_err(|e| WalletError::StorageError(format!("Failed to save transactions batch: {e}")))?;
 
         Ok(())
     }
 
-    async fn update_transaction(
-        &self,
-        transaction: &WalletTransaction,
-    ) -> LightweightWalletResult<()> {
+    async fn update_transaction(&self, transaction: &WalletTransaction) -> WalletResult<()> {
         // For update, we need to find the wallet_id from the existing transaction
         let commitment_hex = transaction.commitment_hex();
         let tx_clone = transaction.clone();
@@ -747,7 +722,7 @@ impl WalletStorage for SqliteStorage {
                 ],
             )?;
             Ok(())
-        }).await.map_err(|e| LightweightWalletError::StorageError(format!("Failed to update transaction: {e}")))
+        }).await.map_err(|e| WalletError::StorageError(format!("Failed to update transaction: {e}")))
     }
 
     async fn mark_transaction_spent(
@@ -755,7 +730,7 @@ impl WalletStorage for SqliteStorage {
         commitment: &CompressedCommitment,
         spent_in_block: u64,
         spent_in_input: usize,
-    ) -> LightweightWalletResult<bool> {
+    ) -> WalletResult<bool> {
         let commitment_hex = commitment.to_hex();
         self.connection
             .call(move |conn| {
@@ -771,16 +746,14 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                LightweightWalletError::StorageError(format!(
-                    "Failed to mark transaction spent: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to mark transaction spent: {e}"))
             })
     }
 
     async fn mark_transactions_spent_batch(
         &self,
         spent_commitments: &[(CompressedCommitment, u64, usize)],
-    ) -> LightweightWalletResult<usize> {
+    ) -> WalletResult<usize> {
         if spent_commitments.is_empty() {
             return Ok(0);
         }
@@ -824,16 +797,14 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                LightweightWalletError::StorageError(format!(
-                    "Failed to batch mark transactions spent: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to batch mark transactions spent: {e}"))
             })
     }
 
     async fn get_transaction_by_commitment(
         &self,
         commitment: &CompressedCommitment,
-    ) -> LightweightWalletResult<Option<WalletTransaction>> {
+    ) -> WalletResult<Option<WalletTransaction>> {
         let commitment_hex = commitment.to_hex();
         self.connection
             .call(move |conn| {
@@ -851,16 +822,14 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                LightweightWalletError::StorageError(format!(
-                    "Failed to get transaction by commitment: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to get transaction by commitment: {e}"))
             })
     }
 
     async fn get_transactions(
         &self,
         filter: Option<TransactionFilter>,
-    ) -> LightweightWalletResult<Vec<WalletTransaction>> {
+    ) -> WalletResult<Vec<WalletTransaction>> {
         self.connection
             .call(move |conn| {
                 let mut base_query = "SELECT * FROM wallet_transactions".to_string();
@@ -902,12 +871,10 @@ impl WalletStorage for SqliteStorage {
                 Ok(transactions)
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to get transactions: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get transactions: {e}")))
     }
 
-    async fn load_wallet_state(&self, wallet_id: u32) -> LightweightWalletResult<WalletState> {
+    async fn load_wallet_state(&self, wallet_id: u32) -> WalletResult<WalletState> {
         let filter = TransactionFilter::new().with_wallet_id(wallet_id);
         let transactions = self.get_transactions(Some(filter)).await?;
 
@@ -956,15 +923,12 @@ impl WalletStorage for SqliteStorage {
         Ok(wallet_state)
     }
 
-    async fn get_statistics(&self) -> LightweightWalletResult<StorageStats> {
+    async fn get_statistics(&self) -> WalletResult<StorageStats> {
         self.get_wallet_statistics(None).await
     }
 
     /// Get statistics for a specific wallet, or global stats if wallet_id is None
-    async fn get_wallet_statistics(
-        &self,
-        wallet_id: Option<u32>,
-    ) -> LightweightWalletResult<StorageStats> {
+    async fn get_wallet_statistics(&self, wallet_id: Option<u32>) -> WalletResult<StorageStats> {
         self.connection.call(move |conn| {
             let (query, params) = if let Some(wallet_id) = wallet_id {
                 (r#"
@@ -1026,14 +990,14 @@ impl WalletStorage for SqliteStorage {
             })?;
 
             Ok(row)
-        }).await.map_err(|e| LightweightWalletError::StorageError(format!("Failed to get statistics: {e}")))
+        }).await.map_err(|e| WalletError::StorageError(format!("Failed to get statistics: {e}")))
     }
 
     async fn get_transactions_by_block_range(
         &self,
         from_block: u64,
         to_block: u64,
-    ) -> LightweightWalletResult<Vec<WalletTransaction>> {
+    ) -> WalletResult<Vec<WalletTransaction>> {
         let filter = TransactionFilter::new().with_block_range(from_block, to_block);
         self.get_transactions(Some(filter)).await
     }
@@ -1043,7 +1007,7 @@ impl WalletStorage for SqliteStorage {
         wallet_id: u32,
         from_block: u64,
         to_block: u64,
-    ) -> LightweightWalletResult<usize> {
+    ) -> WalletResult<usize> {
         self.connection
             .call(move |conn| {
                 let mut spent_count = 0;
@@ -1128,30 +1092,27 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                LightweightWalletError::StorageError(format!(
+                WalletError::StorageError(format!(
                     "Failed to mark spent outputs from inputs: {e}"
                 ))
             })
     }
 
-    async fn get_unspent_transactions(&self) -> LightweightWalletResult<Vec<WalletTransaction>> {
+    async fn get_unspent_transactions(&self) -> WalletResult<Vec<WalletTransaction>> {
         let filter = TransactionFilter::new()
             .with_spent_status(false)
             .with_direction(TransactionDirection::Inbound);
         self.get_transactions(Some(filter)).await
     }
 
-    async fn get_spent_transactions(&self) -> LightweightWalletResult<Vec<WalletTransaction>> {
+    async fn get_spent_transactions(&self) -> WalletResult<Vec<WalletTransaction>> {
         let filter = TransactionFilter::new()
             .with_spent_status(true)
             .with_direction(TransactionDirection::Inbound);
         self.get_transactions(Some(filter)).await
     }
 
-    async fn has_commitment(
-        &self,
-        commitment: &CompressedCommitment,
-    ) -> LightweightWalletResult<bool> {
+    async fn has_commitment(&self, commitment: &CompressedCommitment) -> WalletResult<bool> {
         let commitment_hex = commitment.to_hex();
         self.connection
             .call(move |conn| {
@@ -1163,13 +1124,11 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                LightweightWalletError::StorageError(format!(
-                    "Failed to check commitment existence: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to check commitment existence: {e}"))
             })
     }
 
-    async fn get_highest_block(&self) -> LightweightWalletResult<Option<u64>> {
+    async fn get_highest_block(&self) -> WalletResult<Option<u64>> {
         self.connection
             .call(|conn| {
                 let mut stmt = conn.prepare("SELECT MAX(block_height) FROM wallet_transactions")?;
@@ -1177,12 +1136,10 @@ impl WalletStorage for SqliteStorage {
                 Ok(block_height.map(|h| h as u64))
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to get highest block: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get highest block: {e}")))
     }
 
-    async fn get_lowest_block(&self) -> LightweightWalletResult<Option<u64>> {
+    async fn get_lowest_block(&self) -> WalletResult<Option<u64>> {
         self.connection
             .call(|conn| {
                 let mut stmt = conn.prepare("SELECT MIN(block_height) FROM wallet_transactions")?;
@@ -1190,30 +1147,24 @@ impl WalletStorage for SqliteStorage {
                 Ok(block_height.map(|h| h as u64))
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to get lowest block: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get lowest block: {e}")))
     }
 
-    async fn clear_all_transactions(&self) -> LightweightWalletResult<()> {
+    async fn clear_all_transactions(&self) -> WalletResult<()> {
         self.connection
             .call(|conn| {
                 conn.execute("DELETE FROM wallet_transactions", [])?;
                 Ok(())
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to clear transactions: {e}"))
-            })?;
+            .map_err(|e| WalletError::StorageError(format!("Failed to clear transactions: {e}")))?;
         self.connection
             .call(|conn| {
                 conn.execute("DELETE FROM outputs", [])?;
                 Ok(())
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to clear outputs: {e}"))
-            })?;
+            .map_err(|e| WalletError::StorageError(format!("Failed to clear outputs: {e}")))?;
         self.connection
             .call(|conn| {
                 conn.execute("UPDATE wallets SET latest_scanned_block = 0", [])?;
@@ -1221,14 +1172,12 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                LightweightWalletError::StorageError(format!(
-                    "Failed to clear latest scanned block: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to clear latest scanned block: {e}"))
             })?;
         Ok(())
     }
 
-    async fn get_transaction_count(&self) -> LightweightWalletResult<usize> {
+    async fn get_transaction_count(&self) -> WalletResult<usize> {
         self.connection
             .call(|conn| {
                 let mut stmt = conn.prepare("SELECT COUNT(*) FROM wallet_transactions")?;
@@ -1236,16 +1185,12 @@ impl WalletStorage for SqliteStorage {
                 Ok(count as usize)
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!(
-                    "Failed to get transaction count: {e}"
-                ))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get transaction count: {e}")))
     }
 
     // === UTXO Output Management Methods (NEW) ===
 
-    async fn save_output(&self, output: &StoredOutput) -> LightweightWalletResult<u32> {
+    async fn save_output(&self, output: &StoredOutput) -> WalletResult<u32> {
         let output_clone = output.clone();
         self.connection.call(move |conn| {
             if let Some(output_id) = output_clone.id {
@@ -1341,10 +1286,10 @@ impl WalletStorage for SqliteStorage {
 
                 Ok(conn.last_insert_rowid() as u32)
             }
-        }).await.map_err(|e| LightweightWalletError::StorageError(format!("Failed to save output: {e}")))
+        }).await.map_err(|e| WalletError::StorageError(format!("Failed to save output: {e}")))
     }
 
-    async fn save_outputs(&self, outputs: &[StoredOutput]) -> LightweightWalletResult<Vec<u32>> {
+    async fn save_outputs(&self, outputs: &[StoredOutput]) -> WalletResult<Vec<u32>> {
         let outputs_clone = outputs.to_vec();
         self.connection.call(move |conn| {
             let tx = conn.transaction()?;
@@ -1464,12 +1409,12 @@ impl WalletStorage for SqliteStorage {
 
             tx.commit()?;
             Ok(output_ids)
-        }).await.map_err(|e| LightweightWalletError::StorageError(format!("Failed to save outputs: {e}")))
+        }).await.map_err(|e| WalletError::StorageError(format!("Failed to save outputs: {e}")))
     }
 
-    async fn update_output(&self, output: &StoredOutput) -> LightweightWalletResult<()> {
+    async fn update_output(&self, output: &StoredOutput) -> WalletResult<()> {
         let output_id = output.id.ok_or_else(|| {
-            LightweightWalletError::StorageError("Output must have an ID to update".to_string())
+            WalletError::StorageError("Output must have an ID to update".to_string())
         })?;
 
         let output_clone = output.clone();
@@ -1527,16 +1472,10 @@ impl WalletStorage for SqliteStorage {
                 Ok(())
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to update output: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to update output: {e}")))
     }
 
-    async fn mark_output_spent(
-        &self,
-        output_id: u32,
-        spent_in_tx_id: u64,
-    ) -> LightweightWalletResult<()> {
+    async fn mark_output_spent(&self, output_id: u32, spent_in_tx_id: u64) -> WalletResult<()> {
         self.connection
             .call(move |conn| {
                 let rows_affected = conn.execute(
@@ -1553,15 +1492,10 @@ impl WalletStorage for SqliteStorage {
                 Ok(())
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to mark output spent: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to mark output spent: {e}")))
     }
 
-    async fn get_output_by_id(
-        &self,
-        output_id: u32,
-    ) -> LightweightWalletResult<Option<StoredOutput>> {
+    async fn get_output_by_id(&self, output_id: u32) -> WalletResult<Option<StoredOutput>> {
         self.connection
             .call(move |conn| {
                 let mut stmt = conn.prepare("SELECT * FROM outputs WHERE id = ?")?;
@@ -1574,15 +1508,13 @@ impl WalletStorage for SqliteStorage {
                 }
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to get output by ID: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get output by ID: {e}")))
     }
 
     async fn get_output_by_commitment(
         &self,
         commitment: &[u8],
-    ) -> LightweightWalletResult<Option<StoredOutput>> {
+    ) -> WalletResult<Option<StoredOutput>> {
         let commitment_vec = commitment.to_vec();
         self.connection
             .call(move |conn| {
@@ -1598,16 +1530,11 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                LightweightWalletError::StorageError(format!(
-                    "Failed to get output by commitment: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to get output by commitment: {e}"))
             })
     }
 
-    async fn get_outputs(
-        &self,
-        filter: Option<OutputFilter>,
-    ) -> LightweightWalletResult<Vec<StoredOutput>> {
+    async fn get_outputs(&self, filter: Option<OutputFilter>) -> WalletResult<Vec<StoredOutput>> {
         self.connection
             .call(move |conn| {
                 let mut base_query = "SELECT * FROM outputs".to_string();
@@ -1649,15 +1576,10 @@ impl WalletStorage for SqliteStorage {
                 Ok(outputs)
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to get outputs: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get outputs: {e}")))
     }
 
-    async fn get_unspent_outputs(
-        &self,
-        wallet_id: u32,
-    ) -> LightweightWalletResult<Vec<StoredOutput>> {
+    async fn get_unspent_outputs(&self, wallet_id: u32) -> WalletResult<Vec<StoredOutput>> {
         let filter = OutputFilter::new()
             .with_wallet_id(wallet_id)
             .with_status(OutputStatus::Unspent);
@@ -1668,18 +1590,14 @@ impl WalletStorage for SqliteStorage {
         &self,
         wallet_id: u32,
         block_height: u64,
-    ) -> LightweightWalletResult<Vec<StoredOutput>> {
+    ) -> WalletResult<Vec<StoredOutput>> {
         let filter = OutputFilter::new()
             .with_wallet_id(wallet_id)
             .spendable_at(block_height);
         self.get_outputs(Some(filter)).await
     }
 
-    async fn get_spendable_balance(
-        &self,
-        wallet_id: u32,
-        block_height: u64,
-    ) -> LightweightWalletResult<u64> {
+    async fn get_spendable_balance(&self, wallet_id: u32, block_height: u64) -> WalletResult<u64> {
         self.connection
             .call(move |conn| {
                 let balance: i64 = conn.query_row(
@@ -1698,14 +1616,10 @@ impl WalletStorage for SqliteStorage {
                 Ok(balance as u64)
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!(
-                    "Failed to get spendable balance: {e}"
-                ))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get spendable balance: {e}")))
     }
 
-    async fn delete_output(&self, output_id: u32) -> LightweightWalletResult<bool> {
+    async fn delete_output(&self, output_id: u32) -> WalletResult<bool> {
         self.connection
             .call(move |conn| {
                 let rows_affected = conn.execute(
@@ -1715,12 +1629,10 @@ impl WalletStorage for SqliteStorage {
                 Ok(rows_affected > 0)
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to delete output: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to delete output: {e}")))
     }
 
-    async fn clear_outputs(&self, wallet_id: u32) -> LightweightWalletResult<()> {
+    async fn clear_outputs(&self, wallet_id: u32) -> WalletResult<()> {
         self.connection
             .call(move |conn| {
                 conn.execute(
@@ -1730,12 +1642,10 @@ impl WalletStorage for SqliteStorage {
                 Ok(())
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to clear outputs: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to clear outputs: {e}")))
     }
 
-    async fn get_output_count(&self, wallet_id: u32) -> LightweightWalletResult<usize> {
+    async fn get_output_count(&self, wallet_id: u32) -> WalletResult<usize> {
         self.connection
             .call(move |conn| {
                 let count: i64 = conn.query_row(
@@ -1746,12 +1656,10 @@ impl WalletStorage for SqliteStorage {
                 Ok(count as usize)
             })
             .await
-            .map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to get output count: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get output count: {e}")))
     }
 
-    async fn close(&self) -> LightweightWalletResult<()> {
+    async fn close(&self) -> WalletResult<()> {
         // tokio-rusqlite automatically handles connection cleanup on drop
         Ok(())
     }

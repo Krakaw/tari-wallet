@@ -4,7 +4,7 @@
 //! that are used across multiple modules in the library.
 
 use crate::data_structures::address::Network;
-use crate::errors::LightweightWalletError;
+use crate::errors::WalletError;
 
 /// Format a number with thousands separators (e.g., 1,234,567)
 pub fn format_number<T: std::fmt::Display>(val: T) -> String {
@@ -69,10 +69,10 @@ pub fn network_to_string(network: Network) -> String {
 }
 
 /// Validate that a string is a valid network identifier
-pub fn validate_network_string(network_str: &str) -> Result<(), LightweightWalletError> {
+pub fn validate_network_string(network_str: &str) -> Result<(), WalletError> {
     match network_str.to_lowercase().as_str() {
         "mainnet" | "stagenet" | "localnet" | "esmeralda" | "esme" | "nextnet" | "igor" => Ok(()),
-        _ => Err(LightweightWalletError::InvalidArgument {
+        _ => Err(WalletError::InvalidArgument {
             argument: "network".to_string(),
             value: network_str.to_string(),
             message: "Must be one of: mainnet, stagenet, localnet, esmeralda, nextnet, igor"

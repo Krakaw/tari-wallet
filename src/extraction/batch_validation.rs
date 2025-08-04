@@ -1,4 +1,4 @@
-use crate::data_structures::transaction_output::LightweightTransactionOutput;
+use crate::data_structures::transaction_output::TransactionOutput;
 use crate::errors::ValidationError;
 
 /// Batch validation result containing validation status for multiple outputs
@@ -86,7 +86,7 @@ impl Default for BatchValidationOptions {
 
 /// Validate a batch of transaction outputs with optimized performance
 pub fn validate_output_batch(
-    outputs: &[LightweightTransactionOutput],
+    outputs: &[TransactionOutput],
     options: &BatchValidationOptions,
 ) -> BatchValidationResult {
     let mut results = Vec::with_capacity(outputs.len());
@@ -153,7 +153,7 @@ pub fn validate_output_batch(
 /// Validate a batch of transaction outputs with parallel processing (when available)
 #[cfg(feature = "grpc")]
 pub fn validate_output_batch_parallel(
-    outputs: &[LightweightTransactionOutput],
+    outputs: &[TransactionOutput],
     options: &BatchValidationOptions,
 ) -> BatchValidationResult {
     use rayon::prelude::*;
@@ -224,9 +224,7 @@ pub fn validate_output_batch_parallel(
 }
 
 // Helper functions for validation
-fn validate_commitment_integrity(
-    output: &LightweightTransactionOutput,
-) -> Result<(), ValidationError> {
+fn validate_commitment_integrity(output: &TransactionOutput) -> Result<(), ValidationError> {
     // Basic commitment validation
     let commitment_bytes = output.commitment().as_bytes();
     if commitment_bytes.len() != 32 {
@@ -246,7 +244,7 @@ fn validate_commitment_integrity(
 }
 
 fn validate_range_proof(
-    proof: &crate::data_structures::wallet_output::LightweightRangeProof,
+    proof: &crate::data_structures::wallet_output::RangeProof,
     _commitment: &crate::data_structures::types::CompressedCommitment,
     _minimum_value_promise: crate::data_structures::types::MicroMinotari,
 ) -> Result<(), ValidationError> {
@@ -276,15 +274,12 @@ mod tests {
     use super::*;
     use crate::data_structures::{
         encrypted_data::EncryptedData,
-        transaction_output::LightweightTransactionOutput,
+        transaction_output::TransactionOutput,
         types::{CompressedCommitment, CompressedPublicKey, MicroMinotari},
-        wallet_output::{
-            LightweightCovenant, LightweightOutputFeatures, LightweightRangeProof,
-            LightweightScript, LightweightSignature,
-        },
+        wallet_output::{Covenant, OutputFeatures, RangeProof, Script, Signature},
     };
 
-    fn create_test_output(_value: u64, is_valid: bool) -> LightweightTransactionOutput {
+    fn create_test_output(_value: u64, is_valid: bool) -> TransactionOutput {
         let commitment = if is_valid {
             CompressedCommitment::new([0x08; 32]) // Valid commitment prefix
         } else {
@@ -294,24 +289,24 @@ mod tests {
         let encrypted_data = EncryptedData::from_hex("0102030405060708090a0b0c0d0e0f10").unwrap();
 
         let range_proof = if is_valid {
-            Some(LightweightRangeProof {
+            Some(RangeProof {
                 bytes: vec![0x01, 0x02, 0x03, 0x04],
             })
         } else {
-            Some(LightweightRangeProof { bytes: vec![] }) // Invalid empty proof
+            Some(RangeProof { bytes: vec![] }) // Invalid empty proof
         };
 
-        LightweightTransactionOutput::new(
+        TransactionOutput::new(
             0,
-            LightweightOutputFeatures::default(),
+            OutputFeatures::default(),
             commitment,
             range_proof,
-            LightweightScript::default(),
+            Script::default(),
             CompressedPublicKey::new([0x01; 32]),
-            LightweightSignature {
+            Signature {
                 bytes: vec![0x01; 64],
             },
-            LightweightCovenant::default(),
+            Covenant::default(),
             encrypted_data,
             MicroMinotari::from(0),
         )

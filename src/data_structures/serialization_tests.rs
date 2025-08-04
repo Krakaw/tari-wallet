@@ -31,14 +31,14 @@ fn test_encrypted_data_serialization() {
 
 #[test]
 fn test_wallet_output_serialization() {
-    let wo = crate::data_structures::wallet_output::LightweightWalletOutput::default();
+    let wo = crate::data_structures::wallet_output::WalletOutput::default();
     serde_roundtrip(&wo);
     borsh_roundtrip(&wo);
 }
 
 #[test]
 fn test_transaction_output_serialization() {
-    let to = crate::data_structures::transaction_output::LightweightTransactionOutput::default();
+    let to = crate::data_structures::transaction_output::TransactionOutput::default();
     serde_roundtrip(&to);
     borsh_roundtrip(&to);
 }

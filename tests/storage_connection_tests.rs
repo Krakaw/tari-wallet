@@ -17,7 +17,7 @@ use tokio::time::timeout;
 #[cfg(feature = "storage")]
 use lightweight_wallet_libs::{
     data_structures::types::PrivateKey,
-    errors::LightweightWalletError,
+    errors::WalletError,
     storage::{sqlite::SqliteStorage, StoredWallet, WalletStorage},
 };
 
@@ -53,7 +53,7 @@ mod connection_tests {
         let result = SqliteStorage::new(invalid_path).await;
         assert!(result.is_err());
 
-        if let Err(LightweightWalletError::StorageError(msg)) = result {
+        if let Err(WalletError::StorageError(msg)) = result {
             assert!(msg.contains("Failed to open SQLite database"));
         } else {
             panic!("Expected StorageError");
@@ -238,7 +238,7 @@ mod connection_tests {
         let result = storage.initialize().await;
         assert!(result.is_err());
 
-        if let Err(LightweightWalletError::StorageError(msg)) = result {
+        if let Err(WalletError::StorageError(msg)) = result {
             // Should contain database/SQL error message
             assert!(msg.contains("database") || msg.contains("SQL") || msg.contains("corrupt"));
         } else {

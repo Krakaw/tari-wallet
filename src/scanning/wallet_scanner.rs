@@ -17,7 +17,7 @@ use tokio::time::Instant;
 
 use crate::{
     data_structures::wallet_transaction::WalletState,
-    errors::{LightweightWalletError, LightweightWalletResult},
+    errors::{WalletError, WalletResult},
     wallet::Wallet,
 };
 
@@ -34,8 +34,7 @@ use crate::common::format_number;
 
 use crate::{
     data_structures::{
-        transaction::TransactionDirection, transaction_output::LightweightTransactionOutput,
-        types::PrivateKey,
+        transaction::TransactionDirection, transaction_output::TransactionOutput, types::PrivateKey,
     },
     errors::KeyManagementError,
     key_management::key_derivation,
@@ -78,11 +77,11 @@ fn filter_block_transactions(
 /// Create stored output from blockchain output and transaction data
 fn create_stored_output_from_blockchain_data(
     transaction: &crate::data_structures::wallet_transaction::WalletTransaction,
-    blockchain_output: &LightweightTransactionOutput,
+    blockchain_output: &TransactionOutput,
     scan_context: &ScanContext,
     wallet_id: u32,
     output_index: usize,
-) -> LightweightWalletResult<StoredOutput> {
+) -> WalletResult<StoredOutput> {
     // Derive spending keys for this output
     let (spending_key, script_private_key) =
         derive_utxo_spending_keys(&scan_context.entropy, output_index as u64)?;
@@ -111,9 +110,8 @@ fn create_stored_output_from_blockchain_data(
 
         // Output features and type
         output_type: blockchain_output.features.output_type.clone() as u32,
-        features_json: serde_json::to_string(&blockchain_output.features).map_err(|e| {
-            LightweightWalletError::StorageError(format!("Failed to serialize features: {e}"))
-        })?,
+        features_json: serde_json::to_string(&blockchain_output.features)
+            .map_err(|e| WalletError::StorageError(format!("Failed to serialize features: {e}")))?,
 
         // Maturity and lock constraints
         maturity: blockchain_output.features.maturity,
@@ -178,9 +176,9 @@ pub fn extract_utxo_outputs_from_wallet_state(
     wallet_state: &WalletState,
     scan_context: &ScanContext,
     wallet_id: u32,
-    block_outputs: &[LightweightTransactionOutput],
+    block_outputs: &[TransactionOutput],
     block_height: u64,
-) -> LightweightWalletResult<Vec<StoredOutput>> {
+) -> WalletResult<Vec<StoredOutput>> {
     let mut utxo_outputs = Vec::new();
 
     // Get inbound transactions from this specific block
@@ -208,7 +206,7 @@ pub fn extract_utxo_outputs_from_wallet_state(
 }
 
 /// Extract script input data and script lock height from script bytes
-fn extract_script_data(script_bytes: &[u8]) -> LightweightWalletResult<(Vec<u8>, u64)> {
+fn extract_script_data(script_bytes: &[u8]) -> WalletResult<(Vec<u8>, u64)> {
     // If script is empty, return empty data
     if script_bytes.is_empty() {
         return Ok((Vec::new(), 0));
@@ -295,7 +293,7 @@ fn generate_transaction_id(block_height: u64, input_index: usize) -> u64 {
 fn derive_utxo_spending_keys(
     entropy: &[u8; 16],
     output_index: u64,
-) -> LightweightWalletResult<(PrivateKey, PrivateKey)> {
+) -> WalletResult<(PrivateKey, PrivateKey)> {
     // Check if we have real entropy or if this is view-key mode
     let has_real_entropy = entropy != &[0u8; 16];
 
@@ -341,7 +339,7 @@ fn derive_utxo_spending_keys(
 }
 
 /// Compute output hash for UTXO identification
-fn compute_output_hash(output: &LightweightTransactionOutput) -> LightweightWalletResult<Vec<u8>> {
+fn compute_output_hash(output: &TransactionOutput) -> WalletResult<Vec<u8>> {
     // Compute hash of output fields for identification
     let mut hasher = Blake2b::<U32>::new();
     hasher.update(output.commitment.as_bytes());
@@ -371,9 +369,7 @@ fn compute_output_hash(output: &LightweightTransactionOutput) -> LightweightWall
 ///
 /// # Errors
 /// Returns an error if the wallet creation or scan context creation fails
-pub fn create_wallet_from_seed_phrase(
-    seed_phrase: &str,
-) -> LightweightWalletResult<(ScanContext, u64)> {
+pub fn create_wallet_from_seed_phrase(seed_phrase: &str) -> WalletResult<(ScanContext, u64)> {
     let wallet = Wallet::new_from_seed_phrase(seed_phrase, None)?;
     let scan_context = ScanContext::from_wallet(&wallet)?;
     let default_from_block = wallet.birthday();
@@ -395,9 +391,7 @@ pub fn create_wallet_from_seed_phrase(
 ///
 /// # Errors
 /// Returns an error if the view key is invalid or cannot be parsed
-pub fn create_wallet_from_view_key(
-    view_key_hex: &str,
-) -> LightweightWalletResult<(ScanContext, u64)> {
+pub fn create_wallet_from_view_key(view_key_hex: &str) -> WalletResult<(ScanContext, u64)> {
     let scan_context = ScanContext::from_view_key(view_key_hex)?;
     let default_from_block = 0; // Start from genesis when using view key only
     Ok((scan_context, default_from_block))
@@ -737,9 +731,9 @@ impl std::fmt::Display for ScannerConfigError {
 
 impl std::error::Error for ScannerConfigError {}
 
-impl From<ScannerConfigError> for LightweightWalletError {
+impl From<ScannerConfigError> for WalletError {
     fn from(error: ScannerConfigError) -> Self {
-        LightweightWalletError::InvalidArgument {
+        WalletError::InvalidArgument {
             argument: "scanner_config".to_string(),
             value: "validation_error".to_string(),
             message: error.to_string(),
@@ -991,7 +985,7 @@ impl WalletScanner {
     /// Create a new wallet scanner with default event listeners (progress + console)
     ///
     /// This is a convenience constructor that sets up common event listeners.
-    pub fn new_with_default_events(source: String) -> Result<Self, LightweightWalletError> {
+    pub fn new_with_default_events(source: String) -> Result<Self, WalletError> {
         let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
         Ok(Self {
             config: WalletScannerConfig {
@@ -1008,7 +1002,7 @@ impl WalletScanner {
     pub fn new_with_database_events(
         source: String,
         _database_path: Option<String>,
-    ) -> Result<Self, LightweightWalletError> {
+    ) -> Result<Self, WalletError> {
         let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
         Ok(Self {
             config: WalletScannerConfig {
@@ -1033,7 +1027,7 @@ impl WalletScanner {
     /// Create scanner with default event emitter (progress tracking and console logging)
     ///
     /// This is a convenience method that sets up an event emitter with commonly used listeners.
-    pub fn with_default_events(mut self, source: String) -> Result<Self, LightweightWalletError> {
+    pub fn with_default_events(mut self, source: String) -> Result<Self, WalletError> {
         let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
         self.config.event_emitter = Some(event_emitter);
         Ok(self)
@@ -1047,7 +1041,7 @@ impl WalletScanner {
         mut self,
         source: String,
         _database_path: Option<String>,
-    ) -> Result<Self, LightweightWalletError> {
+    ) -> Result<Self, WalletError> {
         let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
         self.config.event_emitter = Some(event_emitter);
         Ok(self)
@@ -1146,7 +1140,7 @@ impl WalletScanner {
     ///
     /// This is a convenience method that creates a scanner with basic event-driven
     /// progress tracking and console logging.
-    pub fn with_simple_progress() -> Result<Self, LightweightWalletError> {
+    pub fn with_simple_progress() -> Result<Self, WalletError> {
         Self::new_with_default_events("simple_progress_scanner".to_string())
     }
 
@@ -1207,7 +1201,7 @@ impl WalletScanner {
         to_block: u64,
         data_processor: &mut T,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-    ) -> LightweightWalletResult<ScanResult> {
+    ) -> WalletResult<ScanResult> {
         let start_time = Instant::now();
 
         // Emit scan started event if event emitter is available
@@ -1359,10 +1353,10 @@ impl WalletScanner {
         scan_context: &ScanContext,
         config: &BinaryScanConfig,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-    ) -> LightweightWalletResult<ScanResult> {
+    ) -> WalletResult<ScanResult> {
         // Check that event emitter is configured
         if self.config.event_emitter.is_none() {
-            return Err(LightweightWalletError::InvalidArgument {
+            return Err(WalletError::InvalidArgument {
                 argument: "event_emitter".to_string(),
                 value: "None".to_string(),
                 message: "Event emitter must be configured before scanning. Use with_event_emitter(), with_default_events(), or with_database_events().".to_string(),
@@ -1373,7 +1367,7 @@ impl WalletScanner {
 
         // Check that event emitter is configured
         if self.config.event_emitter.is_none() {
-            return Err(LightweightWalletError::ScanningError(
+            return Err(WalletError::ScanningError(
                 crate::errors::ScanningError::ScanConfigurationError(
                     "Event emitter not configured".to_string(),
                 ),
@@ -1419,7 +1413,7 @@ impl WalletScanner {
         to_block: u64,
         data_processor: &mut T,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-    ) -> LightweightWalletResult<ScanResult> {
+    ) -> WalletResult<ScanResult> {
         let mut attempts = 0;
         let max_retries = self.config.retry_config.max_retries;
 
@@ -1475,7 +1469,7 @@ impl WalletScanner {
         config: &BinaryScanConfig,
         event_emitter: &mut super::event_emitter::ScanEventEmitter,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-    ) -> LightweightWalletResult<ScanResult> {
+    ) -> WalletResult<ScanResult> {
         let mut attempts = 0;
         let max_retries = self.config.retry_config.max_retries;
 
@@ -1519,15 +1513,15 @@ impl WalletScanner {
 
     /// Check if an error is retryable
     #[allow(unused)] // TODO: This doesn't need the grpc feature flag, but the calling function does
-    fn is_retryable_error(&self, error: &LightweightWalletError) -> bool {
+    fn is_retryable_error(&self, error: &WalletError) -> bool {
         match error {
             // Network-related errors are typically retryable
-            LightweightWalletError::StorageError(msg) if msg.contains("connection") => true,
-            LightweightWalletError::StorageError(msg) if msg.contains("timeout") => true,
-            LightweightWalletError::StorageError(msg) if msg.contains("network") => true,
+            WalletError::StorageError(msg) if msg.contains("connection") => true,
+            WalletError::StorageError(msg) if msg.contains("timeout") => true,
+            WalletError::StorageError(msg) if msg.contains("network") => true,
             // Temporary GRPC errors
-            LightweightWalletError::StorageError(msg) if msg.contains("unavailable") => true,
-            LightweightWalletError::StorageError(msg) if msg.contains("deadline exceeded") => true,
+            WalletError::StorageError(msg) if msg.contains("unavailable") => true,
+            WalletError::StorageError(msg) if msg.contains("deadline exceeded") => true,
             // Other errors are typically not retryable
             _ => false,
         }
@@ -1557,7 +1551,7 @@ impl Default for WalletScanner {
 async fn determine_scan_range(
     config: &BinaryScanConfig,
     storage_backend: &mut ScannerStorage,
-) -> LightweightWalletResult<(u64, u64)> {
+) -> WalletResult<(u64, u64)> {
     // Handle automatic resume functionality for database storage
     if config.use_database && config.explicit_from_block.is_none() && config.block_heights.is_none()
     {
@@ -1599,7 +1593,7 @@ async fn determine_scan_range(
 async fn determine_scan_range_with_events(
     config: &BinaryScanConfig,
     _event_emitter: &mut super::event_emitter::ScanEventEmitter,
-) -> LightweightWalletResult<(u64, u64)> {
+) -> WalletResult<(u64, u64)> {
     // For now, use the configuration directly since resume functionality
     // will be handled by the DatabaseStorageListener through events
     // The event system will track the last scanned block via events
@@ -1646,7 +1640,7 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
     batch_size: usize,
     _verbose_logging: bool,
     mut event_emitter: Option<&mut crate::scanning::event_emitter::ScanEventEmitter>,
-) -> LightweightWalletResult<ScanResult> {
+) -> WalletResult<ScanResult> {
     // Initialize scanning state
     let (mut wallet_state, _start_time) = initialize_scan_state();
 
@@ -1884,7 +1878,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
     config: &BinaryScanConfig,
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
     event_emitter: &mut super::event_emitter::ScanEventEmitter,
-) -> LightweightWalletResult<ScanResult> {
+) -> WalletResult<ScanResult> {
     // Determine scanning block range (now simplified without storage backend)
     let (from_block, to_block) = determine_scan_range_with_events(config, event_emitter).await?;
 
@@ -2522,7 +2516,7 @@ impl ScannerBuilder {
     }
 
     /// Configure with default event listeners (progress tracking + console logging)
-    pub fn with_default_events(mut self, source: String) -> Result<Self, LightweightWalletError> {
+    pub fn with_default_events(mut self, source: String) -> Result<Self, WalletError> {
         let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
         self.event_emitter = Some(event_emitter);
         Ok(self)
@@ -2534,7 +2528,7 @@ impl ScannerBuilder {
         mut self,
         source: String,
         _database_path: Option<String>,
-    ) -> Result<Self, LightweightWalletError> {
+    ) -> Result<Self, WalletError> {
         let event_emitter = super::event_emitter::create_default_event_emitter(source, None)?;
         self.event_emitter = Some(event_emitter);
         Ok(self)
@@ -2616,7 +2610,7 @@ impl ScannerBuilder {
     /// - Enabled verbose logging
     /// - Default retry policy
     /// - Default event listeners
-    pub fn with_development_preset(mut self) -> Result<Self, LightweightWalletError> {
+    pub fn with_development_preset(mut self) -> Result<Self, WalletError> {
         self.config.batch_size = 10;
         self.config.timeout = Some(std::time::Duration::from_secs(30));
         self.config.verbose_logging = true;
@@ -2645,7 +2639,7 @@ impl ScannerBuilder {
     pub fn with_production_preset(
         mut self,
         _database_path: Option<String>,
-    ) -> Result<Self, LightweightWalletError> {
+    ) -> Result<Self, WalletError> {
         self.config.batch_size = 30;
         self.config.timeout = Some(std::time::Duration::from_secs(60));
         self.config.verbose_logging = false;
@@ -2675,7 +2669,7 @@ impl ScannerBuilder {
     /// - Disabled verbose logging
     /// - No retries
     /// - Mock event listeners
-    pub fn with_testing_preset(mut self) -> Result<Self, LightweightWalletError> {
+    pub fn with_testing_preset(mut self) -> Result<Self, WalletError> {
         use crate::events::{listeners::MockEventListener, EventDispatcher};
 
         self.config.batch_size = 3;
@@ -2708,7 +2702,7 @@ impl ScannerBuilder {
     /// - Disabled verbose logging
     /// - Conservative retry policy
     /// - Progress tracking only (no console logging)
-    pub fn with_quiet_preset(mut self) -> Result<Self, LightweightWalletError> {
+    pub fn with_quiet_preset(mut self) -> Result<Self, WalletError> {
         use crate::events::{listeners::ProgressTrackingListener, EventDispatcher};
 
         self.config.batch_size = 15;
@@ -3282,19 +3276,17 @@ mod tests {
         let scanner = WalletScanner::new();
 
         // Network errors should be retryable
-        let connection_error =
-            LightweightWalletError::StorageError("connection failed".to_string());
+        let connection_error = WalletError::StorageError("connection failed".to_string());
         assert!(scanner.is_retryable_error(&connection_error));
 
-        let timeout_error = LightweightWalletError::StorageError("timeout occurred".to_string());
+        let timeout_error = WalletError::StorageError("timeout occurred".to_string());
         assert!(scanner.is_retryable_error(&timeout_error));
 
-        let unavailable_error =
-            LightweightWalletError::StorageError("service unavailable".to_string());
+        let unavailable_error = WalletError::StorageError("service unavailable".to_string());
         assert!(scanner.is_retryable_error(&unavailable_error));
 
         // Other errors should not be retryable
-        let validation_error = LightweightWalletError::InvalidArgument {
+        let validation_error = WalletError::InvalidArgument {
             argument: "test".to_string(),
             value: "test".to_string(),
             message: "test error".to_string(),

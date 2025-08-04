@@ -8,7 +8,7 @@ use digest::consts::U64;
 use tari_crypto::{hash_domain, hashing::DomainSeparatedHasher};
 
 use crate::data_structures::types::{CompressedPublicKey, PrivateKey};
-use crate::errors::LightweightWalletResult;
+use crate::errors::WalletResult;
 
 // Domain separators for stealth address operations
 hash_domain!(
@@ -50,7 +50,7 @@ impl StealthAddressService {
     pub fn shared_secret_to_output_encryption_key(
         &self,
         shared_secret: &[u8],
-    ) -> LightweightWalletResult<PrivateKey> {
+    ) -> WalletResult<PrivateKey> {
         let key_bytes = WalletOutputEncryptionKeysDomainHasher::new()
             .chain(shared_secret)
             .finalize();
@@ -65,7 +65,7 @@ impl StealthAddressService {
     pub fn secret_key_to_output_encryption_key(
         &self,
         secret_key: &PrivateKey,
-    ) -> LightweightWalletResult<PrivateKey> {
+    ) -> WalletResult<PrivateKey> {
         let key_bytes = WalletOutputEncryptionKeysDomainHasher::new()
             .chain(secret_key.as_bytes())
             .finalize();
@@ -79,7 +79,7 @@ impl StealthAddressService {
     pub fn public_key_to_output_encryption_key(
         &self,
         public_key: &CompressedPublicKey,
-    ) -> LightweightWalletResult<PrivateKey> {
+    ) -> WalletResult<PrivateKey> {
         let key_bytes = WalletOutputEncryptionKeysDomainHasher::new()
             .chain(public_key.as_bytes())
             .finalize();
@@ -93,7 +93,7 @@ impl StealthAddressService {
     pub fn shared_secret_to_output_spending_key(
         &self,
         shared_secret: &[u8],
-    ) -> LightweightWalletResult<PrivateKey> {
+    ) -> WalletResult<PrivateKey> {
         let key_bytes = WalletOutputSpendingKeysDomainHasher::new()
             .chain(shared_secret)
             .finalize();
@@ -108,7 +108,7 @@ impl StealthAddressService {
         &self,
         private_key: &PrivateKey,
         public_key: &CompressedPublicKey,
-    ) -> LightweightWalletResult<Vec<u8>> {
+    ) -> WalletResult<Vec<u8>> {
         // Simplified approach: use domain-separated hash of both keys
         let domain_hash = StealthAddressDomainHasher::new()
             .chain(private_key.as_bytes())
@@ -124,7 +124,7 @@ impl StealthAddressService {
         view_key: &PrivateKey,
         sender_offset_public_key: &CompressedPublicKey,
         _script_public_key: &CompressedPublicKey,
-    ) -> LightweightWalletResult<Option<PrivateKey>> {
+    ) -> WalletResult<Option<PrivateKey>> {
         // Generate shared secret using view key and sender offset public key
         let shared_secret = self.generate_shared_secret(view_key, sender_offset_public_key)?;
 
@@ -141,7 +141,7 @@ impl StealthAddressService {
         view_key: &PrivateKey,
         spend_key: &CompressedPublicKey,
         sender_private_key: &PrivateKey,
-    ) -> LightweightWalletResult<StealthAddress> {
+    ) -> WalletResult<StealthAddress> {
         // Convert view key to public key (simplified)
         let view_public_key = CompressedPublicKey::from_private_key(view_key);
 

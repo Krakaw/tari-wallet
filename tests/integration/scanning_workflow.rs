@@ -11,13 +11,13 @@ use async_trait::async_trait;
 
 use lightweight_wallet_libs::data_structures::{
     encrypted_data::EncryptedData,
-    transaction_output::LightweightTransactionOutput,
+    transaction_output::TransactionOutput,
     types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
-    wallet_output::{LightweightOutputFeatures, LightweightOutputType, LightweightRangeProofType},
+    wallet_output::{LightweightRangeProofType, OutputFeatures, OutputType},
 };
-use lightweight_wallet_libs::errors::{LightweightWalletError, ValidationError};
+use lightweight_wallet_libs::errors::{ValidationError, WalletError};
 use lightweight_wallet_libs::extraction::ExtractionConfig;
-use lightweight_wallet_libs::LightweightWalletResult;
+use lightweight_wallet_libs::WalletResult;
 
 use lightweight_wallet_libs::scanning::*;
 use lightweight_wallet_libs::wallet::*;
@@ -38,7 +38,7 @@ impl TestBlockchainScanner {
         }
     }
 
-    fn add_test_block(&mut self, height: u64, outputs: Vec<LightweightTransactionOutput>) {
+    fn add_test_block(&mut self, height: u64, outputs: Vec<TransactionOutput>) {
         let block = BlockInfo {
             height,
             hash: vec![height as u8; 32],
@@ -58,10 +58,7 @@ impl TestBlockchainScanner {
 
 #[async_trait(?Send)]
 impl BlockchainScanner for TestBlockchainScanner {
-    async fn scan_blocks(
-        &mut self,
-        config: ScanConfig,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    async fn scan_blocks(&mut self, config: ScanConfig) -> WalletResult<Vec<BlockScanResult>> {
         // Simulate network latency
         if self.latency_ms > 0 {
             tokio::time::sleep(Duration::from_millis(self.latency_ms)).await;
@@ -70,7 +67,7 @@ impl BlockchainScanner for TestBlockchainScanner {
         DefaultScanningLogic::scan_blocks_with_progress(self, config, None).await
     }
 
-    async fn get_tip_info(&mut self) -> LightweightWalletResult<TipInfo> {
+    async fn get_tip_info(&mut self) -> WalletResult<TipInfo> {
         Ok(TipInfo {
             best_block_height: self.tip_height,
             best_block_hash: vec![self.tip_height as u8; 32],
@@ -83,21 +80,15 @@ impl BlockchainScanner for TestBlockchainScanner {
     async fn search_utxos(
         &mut self,
         _commitments: Vec<Vec<u8>>,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    ) -> WalletResult<Vec<BlockScanResult>> {
         Ok(vec![])
     }
 
-    async fn fetch_utxos(
-        &mut self,
-        _hashes: Vec<Vec<u8>>,
-    ) -> LightweightWalletResult<Vec<LightweightTransactionOutput>> {
+    async fn fetch_utxos(&mut self, _hashes: Vec<Vec<u8>>) -> WalletResult<Vec<TransactionOutput>> {
         Ok(vec![])
     }
 
-    async fn get_blocks_by_heights(
-        &mut self,
-        heights: Vec<u64>,
-    ) -> LightweightWalletResult<Vec<BlockInfo>> {
+    async fn get_blocks_by_heights(&mut self, heights: Vec<u64>) -> WalletResult<Vec<BlockInfo>> {
         // Simulate network latency
         if self.latency_ms > 0 {
             tokio::time::sleep(Duration::from_millis(self.latency_ms)).await;
@@ -112,10 +103,7 @@ impl BlockchainScanner for TestBlockchainScanner {
         Ok(result)
     }
 
-    async fn get_block_by_height(
-        &mut self,
-        height: u64,
-    ) -> LightweightWalletResult<Option<BlockInfo>> {
+    async fn get_block_by_height(&mut self, height: u64) -> WalletResult<Option<BlockInfo>> {
         // Simulate network latency
         if self.latency_ms > 0 {
             tokio::time::sleep(Duration::from_millis(self.latency_ms)).await;
@@ -130,10 +118,10 @@ fn create_test_output(
     value: u64,
     view_key: &PrivateKey,
     spend_key: &PrivateKey,
-) -> Result<LightweightTransactionOutput, LightweightWalletError> {
+) -> Result<TransactionOutput, WalletError> {
     use lightweight_wallet_libs::data_structures::{
         payment_id::PaymentId,
-        wallet_output::{LightweightCovenant, LightweightScript, LightweightSignature},
+        wallet_output::{Covenant, Script, Signature},
     };
 
     // Create a basic commitment (mock)
@@ -151,34 +139,34 @@ fn create_test_output(
     let encrypted_data =
         EncryptedData::encrypt_data(&encryption_key, &commitment, micro_value, &mask, payment_id)
             .map_err(|e| {
-            LightweightWalletError::ValidationError(ValidationError::ValueValidationFailed(
-                format!("Failed to encrypt data: {e}"),
-            ))
+            WalletError::ValidationError(ValidationError::ValueValidationFailed(format!(
+                "Failed to encrypt data: {e}"
+            )))
         })?;
 
     // Create features
-    let features = LightweightOutputFeatures {
-        output_type: LightweightOutputType::Payment,
+    let features = OutputFeatures {
+        output_type: OutputType::Payment,
         maturity: 0,
         range_proof_type: LightweightRangeProofType::BulletProofPlus,
     };
 
     // Create script
-    let script = LightweightScript {
+    let script = Script {
         bytes: vec![0x01, 0x02, 0x03],
     };
 
     // Create metadata signature (mock)
-    let metadata_signature = LightweightSignature {
+    let metadata_signature = Signature {
         bytes: vec![0x06; 64],
     };
 
     // Create covenant
-    let covenant = LightweightCovenant {
+    let covenant = Covenant {
         bytes: vec![0x07, 0x08, 0x09],
     };
 
-    Ok(LightweightTransactionOutput::new(
+    Ok(TransactionOutput::new(
         0, // version
         features,
         commitment,

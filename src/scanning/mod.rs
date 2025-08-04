@@ -23,11 +23,11 @@ use crate::{
         encrypted_data::EncryptedData,
         transaction_input::TransactionInput,
         transaction_kernel::TransactionKernel,
-        transaction_output::LightweightTransactionOutput,
+        transaction_output::TransactionOutput,
         types::{CompressedPublicKey, PrivateKey},
-        wallet_output::LightweightWalletOutput,
+        wallet_output::WalletOutput,
     },
-    errors::{LightweightWalletError, LightweightWalletResult},
+    errors::{WalletError, WalletResult},
     extraction::{extract_wallet_output, ExtractionConfig},
     key_management::{self, KeyManager, KeyStore},
 };
@@ -69,7 +69,7 @@ pub use grpc_scanner::{GrpcBlockchainScanner, GrpcScannerBuilder};
 
 // Re-export HTTP scanner types
 #[cfg(feature = "http")]
-pub use http_scanner::{HttpBlockchainScanner, HttpScannerBuilder};
+pub use http_scanner::HttpBlockchainScanner;
 
 // Re-export configuration types for scanner binary operations
 pub use scan_config::{BinaryScanConfig, OutputFormat, ScanContext};
@@ -328,9 +328,9 @@ pub struct BlockScanResult {
     /// Block hash
     pub block_hash: Vec<u8>,
     /// Transaction outputs found in this block
-    pub outputs: Vec<LightweightTransactionOutput>,
+    pub outputs: Vec<TransactionOutput>,
     /// Wallet outputs extracted from transaction outputs
-    pub wallet_outputs: Vec<LightweightWalletOutput>,
+    pub wallet_outputs: Vec<WalletOutput>,
     /// Timestamp when block was mined
     pub mined_timestamp: u64,
 }
@@ -345,7 +345,7 @@ pub struct BlockInfo {
     /// Block timestamp
     pub timestamp: u64,
     /// Transaction outputs in this block
-    pub outputs: Vec<LightweightTransactionOutput>,
+    pub outputs: Vec<TransactionOutput>,
     /// Transaction inputs in this block
     pub inputs: Vec<TransactionInput>,
     /// Transaction kernels in this block
@@ -360,37 +360,25 @@ pub struct BlockInfo {
 #[async_trait(?Send)]
 pub trait BlockchainScanner: Send + Sync {
     /// Scan for wallet outputs in the specified block range
-    async fn scan_blocks(
-        &mut self,
-        config: ScanConfig,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>>;
+    async fn scan_blocks(&mut self, config: ScanConfig) -> WalletResult<Vec<BlockScanResult>>;
 
     /// Get the current chain tip information
-    async fn get_tip_info(&mut self) -> LightweightWalletResult<TipInfo>;
+    async fn get_tip_info(&mut self) -> WalletResult<TipInfo>;
 
     /// Search for specific UTXOs by commitment
     async fn search_utxos(
         &mut self,
         commitments: Vec<Vec<u8>>,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>>;
+    ) -> WalletResult<Vec<BlockScanResult>>;
 
     /// Fetch specific UTXOs by hash
-    async fn fetch_utxos(
-        &mut self,
-        hashes: Vec<Vec<u8>>,
-    ) -> LightweightWalletResult<Vec<LightweightTransactionOutput>>;
+    async fn fetch_utxos(&mut self, hashes: Vec<Vec<u8>>) -> WalletResult<Vec<TransactionOutput>>;
 
     /// Get blocks by height range
-    async fn get_blocks_by_heights(
-        &mut self,
-        heights: Vec<u64>,
-    ) -> LightweightWalletResult<Vec<BlockInfo>>;
+    async fn get_blocks_by_heights(&mut self, heights: Vec<u64>) -> WalletResult<Vec<BlockInfo>>;
 
     /// Get a single block by height
-    async fn get_block_by_height(
-        &mut self,
-        height: u64,
-    ) -> LightweightWalletResult<Option<BlockInfo>>;
+    async fn get_block_by_height(&mut self, height: u64) -> WalletResult<Option<BlockInfo>>;
 }
 
 /// Wallet scanner trait for scanning with wallet keys
@@ -400,17 +388,14 @@ pub trait BlockchainScanner: Send + Sync {
 #[async_trait(?Send)]
 pub trait WalletScanner: Send + Sync {
     /// Scan for wallet outputs using wallet keys
-    async fn scan_wallet(
-        &mut self,
-        config: WalletScanConfig,
-    ) -> LightweightWalletResult<WalletScanResult>;
+    async fn scan_wallet(&mut self, config: WalletScanConfig) -> WalletResult<WalletScanResult>;
 
     /// Scan for wallet outputs with progress reporting
     async fn scan_wallet_with_progress(
         &mut self,
         config: WalletScanConfig,
         progress_callback: Option<&LegacyProgressCallback>,
-    ) -> LightweightWalletResult<WalletScanResult>;
+    ) -> WalletResult<WalletScanResult>;
 
     /// Get the underlying blockchain scanner
     fn blockchain_scanner(&mut self) -> &mut dyn BlockchainScanner;
@@ -431,12 +416,12 @@ impl DefaultScanningLogic {
     /// Extract wallet output from transaction output using reference-compatible key derivation
     pub fn extract_wallet_output(
         &self,
-        transaction_output: &LightweightTransactionOutput,
-    ) -> Result<Option<LightweightWalletOutput>, LightweightWalletError> {
+        transaction_output: &TransactionOutput,
+    ) -> Result<Option<WalletOutput>, WalletError> {
         // Derive view key using the same method as reference
         let (view_key_ristretto, _spend_key) =
             key_management::derive_view_and_spend_keys_from_entropy(&self.entropy).map_err(
-                |e| LightweightWalletError::InvalidArgument {
+                |e| WalletError::InvalidArgument {
                     argument: "entropy".to_string(),
                     value: "key_derivation".to_string(),
                     message: format!("Key derivation failed: {e}"),
@@ -462,9 +447,9 @@ impl DefaultScanningLogic {
     /// Try Diffie-Hellman shared secret recovery (matches reference implementation)
     fn try_diffie_hellman_recovery(
         &self,
-        transaction_output: &LightweightTransactionOutput,
+        transaction_output: &TransactionOutput,
         view_private_key: &PrivateKey,
-    ) -> Result<Option<LightweightWalletOutput>, LightweightWalletError> {
+    ) -> Result<Option<WalletOutput>, WalletError> {
         // Get sender offset public key from the output
         let sender_offset_public_key = transaction_output.sender_offset_public_key();
 
@@ -503,10 +488,10 @@ impl DefaultScanningLogic {
         &self,
         private_key: &PrivateKey,
         public_key: &CompressedPublicKey,
-    ) -> Result<[u8; 32], LightweightWalletError> {
+    ) -> Result<[u8; 32], WalletError> {
         // Convert private key to RistrettoSecretKey
         let secret_key = RistrettoSecretKey::from_canonical_bytes(&private_key.as_bytes())
-            .map_err(|e| LightweightWalletError::InvalidArgument {
+            .map_err(|e| WalletError::InvalidArgument {
                 argument: "private_key".to_string(),
                 value: "key_derivation".to_string(),
                 message: format!("Invalid private key: {e}"),
@@ -515,7 +500,7 @@ impl DefaultScanningLogic {
         // Decompress public key to RistrettoPublicKey
         let pub_key =
             RistrettoPublicKey::from_canonical_bytes(&public_key.as_bytes()).map_err(|e| {
-                LightweightWalletError::InvalidArgument {
+                WalletError::InvalidArgument {
                     argument: "public_key".to_string(),
                     value: "key_derivation".to_string(),
                     message: format!("Invalid public key: {e}"),
@@ -536,7 +521,7 @@ impl DefaultScanningLogic {
     fn shared_secret_to_encryption_key(
         &self,
         shared_secret: &[u8; 32],
-    ) -> Result<PrivateKey, LightweightWalletError> {
+    ) -> Result<PrivateKey, WalletError> {
         // Use Blake2b hash to derive encryption key from shared secret
         // This matches the pattern used in the reference implementation
         let mut hasher = Blake2b::<digest::consts::U32>::new();
@@ -548,7 +533,7 @@ impl DefaultScanningLogic {
             result
                 .as_slice()
                 .try_into()
-                .map_err(|_| LightweightWalletError::InvalidArgument {
+                .map_err(|_| WalletError::InvalidArgument {
                     argument: "shared_secret".to_string(),
                     value: "key_derivation".to_string(),
                     message: "Failed to convert hash to key".to_string(),
@@ -561,7 +546,7 @@ impl DefaultScanningLogic {
     pub fn process_blocks(
         blocks: Vec<BlockInfo>,
         extraction_config: &ExtractionConfig,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    ) -> WalletResult<Vec<BlockScanResult>> {
         let mut results = Vec::new();
 
         for block in blocks {
@@ -590,7 +575,7 @@ impl DefaultScanningLogic {
     pub fn process_blocks_with_wallet_keys(
         blocks: Vec<BlockInfo>,
         config: &WalletScanConfig,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    ) -> WalletResult<Vec<BlockScanResult>> {
         let mut results = Vec::new();
 
         // Use the existing extraction config from the WalletScanConfig
@@ -647,13 +632,13 @@ impl DefaultScanningLogic {
 
     /// Scan for regular recoverable outputs using encrypted data decryption
     fn scan_for_recoverable_output(
-        output: &LightweightTransactionOutput,
+        output: &TransactionOutput,
         extraction_config: &ExtractionConfig,
-    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+    ) -> WalletResult<Option<WalletOutput>> {
         // Skip non-payment outputs for this scan type
         if !matches!(
             output.features().output_type,
-            crate::data_structures::wallet_output::LightweightOutputType::Payment
+            crate::data_structures::wallet_output::OutputType::Payment
         ) {
             return Ok(None);
         }
@@ -667,13 +652,13 @@ impl DefaultScanningLogic {
 
     /// Scan for one-sided payments (outputs sent to wallet without interaction)
     fn scan_for_one_sided_payment(
-        output: &LightweightTransactionOutput,
+        output: &TransactionOutput,
         extraction_config: &ExtractionConfig,
-    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+    ) -> WalletResult<Option<WalletOutput>> {
         // Skip non-payment outputs for this scan type
         if !matches!(
             output.features().output_type,
-            crate::data_structures::wallet_output::LightweightOutputType::Payment
+            crate::data_structures::wallet_output::OutputType::Payment
         ) {
             return Ok(None);
         }
@@ -687,13 +672,11 @@ impl DefaultScanningLogic {
     }
 
     /// Scan for coinbase outputs (special handling for mining rewards)
-    fn scan_for_coinbase_output(
-        output: &LightweightTransactionOutput,
-    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+    fn scan_for_coinbase_output(output: &TransactionOutput) -> WalletResult<Option<WalletOutput>> {
         // Only handle coinbase outputs
         if !matches!(
             output.features().output_type,
-            crate::data_structures::wallet_output::LightweightOutputType::Coinbase
+            crate::data_structures::wallet_output::OutputType::Coinbase
         ) {
             return Ok(None);
         }
@@ -703,14 +686,14 @@ impl DefaultScanningLogic {
             use crate::data_structures::payment_id::PaymentId;
             use crate::data_structures::wallet_output::*;
 
-            let wallet_output = LightweightWalletOutput::new(
+            let wallet_output = WalletOutput::new(
                 output.version(),
                 output.minimum_value_promise(),
-                LightweightKeyId::Zero,
+                KeyId::Zero,
                 output.features().clone(),
                 output.script().clone(),
-                LightweightExecutionStack::default(),
-                LightweightKeyId::Zero,
+                ExecutionStack::default(),
+                KeyId::Zero,
                 output.sender_offset_public_key().clone(),
                 output.metadata_signature().clone(),
                 0,
@@ -732,7 +715,7 @@ impl DefaultScanningLogic {
         scanner: &mut S,
         config: ScanConfig,
         progress_callback: Option<&LegacyProgressCallback>,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>>
+    ) -> WalletResult<Vec<BlockScanResult>>
     where
         S: BlockchainScanner,
     {
@@ -788,7 +771,7 @@ impl DefaultScanningLogic {
         scanner: &mut S,
         config: WalletScanConfig,
         progress_callback: Option<&LegacyProgressCallback>,
-    ) -> LightweightWalletResult<WalletScanResult>
+    ) -> WalletResult<WalletScanResult>
     where
         S: BlockchainScanner,
     {
@@ -900,37 +883,28 @@ impl MockBlockchainScanner {
 
 #[async_trait(?Send)]
 impl BlockchainScanner for MockBlockchainScanner {
-    async fn scan_blocks(
-        &mut self,
-        config: ScanConfig,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    async fn scan_blocks(&mut self, config: ScanConfig) -> WalletResult<Vec<BlockScanResult>> {
         DefaultScanningLogic::scan_blocks_with_progress(self, config, None).await
     }
 
-    async fn get_tip_info(&mut self) -> LightweightWalletResult<TipInfo> {
+    async fn get_tip_info(&mut self) -> WalletResult<TipInfo> {
         Ok(self.tip_info.clone())
     }
 
     async fn search_utxos(
         &mut self,
         _commitments: Vec<Vec<u8>>,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    ) -> WalletResult<Vec<BlockScanResult>> {
         // Mock implementation - return empty results
         Ok(Vec::new())
     }
 
-    async fn fetch_utxos(
-        &mut self,
-        _hashes: Vec<Vec<u8>>,
-    ) -> LightweightWalletResult<Vec<LightweightTransactionOutput>> {
+    async fn fetch_utxos(&mut self, _hashes: Vec<Vec<u8>>) -> WalletResult<Vec<TransactionOutput>> {
         // Mock implementation - return empty results
         Ok(Vec::new())
     }
 
-    async fn get_blocks_by_heights(
-        &mut self,
-        heights: Vec<u64>,
-    ) -> LightweightWalletResult<Vec<BlockInfo>> {
+    async fn get_blocks_by_heights(&mut self, heights: Vec<u64>) -> WalletResult<Vec<BlockInfo>> {
         let mut result = Vec::new();
         for height in heights {
             if let Some(block) = self.blocks.iter().find(|b| b.height == height) {
@@ -940,10 +914,7 @@ impl BlockchainScanner for MockBlockchainScanner {
         Ok(result)
     }
 
-    async fn get_block_by_height(
-        &mut self,
-        height: u64,
-    ) -> LightweightWalletResult<Option<BlockInfo>> {
+    async fn get_block_by_height(&mut self, height: u64) -> WalletResult<Option<BlockInfo>> {
         Ok(self.blocks.iter().find(|b| b.height == height).cloned())
     }
 }
@@ -994,7 +965,7 @@ impl BlockchainScannerBuilder {
     }
 
     /// Build the scanner
-    pub async fn build(self) -> LightweightWalletResult<Box<dyn BlockchainScanner>> {
+    pub async fn build(self) -> WalletResult<Box<dyn BlockchainScanner>> {
         match self.scanner_type {
             Some(ScannerType::Mock) => Ok(Box::new(MockBlockchainScanner::new())),
             #[cfg(feature = "grpc")]
@@ -1002,7 +973,7 @@ impl BlockchainScannerBuilder {
                 let scanner = GrpcBlockchainScanner::new(url).await?;
                 Ok(Box::new(scanner))
             }
-            None => Err(LightweightWalletError::ConfigurationError(
+            None => Err(WalletError::ConfigurationError(
                 "Scanner type not specified".to_string(),
             )),
         }

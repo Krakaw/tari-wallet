@@ -2,12 +2,9 @@ use crate::data_structures::{
     encrypted_data::EncryptedData,
     transaction_input::TransactionInput,
     types::{CompressedCommitment, CompressedPublicKey, MicroMinotari},
-    wallet_output::{
-        LightweightCovenant, LightweightOutputFeatures, LightweightOutputType,
-        LightweightRangeProof, LightweightScript, LightweightSignature,
-    },
+    wallet_output::{Covenant, OutputFeatures, OutputType, RangeProof, Script, Signature},
 };
-use crate::errors::{LightweightWalletError, SerializationError, ValidationError};
+use crate::errors::{SerializationError, ValidationError, WalletError};
 use crate::hex_utils::{HexEncodable, HexError, HexValidatable};
 use blake2::{Blake2b, Digest};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -21,40 +18,40 @@ use std::{
 
 /// Output for a transaction, defining the new ownership of coins that are being transferred.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
-pub struct LightweightTransactionOutput {
+pub struct TransactionOutput {
     /// Output version
     pub version: u8,
     /// Options for an output's structure or use
-    pub features: LightweightOutputFeatures,
+    pub features: OutputFeatures,
     /// The homomorphic commitment representing the output amount
     pub commitment: CompressedCommitment,
     /// A proof that the commitment is in the right range
-    pub proof: Option<LightweightRangeProof>,
+    pub proof: Option<RangeProof>,
     /// The script that will be executed when spending this output
-    pub script: LightweightScript,
+    pub script: Script,
     /// Tari script offset pubkey, K_O
     pub sender_offset_public_key: CompressedPublicKey,
     /// UTXO signature with the script offset private key, k_O
-    pub metadata_signature: LightweightSignature,
+    pub metadata_signature: Signature,
     /// The covenant that will be executed when spending this output
-    pub covenant: LightweightCovenant,
+    pub covenant: Covenant,
     /// Encrypted value.
     pub encrypted_data: EncryptedData,
     /// The minimum value of the commitment that is proven by the range proof
     pub minimum_value_promise: MicroMinotari,
 }
 
-impl LightweightTransactionOutput {
+impl TransactionOutput {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         version: u8,
-        features: LightweightOutputFeatures,
+        features: OutputFeatures,
         commitment: CompressedCommitment,
-        proof: Option<LightweightRangeProof>,
-        script: LightweightScript,
+        proof: Option<RangeProof>,
+        script: Script,
         sender_offset_public_key: CompressedPublicKey,
-        metadata_signature: LightweightSignature,
-        covenant: LightweightCovenant,
+        metadata_signature: Signature,
+        covenant: Covenant,
         encrypted_data: EncryptedData,
         minimum_value_promise: MicroMinotari,
     ) -> Self {
@@ -75,13 +72,13 @@ impl LightweightTransactionOutput {
     /// Create new Transaction Output with current version (convenience method)
     #[allow(clippy::too_many_arguments)]
     pub fn new_current_version(
-        features: LightweightOutputFeatures,
+        features: OutputFeatures,
         commitment: CompressedCommitment,
-        proof: Option<LightweightRangeProof>,
-        script: LightweightScript,
+        proof: Option<RangeProof>,
+        script: Script,
         sender_offset_public_key: CompressedPublicKey,
-        metadata_signature: LightweightSignature,
-        covenant: LightweightCovenant,
+        metadata_signature: Signature,
+        covenant: Covenant,
         encrypted_data: EncryptedData,
         minimum_value_promise: MicroMinotari,
     ) -> Self {
@@ -104,7 +101,7 @@ impl LightweightTransactionOutput {
         self.version
     }
 
-    pub fn features(&self) -> &LightweightOutputFeatures {
+    pub fn features(&self) -> &OutputFeatures {
         &self.features
     }
 
@@ -112,11 +109,11 @@ impl LightweightTransactionOutput {
         &self.commitment
     }
 
-    pub fn proof(&self) -> Option<&LightweightRangeProof> {
+    pub fn proof(&self) -> Option<&RangeProof> {
         self.proof.as_ref()
     }
 
-    pub fn script(&self) -> &LightweightScript {
+    pub fn script(&self) -> &Script {
         &self.script
     }
 
@@ -124,11 +121,11 @@ impl LightweightTransactionOutput {
         &self.sender_offset_public_key
     }
 
-    pub fn metadata_signature(&self) -> &LightweightSignature {
+    pub fn metadata_signature(&self) -> &Signature {
         &self.metadata_signature
     }
 
-    pub fn covenant(&self) -> &LightweightCovenant {
+    pub fn covenant(&self) -> &Covenant {
         &self.covenant
     }
 
@@ -181,12 +178,12 @@ impl LightweightTransactionOutput {
 
     /// Returns true if the output is a coinbase, otherwise false
     pub fn is_coinbase(&self) -> bool {
-        matches!(self.features.output_type, LightweightOutputType::Coinbase)
+        matches!(self.features.output_type, OutputType::Coinbase)
     }
 
     /// Returns true if the output is burned, otherwise false
     pub fn is_burned(&self) -> bool {
-        matches!(self.features.output_type, LightweightOutputType::Burn)
+        matches!(self.features.output_type, OutputType::Burn)
     }
 
     /// Check if this output is equal to a transaction input by comparing hashes
@@ -214,12 +211,12 @@ impl LightweightTransactionOutput {
     }
 
     /// Get the size of features, scripts and covenant in bytes
-    pub fn get_features_and_scripts_size(&self) -> Result<usize, LightweightWalletError> {
+    pub fn get_features_and_scripts_size(&self) -> Result<usize, WalletError> {
         let features_size = borsh::to_vec(&self.features)
             .map_err(|e| {
-                LightweightWalletError::SerializationError(
-                    SerializationError::BorshSerializationError(e.to_string()),
-                )
+                WalletError::SerializationError(SerializationError::BorshSerializationError(
+                    e.to_string(),
+                ))
             })?
             .len();
         let script_size = self.script.bytes.len();
@@ -230,13 +227,13 @@ impl LightweightTransactionOutput {
     }
 
     /// Verify the metadata signature (simplified version for lightweight implementation)
-    pub fn verify_metadata_signature(&self) -> Result<(), LightweightWalletError> {
+    pub fn verify_metadata_signature(&self) -> Result<(), WalletError> {
         // For the lightweight implementation, we perform a basic signature validation
         // This is a simplified version compared to the full cryptographic verification
         // in the reference implementation
 
         if self.metadata_signature.bytes.is_empty() {
-            return Err(LightweightWalletError::ValidationError(
+            return Err(WalletError::ValidationError(
                 ValidationError::MetadataSignatureValidationFailed(
                     "Metadata signature is empty".to_string(),
                 ),
@@ -245,7 +242,7 @@ impl LightweightTransactionOutput {
 
         // Basic length and format validation
         if self.metadata_signature.bytes.len() != 64 {
-            return Err(LightweightWalletError::ValidationError(
+            return Err(WalletError::ValidationError(
                 ValidationError::MetadataSignatureValidationFailed(
                     "Invalid metadata signature length".to_string(),
                 ),
@@ -258,16 +255,16 @@ impl LightweightTransactionOutput {
     }
 
     /// Verify validator node signature (simplified for lightweight implementation)
-    pub fn verify_validator_node_signature(&self) -> Result<(), LightweightWalletError> {
+    pub fn verify_validator_node_signature(&self) -> Result<(), WalletError> {
         // Check if this is a validator node registration output
         if matches!(
             self.features.output_type,
-            LightweightOutputType::ValidatorNodeRegistration
+            OutputType::ValidatorNodeRegistration
         ) {
             // For lightweight implementation, perform basic validation
             // The full implementation would verify cryptographic signatures
             if self.metadata_signature.bytes.is_empty() {
-                return Err(LightweightWalletError::ValidationError(
+                return Err(WalletError::ValidationError(
                     ValidationError::SignatureValidationFailed(
                         "Validator node signature is not valid".to_string(),
                     ),
@@ -281,13 +278,13 @@ impl LightweightTransactionOutput {
     #[allow(clippy::too_many_arguments)]
     pub fn build_metadata_signature_challenge(
         version: u8,
-        script: &LightweightScript,
-        features: &LightweightOutputFeatures,
+        script: &Script,
+        features: &OutputFeatures,
         sender_offset_public_key: &CompressedPublicKey,
         ephemeral_commitment: &[u8; 32],
         ephemeral_pubkey: &[u8; 32],
         commitment: &CompressedCommitment,
-        covenant: &LightweightCovenant,
+        covenant: &Covenant,
         encrypted_data: &EncryptedData,
         minimum_value_promise: MicroMinotari,
     ) -> [u8; 64] {
@@ -334,9 +331,9 @@ impl LightweightTransactionOutput {
     /// Create metadata signature message from parts
     pub fn metadata_signature_message_from_parts(
         version: u8,
-        script: &LightweightScript,
-        features: &LightweightOutputFeatures,
-        covenant: &LightweightCovenant,
+        script: &Script,
+        features: &OutputFeatures,
+        covenant: &Covenant,
         encrypted_data: &EncryptedData,
         minimum_value_promise: MicroMinotari,
     ) -> [u8; 32] {
@@ -353,8 +350,8 @@ impl LightweightTransactionOutput {
     /// Create common metadata signature message from parts
     pub fn metadata_signature_message_common_from_parts(
         version: u8,
-        features: &LightweightOutputFeatures,
-        covenant: &LightweightCovenant,
+        features: &OutputFeatures,
+        covenant: &Covenant,
         encrypted_data: &EncryptedData,
         minimum_value_promise: MicroMinotari,
     ) -> [u8; 32] {
@@ -372,7 +369,7 @@ impl LightweightTransactionOutput {
 
     /// Create metadata signature message from script and common parts
     pub fn metadata_signature_message_from_script_and_common(
-        script: &LightweightScript,
+        script: &Script,
         common: &[u8; 32],
     ) -> [u8; 32] {
         let mut hasher = Blake2b::<U32>::new();
@@ -385,24 +382,24 @@ impl LightweightTransactionOutput {
     }
 }
 
-impl Default for LightweightTransactionOutput {
+impl Default for TransactionOutput {
     fn default() -> Self {
         Self {
             version: 1,
-            features: LightweightOutputFeatures::default(),
+            features: OutputFeatures::default(),
             commitment: CompressedCommitment::new([0u8; 32]),
             proof: None,
-            script: LightweightScript::default(),
+            script: Script::default(),
             sender_offset_public_key: CompressedPublicKey::new([0u8; 32]),
-            metadata_signature: LightweightSignature::default(),
-            covenant: LightweightCovenant::default(),
+            metadata_signature: Signature::default(),
+            covenant: Covenant::default(),
             encrypted_data: EncryptedData::default(),
             minimum_value_promise: MicroMinotari::new(0),
         }
     }
 }
 
-impl Display for LightweightTransactionOutput {
+impl Display for TransactionOutput {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(
             fmt,
@@ -419,19 +416,19 @@ impl Display for LightweightTransactionOutput {
     }
 }
 
-impl PartialOrd for LightweightTransactionOutput {
+impl PartialOrd for TransactionOutput {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for LightweightTransactionOutput {
+impl Ord for TransactionOutput {
     fn cmp(&self, other: &Self) -> Ordering {
         self.commitment.as_bytes().cmp(other.commitment.as_bytes())
     }
 }
 
-impl HexEncodable for LightweightTransactionOutput {
+impl HexEncodable for TransactionOutput {
     fn to_hex(&self) -> String {
         // For complex structures, we'll serialize to bytes first, then hex
         let bytes = borsh::to_vec(self).unwrap_or_default();
@@ -444,7 +441,7 @@ impl HexEncodable for LightweightTransactionOutput {
     }
 }
 
-impl HexValidatable for LightweightTransactionOutput {}
+impl HexValidatable for TransactionOutput {}
 
 #[cfg(test)]
 mod test {
@@ -452,17 +449,17 @@ mod test {
 
     #[test]
     fn test_transaction_output_creation() {
-        let features = LightweightOutputFeatures::default();
+        let features = OutputFeatures::default();
         let commitment = CompressedCommitment::new([1u8; 32]);
-        let proof = Some(LightweightRangeProof::default());
-        let script = LightweightScript::default();
+        let proof = Some(RangeProof::default());
+        let script = Script::default();
         let sender_offset_public_key = CompressedPublicKey::new([2u8; 32]);
-        let metadata_signature = LightweightSignature::default();
-        let covenant = LightweightCovenant::default();
+        let metadata_signature = Signature::default();
+        let covenant = Covenant::default();
         let encrypted_data = EncryptedData::default();
         let minimum_value_promise = MicroMinotari::new(1000);
 
-        let output = LightweightTransactionOutput::new(
+        let output = TransactionOutput::new(
             1,
             features.clone(),
             commitment.clone(),
@@ -489,14 +486,14 @@ mod test {
 
     #[test]
     fn test_transaction_output_default() {
-        let output = LightweightTransactionOutput::default();
+        let output = TransactionOutput::default();
         assert_eq!(output.version(), 1);
         assert_eq!(output.minimum_value_promise(), MicroMinotari::new(0));
     }
 
     #[test]
     fn test_hash_computation() {
-        let output = LightweightTransactionOutput::default();
+        let output = TransactionOutput::default();
         let hash1 = output.hash();
         let hash2 = output.hash();
         assert_eq!(hash1, hash2); // Hash should be deterministic
@@ -505,7 +502,7 @@ mod test {
 
     #[test]
     fn test_smt_hash_computation() {
-        let output = LightweightTransactionOutput::default();
+        let output = TransactionOutput::default();
         let smt_hash1 = output.smt_hash(100);
         let smt_hash2 = output.smt_hash(100);
         let smt_hash3 = output.smt_hash(101);
@@ -517,29 +514,29 @@ mod test {
 
     #[test]
     fn test_is_coinbase() {
-        let mut output = LightweightTransactionOutput::default();
+        let mut output = TransactionOutput::default();
         assert!(!output.is_coinbase());
 
-        output.features.output_type = LightweightOutputType::Coinbase;
+        output.features.output_type = OutputType::Coinbase;
         assert!(output.is_coinbase());
     }
 
     #[test]
     fn test_is_burned() {
-        let mut output = LightweightTransactionOutput::default();
+        let mut output = TransactionOutput::default();
         assert!(!output.is_burned());
 
-        output.features.output_type = LightweightOutputType::Burn;
+        output.features.output_type = OutputType::Burn;
         assert!(output.is_burned());
     }
 
     #[test]
     fn test_ordering() {
-        let output1 = LightweightTransactionOutput {
+        let output1 = TransactionOutput {
             commitment: CompressedCommitment::new([1u8; 32]),
             ..Default::default()
         };
-        let output2 = LightweightTransactionOutput {
+        let output2 = TransactionOutput {
             commitment: CompressedCommitment::new([2u8; 32]),
             ..Default::default()
         };
@@ -550,7 +547,7 @@ mod test {
 
     #[test]
     fn test_display() {
-        let output = LightweightTransactionOutput::default();
+        let output = TransactionOutput::default();
         let display_str = format!("{output}");
         assert!(!display_str.is_empty());
         assert!(display_str.contains("Script:"));
@@ -559,7 +556,7 @@ mod test {
 
     #[test]
     fn test_verify_metadata_signature() {
-        let output = LightweightTransactionOutput::default();
+        let output = TransactionOutput::default();
         // With empty signature, should fail
         assert!(output.verify_metadata_signature().is_err());
 
@@ -571,24 +568,24 @@ mod test {
 
     #[test]
     fn test_get_features_and_scripts_size() {
-        let output = LightweightTransactionOutput::default();
+        let output = TransactionOutput::default();
         let size = output.get_features_and_scripts_size().unwrap();
         assert!(size > 0);
     }
 
     #[test]
     fn test_current_version_constructor() {
-        let features = LightweightOutputFeatures::default();
+        let features = OutputFeatures::default();
         let commitment = CompressedCommitment::new([1u8; 32]);
-        let proof = Some(LightweightRangeProof::default());
-        let script = LightweightScript::default();
+        let proof = Some(RangeProof::default());
+        let script = Script::default();
         let sender_offset_public_key = CompressedPublicKey::new([2u8; 32]);
-        let metadata_signature = LightweightSignature::default();
-        let covenant = LightweightCovenant::default();
+        let metadata_signature = Signature::default();
+        let covenant = Covenant::default();
         let encrypted_data = EncryptedData::default();
         let minimum_value_promise = MicroMinotari::new(1000);
 
-        let output = LightweightTransactionOutput::new_current_version(
+        let output = TransactionOutput::new_current_version(
             features,
             commitment,
             proof,
@@ -605,14 +602,14 @@ mod test {
 
     #[test]
     fn test_proof_hex_display() {
-        let mut output = LightweightTransactionOutput::default();
+        let mut output = TransactionOutput::default();
 
         // Test with no proof
         let hex_display = output.proof_hex_display(false);
         assert!(hex_display.starts_with("None("));
 
         // Test with proof
-        output.proof = Some(LightweightRangeProof {
+        output.proof = Some(RangeProof {
             bytes: vec![1, 2, 3, 4],
         });
         let hex_display = output.proof_hex_display(true);

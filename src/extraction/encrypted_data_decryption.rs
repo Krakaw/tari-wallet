@@ -7,10 +7,10 @@ use crate::{
     data_structures::{
         encrypted_data::EncryptedData,
         payment_id::PaymentId,
-        transaction_output::LightweightTransactionOutput,
+        transaction_output::TransactionOutput,
         types::{CompressedCommitment, MicroMinotari, PrivateKey},
     },
-    errors::{EncryptionError, KeyManagementError, LightweightWalletError},
+    errors::{EncryptionError, KeyManagementError, WalletError},
     key_management::{ImportedPrivateKey, KeyStore},
 };
 
@@ -164,7 +164,7 @@ impl EncryptedDataDecryptor {
         commitment: &CompressedCommitment,
         key: &PrivateKey,
         options: &DecryptionOptions,
-    ) -> Result<DecryptionResult, LightweightWalletError> {
+    ) -> Result<DecryptionResult, WalletError> {
         match EncryptedData::decrypt_data(key, commitment, encrypted_data) {
             Ok((value, mask, payment_id)) => {
                 // Validate decrypted data if requested
@@ -202,7 +202,7 @@ impl EncryptedDataDecryptor {
         encrypted_data: &EncryptedData,
         commitment: &CompressedCommitment,
         options: Option<&DecryptionOptions>,
-    ) -> Result<DecryptionResult, LightweightWalletError> {
+    ) -> Result<DecryptionResult, WalletError> {
         let options = options.unwrap_or(&self.default_options);
         let mut keys_tried = 0;
         let max_keys = if options.max_keys_to_try == 0 {
@@ -277,9 +277,9 @@ impl EncryptedDataDecryptor {
     /// * `Err(LightweightWalletError)` if an error occurred
     pub fn decrypt_transaction_output(
         &self,
-        transaction_output: &LightweightTransactionOutput,
+        transaction_output: &TransactionOutput,
         options: Option<&DecryptionOptions>,
-    ) -> Result<DecryptionResult, LightweightWalletError> {
+    ) -> Result<DecryptionResult, WalletError> {
         let encrypted_data = transaction_output.encrypted_data();
         let commitment = transaction_output.commitment();
 
@@ -294,10 +294,7 @@ impl EncryptedDataDecryptor {
     /// # Returns
     /// * `Ok(PrivateKey)` if the key was successfully derived
     /// * `Err(LightweightWalletError)` if key derivation failed
-    fn try_derive_key_at_index(
-        &self,
-        _key_index: u64,
-    ) -> Result<PrivateKey, LightweightWalletError> {
+    fn try_derive_key_at_index(&self, _key_index: u64) -> Result<PrivateKey, WalletError> {
         // This is a simplified implementation
         // In practice, you'd need the actual key derivation logic from the key manager
         // For now, we'll return an error to indicate that this needs to be implemented
@@ -322,7 +319,7 @@ impl EncryptedDataDecryptor {
         value: &MicroMinotari,
         mask: &PrivateKey,
         payment_id: &PaymentId,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         // Validate value is reasonable (not zero unless it's a special case)
         if value.as_u64() == 0 {
             // Zero values might be valid in some cases (e.g., burn outputs)
@@ -381,7 +378,7 @@ impl EncryptedDataDecryptor {
     pub fn add_imported_key(
         &mut self,
         imported_key: ImportedPrivateKey,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         self.key_store
             .add_imported_key(imported_key)
             .map_err(|e| e.into())
@@ -400,7 +397,7 @@ impl EncryptedDataDecryptor {
         &mut self,
         hex: &str,
         label: Option<String>,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         self.key_store
             .import_private_key_from_hex(hex, label)
             .map_err(|e| e.into())
@@ -419,7 +416,7 @@ impl EncryptedDataDecryptor {
         &mut self,
         bytes: [u8; 32],
         label: Option<String>,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         self.key_store
             .import_private_key_from_bytes(bytes, label)
             .map_err(|e| e.into())

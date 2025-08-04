@@ -26,7 +26,7 @@ use std::{
     BorshDeserialize,
     Default,
 )]
-pub enum LightweightKeyId {
+pub enum KeyId {
     /// A simple string identifier for keys
     String(String),
     /// A public key identifier
@@ -36,12 +36,12 @@ pub enum LightweightKeyId {
     Zero,
 }
 
-impl std::fmt::Display for LightweightKeyId {
+impl std::fmt::Display for KeyId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LightweightKeyId::String(s) => write!(f, "{s}"),
-            LightweightKeyId::PublicKey(pk) => write!(f, "{pk}"),
-            LightweightKeyId::Zero => write!(f, "zero"),
+            KeyId::String(s) => write!(f, "{s}"),
+            KeyId::PublicKey(pk) => write!(f, "{pk}"),
+            KeyId::Zero => write!(f, "zero"),
         }
     }
 }
@@ -50,26 +50,26 @@ impl std::fmt::Display for LightweightKeyId {
 #[derive(
     Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize,
 )]
-pub struct LightweightOutputFeatures {
+pub struct OutputFeatures {
     /// Output type (payment, coinbase, burn, etc.)
-    pub output_type: LightweightOutputType,
+    pub output_type: OutputType,
     /// Maturity height (when the output can be spent)
     pub maturity: u64,
     /// Range proof type
     pub range_proof_type: LightweightRangeProofType,
 }
 
-impl LightweightOutputFeatures {
+impl OutputFeatures {
     /// Get the serialized bytes of the output features
     pub fn bytes(&self) -> Vec<u8> {
         borsh::to_vec(self).unwrap_or_default()
     }
 }
 
-impl Default for LightweightOutputFeatures {
+impl Default for OutputFeatures {
     fn default() -> Self {
         Self {
-            output_type: LightweightOutputType::Payment,
+            output_type: OutputType::Payment,
             maturity: 0,
             range_proof_type: LightweightRangeProofType::BulletProofPlus,
         }
@@ -89,7 +89,7 @@ impl Default for LightweightOutputFeatures {
     BorshDeserialize,
     Default,
 )]
-pub enum LightweightOutputType {
+pub enum OutputType {
     #[default]
     Payment,
     Coinbase,
@@ -130,7 +130,7 @@ pub enum LightweightRangeProofType {
     BorshDeserialize,
     Default,
 )]
-pub struct LightweightScript {
+pub struct Script {
     /// Script bytes
     pub bytes: Vec<u8>,
 }
@@ -148,7 +148,7 @@ pub struct LightweightScript {
     BorshDeserialize,
     Default,
 )]
-pub struct LightweightCovenant {
+pub struct Covenant {
     /// Covenant bytes
     pub bytes: Vec<u8>,
 }
@@ -166,12 +166,12 @@ pub struct LightweightCovenant {
     BorshDeserialize,
     Default,
 )]
-pub struct LightweightExecutionStack {
+pub struct ExecutionStack {
     /// Stack items as bytes
     pub items: Vec<Vec<u8>>,
 }
 
-impl LightweightExecutionStack {
+impl ExecutionStack {
     /// Get the serialized bytes of the execution stack
     pub fn bytes(&self) -> Vec<u8> {
         borsh::to_vec(&self.items).unwrap_or_default()
@@ -192,7 +192,7 @@ impl LightweightExecutionStack {
     BorshDeserialize,
     Default,
 )]
-pub struct LightweightSignature {
+pub struct Signature {
     /// Signature bytes
     pub bytes: Vec<u8>,
 }
@@ -210,7 +210,7 @@ pub struct LightweightSignature {
     BorshDeserialize,
     Default,
 )]
-pub struct LightweightRangeProof {
+pub struct RangeProof {
     /// Range proof bytes
     pub bytes: Vec<u8>,
 }
@@ -218,27 +218,27 @@ pub struct LightweightRangeProof {
 /// A lightweight wallet output where the value and spending key are known
 /// This is a simplified version of the full WalletOutput for use in lightweight wallets
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub struct LightweightWalletOutput {
+pub struct WalletOutput {
     /// Output version
     pub version: u8,
     /// Output value in Micro Minotari
     pub value: MicroMinotari,
     /// Spending key identifier
-    pub spending_key_id: LightweightKeyId,
+    pub spending_key_id: KeyId,
     /// Output features
-    pub features: LightweightOutputFeatures,
+    pub features: OutputFeatures,
     /// Script
-    pub script: LightweightScript,
+    pub script: Script,
     /// Covenant
-    pub covenant: LightweightCovenant,
+    pub covenant: Covenant,
     /// Input data (execution stack)
-    pub input_data: LightweightExecutionStack,
+    pub input_data: ExecutionStack,
     /// Script key identifier
-    pub script_key_id: LightweightKeyId,
+    pub script_key_id: KeyId,
     /// Sender offset public key
     pub sender_offset_public_key: CompressedPublicKey,
     /// Metadata signature
-    pub metadata_signature: LightweightSignature,
+    pub metadata_signature: Signature,
     /// Script lock height
     pub script_lock_height: u64,
     /// Encrypted data
@@ -246,29 +246,29 @@ pub struct LightweightWalletOutput {
     /// Minimum value promise
     pub minimum_value_promise: MicroMinotari,
     /// Range proof (optional)
-    pub range_proof: Option<LightweightRangeProof>,
+    pub range_proof: Option<RangeProof>,
     /// Payment ID
     pub payment_id: PaymentId,
 }
 
-impl LightweightWalletOutput {
+impl WalletOutput {
     /// Creates a new lightweight wallet output
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         version: u8,
         value: MicroMinotari,
-        spending_key_id: LightweightKeyId,
-        features: LightweightOutputFeatures,
-        script: LightweightScript,
-        input_data: LightweightExecutionStack,
-        script_key_id: LightweightKeyId,
+        spending_key_id: KeyId,
+        features: OutputFeatures,
+        script: Script,
+        input_data: ExecutionStack,
+        script_key_id: KeyId,
         sender_offset_public_key: CompressedPublicKey,
-        metadata_signature: LightweightSignature,
+        metadata_signature: Signature,
         script_lock_height: u64,
-        covenant: LightweightCovenant,
+        covenant: Covenant,
         encrypted_data: EncryptedData,
         minimum_value_promise: MicroMinotari,
-        range_proof: Option<LightweightRangeProof>,
+        range_proof: Option<RangeProof>,
         payment_id: PaymentId,
     ) -> Self {
         Self {
@@ -293,8 +293,8 @@ impl LightweightWalletOutput {
     /// Creates a new lightweight wallet output with default values
     pub fn new_default(
         value: MicroMinotari,
-        spending_key_id: LightweightKeyId,
-        script_key_id: LightweightKeyId,
+        spending_key_id: KeyId,
+        script_key_id: KeyId,
         sender_offset_public_key: CompressedPublicKey,
         encrypted_data: EncryptedData,
         payment_id: PaymentId,
@@ -303,14 +303,14 @@ impl LightweightWalletOutput {
             version: 1, // Current version
             value,
             spending_key_id,
-            features: LightweightOutputFeatures::default(),
-            script: LightweightScript::default(),
-            input_data: LightweightExecutionStack::default(),
+            features: OutputFeatures::default(),
+            script: Script::default(),
+            input_data: ExecutionStack::default(),
             script_key_id,
             sender_offset_public_key,
-            metadata_signature: LightweightSignature::default(),
+            metadata_signature: Signature::default(),
             script_lock_height: 0,
-            covenant: LightweightCovenant::default(),
+            covenant: Covenant::default(),
             encrypted_data,
             minimum_value_promise: MicroMinotari::new(0),
             range_proof: None,
@@ -324,12 +324,12 @@ impl LightweightWalletOutput {
     }
 
     /// Get the spending key ID
-    pub fn spending_key_id(&self) -> &LightweightKeyId {
+    pub fn spending_key_id(&self) -> &KeyId {
         &self.spending_key_id
     }
 
     /// Get the script key ID
-    pub fn script_key_id(&self) -> &LightweightKeyId {
+    pub fn script_key_id(&self) -> &KeyId {
         &self.script_key_id
     }
 
@@ -345,12 +345,12 @@ impl LightweightWalletOutput {
 
     /// Check if this is a coinbase output
     pub fn is_coinbase(&self) -> bool {
-        matches!(self.features.output_type, LightweightOutputType::Coinbase)
+        matches!(self.features.output_type, OutputType::Coinbase)
     }
 
     /// Check if this is a burn output
     pub fn is_burn(&self) -> bool {
-        matches!(self.features.output_type, LightweightOutputType::Burn)
+        matches!(self.features.output_type, OutputType::Burn)
     }
 
     /// Get the maturity height
@@ -384,7 +384,7 @@ impl LightweightWalletOutput {
     }
 
     /// Get the output type
-    pub fn output_type(&self) -> &LightweightOutputType {
+    pub fn output_type(&self) -> &OutputType {
         &self.features.output_type
     }
 
@@ -399,32 +399,32 @@ impl LightweightWalletOutput {
     }
 
     /// Get the metadata signature
-    pub fn metadata_signature(&self) -> &LightweightSignature {
+    pub fn metadata_signature(&self) -> &Signature {
         &self.metadata_signature
     }
 
     /// Get the script
-    pub fn script(&self) -> &LightweightScript {
+    pub fn script(&self) -> &Script {
         &self.script
     }
 
     /// Get the covenant
-    pub fn covenant(&self) -> &LightweightCovenant {
+    pub fn covenant(&self) -> &Covenant {
         &self.covenant
     }
 
     /// Get the input data
-    pub fn input_data(&self) -> &LightweightExecutionStack {
+    pub fn input_data(&self) -> &ExecutionStack {
         &self.input_data
     }
 
     /// Get the range proof
-    pub fn range_proof(&self) -> Option<&LightweightRangeProof> {
+    pub fn range_proof(&self) -> Option<&RangeProof> {
         self.range_proof.as_ref()
     }
 
     /// Set the range proof
-    pub fn set_range_proof(&mut self, range_proof: LightweightRangeProof) {
+    pub fn set_range_proof(&mut self, range_proof: RangeProof) {
         self.range_proof = Some(range_proof);
     }
 
@@ -449,13 +449,13 @@ impl LightweightWalletOutput {
     }
 }
 
-impl PartialOrd<LightweightWalletOutput> for LightweightWalletOutput {
+impl PartialOrd<WalletOutput> for WalletOutput {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for LightweightWalletOutput {
+impl Ord for WalletOutput {
     fn cmp(&self, other: &Self) -> Ordering {
         // Primary sort by maturity, then by value
         self.features
@@ -465,7 +465,7 @@ impl Ord for LightweightWalletOutput {
     }
 }
 
-impl Debug for LightweightWalletOutput {
+impl Debug for WalletOutput {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LightweightWalletOutput")
             .field("version", &self.version)
@@ -478,20 +478,20 @@ impl Debug for LightweightWalletOutput {
     }
 }
 
-impl Default for LightweightWalletOutput {
+impl Default for WalletOutput {
     fn default() -> Self {
         Self {
             version: 1,
             value: MicroMinotari::new(0),
-            spending_key_id: LightweightKeyId::Zero,
-            features: LightweightOutputFeatures::default(),
-            script: LightweightScript::default(),
-            input_data: LightweightExecutionStack::default(),
-            script_key_id: LightweightKeyId::Zero,
+            spending_key_id: KeyId::Zero,
+            features: OutputFeatures::default(),
+            script: Script::default(),
+            input_data: ExecutionStack::default(),
+            script_key_id: KeyId::Zero,
             sender_offset_public_key: CompressedPublicKey::new([0u8; 32]),
-            metadata_signature: LightweightSignature::default(),
+            metadata_signature: Signature::default(),
             script_lock_height: 0,
-            covenant: LightweightCovenant::default(),
+            covenant: Covenant::default(),
             encrypted_data: EncryptedData::default(),
             minimum_value_promise: MicroMinotari::new(0),
             range_proof: None,
@@ -500,7 +500,7 @@ impl Default for LightweightWalletOutput {
     }
 }
 
-impl HexEncodable for LightweightWalletOutput {
+impl HexEncodable for WalletOutput {
     fn to_hex(&self) -> String {
         // For complex structures, we'll serialize to bytes first, then hex
         let bytes = borsh::to_vec(self).unwrap_or_default();
@@ -513,9 +513,9 @@ impl HexEncodable for LightweightWalletOutput {
     }
 }
 
-impl HexValidatable for LightweightWalletOutput {}
+impl HexValidatable for WalletOutput {}
 
-impl HexEncodable for LightweightScript {
+impl HexEncodable for Script {
     fn to_hex(&self) -> String {
         self.bytes.encode_hex()
     }
@@ -526,9 +526,9 @@ impl HexEncodable for LightweightScript {
     }
 }
 
-impl HexValidatable for LightweightScript {}
+impl HexValidatable for Script {}
 
-impl HexEncodable for LightweightSignature {
+impl HexEncodable for Signature {
     fn to_hex(&self) -> String {
         self.bytes.encode_hex()
     }
@@ -539,9 +539,9 @@ impl HexEncodable for LightweightSignature {
     }
 }
 
-impl HexValidatable for LightweightSignature {}
+impl HexValidatable for Signature {}
 
-impl HexEncodable for LightweightRangeProof {
+impl HexEncodable for RangeProof {
     fn to_hex(&self) -> String {
         self.bytes.encode_hex()
     }
@@ -552,9 +552,9 @@ impl HexEncodable for LightweightRangeProof {
     }
 }
 
-impl HexValidatable for LightweightRangeProof {}
+impl HexValidatable for RangeProof {}
 
-impl HexEncodable for LightweightCovenant {
+impl HexEncodable for Covenant {
     fn to_hex(&self) -> String {
         self.bytes.encode_hex()
     }
@@ -565,9 +565,9 @@ impl HexEncodable for LightweightCovenant {
     }
 }
 
-impl HexValidatable for LightweightCovenant {}
+impl HexValidatable for Covenant {}
 
-impl HexEncodable for LightweightExecutionStack {
+impl HexEncodable for ExecutionStack {
     fn to_hex(&self) -> String {
         // For execution stack, we'll serialize the items to a single hex string
         let bytes = borsh::to_vec(&self.items).unwrap_or_default();
@@ -582,7 +582,7 @@ impl HexEncodable for LightweightExecutionStack {
     }
 }
 
-impl HexValidatable for LightweightExecutionStack {}
+impl HexValidatable for ExecutionStack {}
 
 #[cfg(test)]
 mod test {
@@ -593,13 +593,13 @@ mod test {
     #[test]
     fn test_lightweight_wallet_output_creation() {
         let value = MicroMinotari::new(1000000);
-        let spending_key_id = LightweightKeyId::String("spending_key_1".to_string());
-        let script_key_id = LightweightKeyId::String("script_key_1".to_string());
+        let spending_key_id = KeyId::String("spending_key_1".to_string());
+        let script_key_id = KeyId::String("script_key_1".to_string());
         let sender_offset_public_key = CompressedPublicKey::new([0u8; 32]);
         let encrypted_data = EncryptedData::default();
         let payment_id = PaymentId::U256(U256::from(12345));
 
-        let output = LightweightWalletOutput::new_default(
+        let output = WalletOutput::new_default(
             value,
             spending_key_id.clone(),
             script_key_id.clone(),
@@ -620,35 +620,35 @@ mod test {
     #[test]
     fn test_lightweight_wallet_output_full_constructor() {
         let value = MicroMinotari::new(2500000);
-        let spending_key_id = LightweightKeyId::PublicKey(CompressedPublicKey::new([1u8; 32]));
-        let script_key_id = LightweightKeyId::Zero;
+        let spending_key_id = KeyId::PublicKey(CompressedPublicKey::new([1u8; 32]));
+        let script_key_id = KeyId::Zero;
         let sender_offset_public_key = CompressedPublicKey::new([2u8; 32]);
         let encrypted_data = EncryptedData::from_bytes(&[1, 2, 3, 4, 5]).unwrap_or_default();
         let payment_id = PaymentId::Empty;
 
-        let features = LightweightOutputFeatures {
-            output_type: LightweightOutputType::Coinbase,
+        let features = OutputFeatures {
+            output_type: OutputType::Coinbase,
             maturity: 50,
             range_proof_type: LightweightRangeProofType::RevealedValue,
         };
 
-        let script = LightweightScript {
+        let script = Script {
             bytes: vec![10, 20, 30],
         };
-        let covenant = LightweightCovenant {
+        let covenant = Covenant {
             bytes: vec![40, 50, 60],
         };
-        let input_data = LightweightExecutionStack {
+        let input_data = ExecutionStack {
             items: vec![vec![70, 80, 90]],
         };
-        let metadata_signature = LightweightSignature {
+        let metadata_signature = Signature {
             bytes: vec![100, 110, 120],
         };
-        let range_proof = Some(LightweightRangeProof {
+        let range_proof = Some(RangeProof {
             bytes: vec![130, 140, 150],
         });
 
-        let output = LightweightWalletOutput::new(
+        let output = WalletOutput::new(
             2,
             value,
             spending_key_id.clone(),
@@ -670,7 +670,7 @@ mod test {
         assert_eq!(output.value(), value);
         assert_eq!(output.spending_key_id(), &spending_key_id);
         assert_eq!(output.script_key_id(), &script_key_id);
-        assert_eq!(output.output_type(), &LightweightOutputType::Coinbase);
+        assert_eq!(output.output_type(), &OutputType::Coinbase);
         assert_eq!(output.maturity(), 50);
         assert_eq!(output.script_lock_height(), 75);
         assert_eq!(
@@ -689,9 +689,9 @@ mod test {
 
     #[test]
     fn test_lightweight_key_id_variants() {
-        let string_key = LightweightKeyId::String("test_key".to_string());
-        let public_key = LightweightKeyId::PublicKey(CompressedPublicKey::new([1u8; 32]));
-        let zero_key = LightweightKeyId::Zero;
+        let string_key = KeyId::String("test_key".to_string());
+        let public_key = KeyId::PublicKey(CompressedPublicKey::new([1u8; 32]));
+        let zero_key = KeyId::Zero;
 
         assert_eq!(string_key.to_string(), "test_key");
         assert_eq!(
@@ -701,22 +701,22 @@ mod test {
         assert_eq!(zero_key.to_string(), "zero");
 
         // Test equality
-        assert_eq!(string_key, LightweightKeyId::String("test_key".to_string()));
-        assert_eq!(zero_key, LightweightKeyId::default());
+        assert_eq!(string_key, KeyId::String("test_key".to_string()));
+        assert_eq!(zero_key, KeyId::default());
         assert_ne!(string_key, public_key);
     }
 
     #[test]
     fn test_lightweight_output_features() {
-        let mut features = LightweightOutputFeatures::default();
-        assert_eq!(features.output_type, LightweightOutputType::Payment);
+        let mut features = OutputFeatures::default();
+        assert_eq!(features.output_type, OutputType::Payment);
         assert_eq!(features.maturity, 0);
         assert_eq!(
             features.range_proof_type,
             LightweightRangeProofType::BulletProofPlus
         );
 
-        features.output_type = LightweightOutputType::ValidatorNodeRegistration;
+        features.output_type = OutputType::ValidatorNodeRegistration;
         features.maturity = 1000;
         features.range_proof_type = LightweightRangeProofType::RevealedValue;
 
@@ -725,11 +725,11 @@ mod test {
 
         // Test all output types
         let all_types = vec![
-            LightweightOutputType::Payment,
-            LightweightOutputType::Coinbase,
-            LightweightOutputType::Burn,
-            LightweightOutputType::ValidatorNodeRegistration,
-            LightweightOutputType::CodeTemplateRegistration,
+            OutputType::Payment,
+            OutputType::Coinbase,
+            OutputType::Burn,
+            OutputType::ValidatorNodeRegistration,
+            OutputType::CodeTemplateRegistration,
         ];
 
         for output_type in all_types {
@@ -740,20 +740,20 @@ mod test {
 
     #[test]
     fn test_lightweight_script_components() {
-        let script = LightweightScript {
+        let script = Script {
             bytes: vec![1, 2, 3, 4, 5],
         };
-        let covenant = LightweightCovenant {
+        let covenant = Covenant {
             bytes: vec![6, 7, 8, 9, 10],
         };
-        let signature = LightweightSignature {
+        let signature = Signature {
             bytes: vec![11, 12, 13, 14, 15],
         };
-        let range_proof = LightweightRangeProof {
+        let range_proof = RangeProof {
             bytes: vec![16, 17, 18, 19, 20],
         };
 
-        let execution_stack = LightweightExecutionStack {
+        let execution_stack = ExecutionStack {
             items: vec![vec![21, 22], vec![23, 24, 25]],
         };
 
@@ -769,7 +769,7 @@ mod test {
 
     #[test]
     fn test_lightweight_wallet_output_maturity() {
-        let mut output = LightweightWalletOutput::default();
+        let mut output = WalletOutput::default();
         output.features.maturity = 100;
 
         assert!(!output.is_mature_at(50));
@@ -779,7 +779,7 @@ mod test {
 
     #[test]
     fn test_lightweight_wallet_output_script_lock() {
-        let output = LightweightWalletOutput {
+        let output = WalletOutput {
             script_lock_height: 200,
             ..Default::default()
         };
@@ -791,7 +791,7 @@ mod test {
 
     #[test]
     fn test_lightweight_wallet_output_can_be_spent() {
-        let mut output = LightweightWalletOutput::default();
+        let mut output = WalletOutput::default();
         output.features.maturity = 100;
         output.script_lock_height = 200;
 
@@ -802,7 +802,7 @@ mod test {
 
     #[test]
     fn test_lightweight_wallet_output_edge_cases() {
-        let mut output = LightweightWalletOutput::default();
+        let mut output = WalletOutput::default();
 
         // Test boundary conditions
         output.features.maturity = 0;
@@ -826,42 +826,42 @@ mod test {
 
     #[test]
     fn test_lightweight_wallet_output_types() {
-        let mut output = LightweightWalletOutput::default();
+        let mut output = WalletOutput::default();
 
         // Test default (payment)
         assert!(!output.is_coinbase());
         assert!(!output.is_burn());
-        assert_eq!(output.output_type(), &LightweightOutputType::Payment);
+        assert_eq!(output.output_type(), &OutputType::Payment);
 
         // Test coinbase
-        output.features.output_type = LightweightOutputType::Coinbase;
+        output.features.output_type = OutputType::Coinbase;
         assert!(output.is_coinbase());
         assert!(!output.is_burn());
-        assert_eq!(output.output_type(), &LightweightOutputType::Coinbase);
+        assert_eq!(output.output_type(), &OutputType::Coinbase);
 
         // Test burn
-        output.features.output_type = LightweightOutputType::Burn;
+        output.features.output_type = OutputType::Burn;
         assert!(!output.is_coinbase());
         assert!(output.is_burn());
-        assert_eq!(output.output_type(), &LightweightOutputType::Burn);
+        assert_eq!(output.output_type(), &OutputType::Burn);
 
         // Test other types
-        output.features.output_type = LightweightOutputType::ValidatorNodeRegistration;
+        output.features.output_type = OutputType::ValidatorNodeRegistration;
         assert!(!output.is_coinbase());
         assert!(!output.is_burn());
 
-        output.features.output_type = LightweightOutputType::CodeTemplateRegistration;
+        output.features.output_type = OutputType::CodeTemplateRegistration;
         assert!(!output.is_coinbase());
         assert!(!output.is_burn());
     }
 
     #[test]
     fn test_lightweight_wallet_output_ordering() {
-        let mut output1 = LightweightWalletOutput::default();
+        let mut output1 = WalletOutput::default();
         output1.features.maturity = 100;
         output1.value = MicroMinotari::new(1000000);
 
-        let mut output2 = LightweightWalletOutput::default();
+        let mut output2 = WalletOutput::default();
         output2.features.maturity = 200;
         output2.value = MicroMinotari::new(500000);
 
@@ -871,7 +871,7 @@ mod test {
         assert!(output2 > output1);
         assert!(output2 >= output1);
 
-        let mut output3 = LightweightWalletOutput::default();
+        let mut output3 = WalletOutput::default();
         output3.features.maturity = 100;
         output3.value = MicroMinotari::new(2000000);
 
@@ -887,12 +887,12 @@ mod test {
 
     #[test]
     fn test_lightweight_wallet_output_mutations() {
-        let mut output = LightweightWalletOutput::default();
+        let mut output = WalletOutput::default();
 
         // Test setting and removing range proof
         assert!(output.range_proof().is_none());
 
-        let range_proof = LightweightRangeProof {
+        let range_proof = RangeProof {
             bytes: vec![1, 2, 3, 4, 5],
         };
         output.set_range_proof(range_proof.clone());
@@ -914,109 +914,109 @@ mod test {
 
     #[test]
     fn test_hex_encoding_for_components() {
-        let script = LightweightScript {
+        let script = Script {
             bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
         };
         let hex = script.to_hex();
-        let decoded = LightweightScript::from_hex(&hex).unwrap();
+        let decoded = Script::from_hex(&hex).unwrap();
         assert_eq!(script, decoded);
 
-        let signature = LightweightSignature {
+        let signature = Signature {
             bytes: vec![0xCA, 0xFE, 0xBA, 0xBE],
         };
         let hex = signature.to_hex();
-        let decoded = LightweightSignature::from_hex(&hex).unwrap();
+        let decoded = Signature::from_hex(&hex).unwrap();
         assert_eq!(signature, decoded);
 
-        let range_proof = LightweightRangeProof {
+        let range_proof = RangeProof {
             bytes: vec![0x12, 0x34, 0x56, 0x78],
         };
         let hex = range_proof.to_hex();
-        let decoded = LightweightRangeProof::from_hex(&hex).unwrap();
+        let decoded = RangeProof::from_hex(&hex).unwrap();
         assert_eq!(range_proof, decoded);
 
-        let covenant = LightweightCovenant {
+        let covenant = Covenant {
             bytes: vec![0xAB, 0xCD, 0xEF, 0x01],
         };
         let hex = covenant.to_hex();
-        let decoded = LightweightCovenant::from_hex(&hex).unwrap();
+        let decoded = Covenant::from_hex(&hex).unwrap();
         assert_eq!(covenant, decoded);
 
-        let execution_stack = LightweightExecutionStack {
+        let execution_stack = ExecutionStack {
             items: vec![vec![0x11, 0x22], vec![0x33, 0x44, 0x55]],
         };
         let hex = execution_stack.to_hex();
-        let decoded = LightweightExecutionStack::from_hex(&hex).unwrap();
+        let decoded = ExecutionStack::from_hex(&hex).unwrap();
         assert_eq!(execution_stack, decoded);
     }
 
     #[test]
     fn test_hex_encoding_errors() {
         // Test invalid hex strings
-        assert!(LightweightScript::from_hex("invalid_hex").is_err());
-        assert!(LightweightSignature::from_hex("ZZ").is_err());
-        assert!(LightweightRangeProof::from_hex("").is_ok()); // Empty is valid
-        assert!(LightweightCovenant::from_hex("deadbeef").is_ok()); // Valid hex
-        assert!(LightweightExecutionStack::from_hex("not_valid_borsh").is_err());
+        assert!(Script::from_hex("invalid_hex").is_err());
+        assert!(Signature::from_hex("ZZ").is_err());
+        assert!(RangeProof::from_hex("").is_ok()); // Empty is valid
+        assert!(Covenant::from_hex("deadbeef").is_ok()); // Valid hex
+        assert!(ExecutionStack::from_hex("not_valid_borsh").is_err());
     }
 
     #[test]
     fn test_lightweight_wallet_output_hex_serialization() {
-        let output = LightweightWalletOutput::default();
+        let output = WalletOutput::default();
         let hex = output.to_hex();
-        let decoded = LightweightWalletOutput::from_hex(&hex).unwrap();
+        let decoded = WalletOutput::from_hex(&hex).unwrap();
         assert_eq!(output, decoded);
 
         // Test with modified output
         let mut complex_output = output.clone();
         complex_output.value = MicroMinotari::new(5000000);
-        complex_output.features.output_type = LightweightOutputType::Coinbase;
+        complex_output.features.output_type = OutputType::Coinbase;
         complex_output.features.maturity = 500;
         complex_output.script_lock_height = 1000;
 
         let hex = complex_output.to_hex();
-        let decoded = LightweightWalletOutput::from_hex(&hex).unwrap();
+        let decoded = WalletOutput::from_hex(&hex).unwrap();
         assert_eq!(complex_output, decoded);
     }
 
     #[test]
     fn test_default_implementations() {
-        let default_output = LightweightWalletOutput::default();
+        let default_output = WalletOutput::default();
         assert_eq!(default_output.version(), 1);
         assert_eq!(default_output.value(), MicroMinotari::new(0));
-        assert_eq!(default_output.spending_key_id(), &LightweightKeyId::Zero);
-        assert_eq!(default_output.script_key_id(), &LightweightKeyId::Zero);
+        assert_eq!(default_output.spending_key_id(), &KeyId::Zero);
+        assert_eq!(default_output.script_key_id(), &KeyId::Zero);
         assert_eq!(default_output.script_lock_height(), 0);
         assert_eq!(default_output.maturity(), 0);
         assert!(default_output.range_proof().is_none());
 
-        let default_features = LightweightOutputFeatures::default();
-        assert_eq!(default_features.output_type, LightweightOutputType::Payment);
+        let default_features = OutputFeatures::default();
+        assert_eq!(default_features.output_type, OutputType::Payment);
         assert_eq!(default_features.maturity, 0);
         assert_eq!(
             default_features.range_proof_type,
             LightweightRangeProofType::BulletProofPlus
         );
 
-        let default_script = LightweightScript::default();
+        let default_script = Script::default();
         assert!(default_script.bytes.is_empty());
 
-        let default_covenant = LightweightCovenant::default();
+        let default_covenant = Covenant::default();
         assert!(default_covenant.bytes.is_empty());
 
-        let default_execution_stack = LightweightExecutionStack::default();
+        let default_execution_stack = ExecutionStack::default();
         assert!(default_execution_stack.items.is_empty());
 
-        let default_signature = LightweightSignature::default();
+        let default_signature = Signature::default();
         assert!(default_signature.bytes.is_empty());
 
-        let default_range_proof = LightweightRangeProof::default();
+        let default_range_proof = RangeProof::default();
         assert!(default_range_proof.bytes.is_empty());
     }
 
     #[test]
     fn test_debug_formatting() {
-        let output = LightweightWalletOutput::default();
+        let output = WalletOutput::default();
         let debug_str = format!("{output:?}");
         assert!(debug_str.contains("LightweightWalletOutput"));
         assert!(debug_str.contains("version"));

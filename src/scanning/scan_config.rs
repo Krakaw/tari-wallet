@@ -8,7 +8,7 @@
 
 use crate::{
     data_structures::types::PrivateKey,
-    errors::{KeyManagementError, LightweightWalletResult},
+    errors::{KeyManagementError, WalletResult},
     key_management::{
         key_derivation,
         seed_phrase::{mnemonic_to_bytes, CipherSeed},
@@ -223,7 +223,7 @@ impl ScanContext {
     ///
     /// # Errors
     /// Returns an error if the wallet seed phrase cannot be exported or processed
-    pub fn from_wallet(wallet: &Wallet) -> LightweightWalletResult<Self> {
+    pub fn from_wallet(wallet: &Wallet) -> WalletResult<Self> {
         // Setup wallet keys
         let mut seed_phrase = wallet.export_seed_phrase()?;
         let encrypted_bytes = mnemonic_to_bytes(&seed_phrase)?;
@@ -265,7 +265,7 @@ impl ScanContext {
     ///
     /// # Errors
     /// Returns an error if the hex string is invalid or not exactly 32 bytes
-    pub fn from_view_key(view_key_hex: &str) -> LightweightWalletResult<Self> {
+    pub fn from_view_key(view_key_hex: &str) -> WalletResult<Self> {
         // Parse the hex view key
         let mut view_key_bytes = hex::decode(view_key_hex).map_err(|_| {
             KeyManagementError::key_derivation_failed("Invalid hex format for view key")

@@ -7,11 +7,11 @@ use crate::{
     data_structures::{
         encrypted_data::EncryptedData,
         payment_id::PaymentId,
-        transaction_output::LightweightTransactionOutput,
+        transaction_output::TransactionOutput,
         types::{CompressedCommitment, MicroMinotari},
-        wallet_output::LightweightWalletOutput,
+        wallet_output::WalletOutput,
     },
-    errors::{DataStructureError, LightweightWalletError},
+    errors::{DataStructureError, WalletError},
 };
 
 /// Result of corruption detection
@@ -221,7 +221,7 @@ impl CorruptionDetector {
     /// Detect corruption in transaction output
     pub fn detect_transaction_output_corruption(
         &self,
-        transaction_output: &LightweightTransactionOutput,
+        transaction_output: &TransactionOutput,
     ) -> CorruptionDetectionResult {
         // Check encrypted data corruption
         let encrypted_data_result =
@@ -282,7 +282,7 @@ impl CorruptionDetector {
     /// Detect corruption in wallet output
     pub fn detect_wallet_output_corruption(
         &self,
-        wallet_output: &LightweightWalletOutput,
+        wallet_output: &WalletOutput,
     ) -> CorruptionDetectionResult {
         // Check encrypted data corruption
         let encrypted_data_result =
@@ -345,7 +345,7 @@ impl CorruptionDetector {
     /// Detect corruption in range proof
     fn detect_range_proof_corruption(
         &self,
-        proof: &crate::data_structures::wallet_output::LightweightRangeProof,
+        proof: &crate::data_structures::wallet_output::RangeProof,
     ) -> CorruptionDetectionResult {
         // Check if range proof is empty
         if proof.bytes.is_empty() {
@@ -383,7 +383,7 @@ impl CorruptionDetector {
     /// Detect corruption in signature
     fn detect_signature_corruption(
         &self,
-        signature: &crate::data_structures::wallet_output::LightweightSignature,
+        signature: &crate::data_structures::wallet_output::Signature,
     ) -> CorruptionDetectionResult {
         // Check if signature is empty
         if signature.bytes.is_empty() {
@@ -411,7 +411,7 @@ impl CorruptionDetector {
     /// Detect corruption in script
     fn detect_script_corruption(
         &self,
-        _script: &crate::data_structures::wallet_output::LightweightScript,
+        _script: &crate::data_structures::wallet_output::Script,
     ) -> CorruptionDetectionResult {
         // Script can be empty, so no corruption detection needed
         CorruptionDetectionResult::clean()
@@ -420,7 +420,7 @@ impl CorruptionDetector {
     /// Detect corruption in covenant
     fn detect_covenant_corruption(
         &self,
-        _covenant: &crate::data_structures::wallet_output::LightweightCovenant,
+        _covenant: &crate::data_structures::wallet_output::Covenant,
     ) -> CorruptionDetectionResult {
         // Covenant can be empty, so no corruption detection needed
         CorruptionDetectionResult::clean()
@@ -509,7 +509,7 @@ impl CorruptionDetector {
     /// Detect corruption in features
     fn detect_features_corruption(
         &self,
-        features: &crate::data_structures::wallet_output::LightweightOutputFeatures,
+        features: &crate::data_structures::wallet_output::OutputFeatures,
     ) -> CorruptionDetectionResult {
         // Check if maturity is unreasonably large (more than 1 million blocks)
         if features.maturity > 1_000_000 {
@@ -555,7 +555,7 @@ impl CorruptionDetector {
         &self,
         corruption_result: &CorruptionDetectionResult,
         data: &[u8],
-    ) -> Result<Vec<u8>, LightweightWalletError> {
+    ) -> Result<Vec<u8>, WalletError> {
         if !corruption_result.is_corrupted() {
             return Ok(data.to_vec());
         }

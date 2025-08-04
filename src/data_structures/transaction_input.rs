@@ -19,7 +19,7 @@ pub struct TransactionInput {
     /// Covenant
     pub covenant: Vec<u8>,
     /// Input metadata
-    pub input_data: LightweightExecutionStack,
+    pub input_data: ExecutionStack,
     /// Output hash
     pub output_hash: [u8; 32],
     /// Output features
@@ -34,12 +34,12 @@ pub struct TransactionInput {
 
 /// Lightweight execution stack for script execution
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub struct LightweightExecutionStack {
+pub struct ExecutionStack {
     /// Stack items
     pub items: Vec<Vec<u8>>,
 }
 
-impl LightweightExecutionStack {
+impl ExecutionStack {
     /// Create a new empty execution stack
     pub fn new() -> Self {
         Self { items: Vec::new() }
@@ -76,7 +76,7 @@ impl LightweightExecutionStack {
     }
 }
 
-impl Default for LightweightExecutionStack {
+impl Default for ExecutionStack {
     fn default() -> Self {
         Self::new()
     }
@@ -92,7 +92,7 @@ impl TransactionInput {
         script_signature: [u8; 64],
         sender_offset_public_key: CompressedPublicKey,
         covenant: Vec<u8>,
-        input_data: LightweightExecutionStack,
+        input_data: ExecutionStack,
         output_hash: [u8; 32],
         output_features: u8,
         output_metadata_signature: [u8; 64],
@@ -190,7 +190,7 @@ mod tests {
         let script_signature = [0x02; 64];
         let sender_offset_public_key = CompressedPublicKey::new([0x03; 32]);
         let covenant = vec![0x03, 0x04, 0x05];
-        let input_data = LightweightExecutionStack::with_items(vec![vec![0x06, 0x07]]);
+        let input_data = ExecutionStack::with_items(vec![vec![0x06, 0x07]]);
         let output_hash = [0x08; 32];
         let output_metadata_signature = [0x09; 64];
         let value = MicroMinotari::from(1000);
@@ -231,7 +231,7 @@ mod tests {
             [0x02; 64],
             CompressedPublicKey::new([0x03; 32]),
             vec![0x03],
-            LightweightExecutionStack::new(),
+            ExecutionStack::new(),
             [0x04; 32],
             5,
             [0x06; 64],
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_lightweight_execution_stack() {
-        let mut stack = LightweightExecutionStack::new();
+        let mut stack = ExecutionStack::new();
         assert!(stack.is_empty());
 
         stack.push(vec![0x01, 0x02]);

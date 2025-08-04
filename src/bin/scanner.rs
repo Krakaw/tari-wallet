@@ -108,7 +108,7 @@ use clap::Parser;
 use lightweight_wallet_libs::{
     // Core library utilities
     common::format_number,
-    errors::LightweightWalletResult,
+    errors::WalletResult,
     // Scanning library components (main business logic)
     scanning::{
         // Wallet creation functions
@@ -124,7 +124,7 @@ use lightweight_wallet_libs::{
         WalletScannerStruct,
     },
     KeyManagementError,
-    LightweightWalletError,
+    WalletError,
 };
 
 // Add conditional imports for storage feature
@@ -241,7 +241,7 @@ pub struct CliArgs {
 async fn display_storage_info(
     storage_backend: &ScannerStorage,
     config: &BinaryScanConfig,
-) -> LightweightWalletResult<()> {
+) -> WalletResult<()> {
     if config.quiet {
         return Ok(());
     }
@@ -278,7 +278,7 @@ async fn display_storage_info(
 async fn display_completion_info(
     storage_backend: &ScannerStorage,
     config: &BinaryScanConfig,
-) -> LightweightWalletResult<()> {
+) -> WalletResult<()> {
     if config.quiet {
         return Ok(());
     }
@@ -315,7 +315,7 @@ fn create_scan_config(
     args: &CliArgs,
     from_block: u64,
     to_block: u64,
-) -> LightweightWalletResult<BinaryScanConfig> {
+) -> WalletResult<BinaryScanConfig> {
     let output_format: OutputFormat = args
         .format
         .parse()
@@ -363,7 +363,7 @@ fn create_scanner_configs(
     args: &CliArgs,
     from_block: u64,
     to_block: u64,
-) -> LightweightWalletResult<(BinaryScanConfig, WalletScannerConfig)> {
+) -> WalletResult<(BinaryScanConfig, WalletScannerConfig)> {
     let scan_config = create_scan_config(args, from_block, to_block)?;
     let wallet_scanner_config = create_wallet_scanner_config(args);
     Ok((scan_config, wallet_scanner_config))
@@ -374,11 +374,11 @@ fn create_scanner_configs(
 async fn handle_interactive_wallet_selection(
     storage_backend: &ScannerStorage,
     args: &CliArgs,
-) -> LightweightWalletResult<u32> {
+) -> WalletResult<u32> {
     let wallets = storage_backend.get_wallet_selection_info().await?;
 
     if wallets.is_empty() {
-        return Err(LightweightWalletError::ResourceNotFound(
+        return Err(WalletError::ResourceNotFound(
             "No wallets found in database".to_string(),
         ));
     }
@@ -416,22 +416,21 @@ async fn handle_interactive_wallet_selection(
 
         // Read user input
         let mut input = String::new();
-        std::io::stdin().read_line(&mut input).map_err(|e| {
-            LightweightWalletError::StorageError(format!("Failed to read user input: {e}"))
-        })?;
+        std::io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| WalletError::StorageError(format!("Failed to read user input: {e}")))?;
 
-        let choice: usize =
-            input
-                .trim()
-                .parse()
-                .map_err(|_| LightweightWalletError::InvalidArgument {
-                    argument: "wallet_selection".to_string(),
-                    value: input.trim().to_string(),
-                    message: "Invalid wallet number".to_string(),
-                })?;
+        let choice: usize = input
+            .trim()
+            .parse()
+            .map_err(|_| WalletError::InvalidArgument {
+                argument: "wallet_selection".to_string(),
+                value: input.trim().to_string(),
+                message: "Invalid wallet number".to_string(),
+            })?;
 
         if choice == 0 || choice > wallets.len() {
-            return Err(LightweightWalletError::InvalidArgument {
+            return Err(WalletError::InvalidArgument {
                 argument: "wallet_selection".to_string(),
                 value: choice.to_string(),
                 message: format!("Wallet number must be between 1 and {}", wallets.len()),
@@ -454,13 +453,13 @@ async fn handle_interactive_wallet_selection(
 
 #[cfg(feature = "grpc")]
 #[tokio::main]
-async fn main() -> LightweightWalletResult<()> {
+async fn main() -> WalletResult<()> {
     main_unified().await
 }
 
 /// Unified main function that handles both storage and non-storage modes
 #[cfg(feature = "grpc")]
-async fn main_unified() -> LightweightWalletResult<()> {
+async fn main_unified() -> WalletResult<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
@@ -588,7 +587,7 @@ async fn main_unified() -> LightweightWalletResult<()> {
             .await
         {
             Ok(context) => context,
-            Err(LightweightWalletError::InvalidArgument {
+            Err(WalletError::InvalidArgument {
                 argument, value, ..
             }) if argument == "wallet_selection" && value == "multiple_wallets" => {
                 // Handle interactive wallet selection
@@ -630,7 +629,7 @@ async fn main_unified() -> LightweightWalletResult<()> {
     } else if let Some(context) = scan_context {
         context
     } else {
-        return Err(LightweightWalletError::InvalidArgument {
+        return Err(WalletError::InvalidArgument {
             argument: "scan_context".to_string(),
             value: "None".to_string(),
             message: "No scan context available - provide keys or use existing wallet".to_string(),
@@ -647,7 +646,7 @@ async fn main_unified() -> LightweightWalletResult<()> {
 
     // Validate block range
     if from_block > to_block {
-        return Err(LightweightWalletError::InvalidArgument {
+        return Err(WalletError::InvalidArgument {
             argument: "block_range".to_string(),
             value: format!("{from_block}-{to_block}"),
             message: format!(
