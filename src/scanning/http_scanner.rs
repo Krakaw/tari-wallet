@@ -60,17 +60,12 @@ use crate::{
         transaction_input::TransactionInput,
         transaction_output::TransactionOutput,
         types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
-        wallet_output::{
-            Covenant, OutputFeatures,
-            Script, Signature, WalletOutput,
-        },
-        OutputType, LightweightRangeProofType,
+        wallet_output::{Covenant, OutputFeatures, Script, Signature, WalletOutput},
+        LightweightRangeProofType, OutputType,
     },
     errors::{WalletError, WalletResult},
     extraction::{extract_wallet_output, ExtractionConfig},
-    scanning::{
-        BlockInfo, BlockScanResult, BlockchainScanner, ScanConfig, TipInfo,
-    },
+    scanning::{BlockInfo, BlockScanResult, BlockchainScanner, ScanConfig, TipInfo},
     wallet::Wallet,
 };
 
@@ -244,11 +239,9 @@ impl HttpBlockchainScanner {
     #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
     pub async fn with_timeout(base_url: String, timeout: Duration) -> WalletResult<Self> {
         let client = Client::builder().timeout(timeout).build().map_err(|e| {
-            WalletError::ScanningError(
-                crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                    "Failed to create HTTP client: {e}"
-                )),
-            )
+            WalletError::ScanningError(crate::errors::ScanningError::blockchain_connection_failed(
+                &format!("Failed to create HTTP client: {e}"),
+            ))
         })?;
 
         // Test the connection
@@ -565,52 +558,30 @@ impl HttpBlockchainScanner {
         );
 
         // Parse encrypted data
-        let encrypted_data =
-            EncryptedData::from_bytes(&http_output.encrypted_data).map_err(|e| {
-                WalletError::ConversionError(format!("Invalid encrypted data: {e}"))
-            })?;
+        let encrypted_data = EncryptedData::from_bytes(&http_output.encrypted_data)
+            .map_err(|e| WalletError::ConversionError(format!("Invalid encrypted data: {e}")))?;
 
-        // Convert features
-        let features = http_output
-            .features
-            .as_ref()
-            .map(|f| OutputFeatures {
-                output_type: match f.output_type {
-                    0 => OutputType::Payment,
-                    1 => OutputType::Coinbase,
-                    2 => OutputType::Burn,
-                    3 => OutputType::ValidatorNodeRegistration,
-                    4 => OutputType::CodeTemplateRegistration,
-                    _ => OutputType::Payment,
-                },
-                maturity: f.maturity,
-                range_proof_type: LightweightRangeProofType::BulletProofPlus, // Default
-            })
-            .unwrap_or_default();
+        // Convert features - use defaults since HTTP API doesn't provide detailed features
+        let features = OutputFeatures {
+            output_type: OutputType::Payment, // Default assumption
+            maturity: 0,                      // Default
+            range_proof_type: LightweightRangeProofType::BulletProofPlus,
+        };
 
         // Convert range proof (not provided by this API endpoint)
         let proof = None;
 
-        // Convert script
-        let script = Script {
-            bytes: http_output.script.clone().unwrap_or_default(),
-        };
+        // Convert script - use default since HTTP API doesn't provide script
+        let script = Script { bytes: Vec::new() };
 
-        // Convert metadata signature
-        let metadata_signature = http_output
-            .metadata_signature
-            .as_ref()
-            .map(|sig| Signature { bytes: sig.clone() })
-            .unwrap_or_default();
+        // Convert metadata signature - use default since HTTP API doesn't provide signature
+        let metadata_signature = Signature { bytes: Vec::new() };
 
-        // Convert covenant
-        let covenant = Covenant {
-            bytes: http_output.covenant.clone().unwrap_or_default(),
-        };
+        // Convert covenant - use default since HTTP API doesn't provide covenant
+        let covenant = Covenant { bytes: Vec::new() };
 
-        // Convert minimum value promise
-        let minimum_value_promise =
-            MicroMinotari::new(http_output.minimum_value_promise.unwrap_or(0));
+        // Convert minimum value promise - use default since HTTP API doesn't provide this
+        let minimum_value_promise = MicroMinotari::new(0);
 
         Ok(TransactionOutput::new_current_version(
             features,
@@ -640,8 +611,8 @@ impl HttpBlockchainScanner {
 
         // Create minimal TransactionInput with the output hash
         Ok(TransactionInput::new(
-            1,                                                                           // version
-            0,                              // features (default)
+            1,                                                                // version
+            0,                                                                // features (default)
             [0u8; 32],                      // commitment (not available from HTTP API)
             [0u8; 64],                      // script_signature (not available)
             CompressedPublicKey::default(), // sender_offset_public_key (not available)
@@ -666,19 +637,13 @@ impl HttpBlockchainScanner {
         // Handle simplified inputs structure
         let inputs = http_block
             .inputs
-            .as_ref()
-            .map(|input_hashes| {
-                input_hashes
-                    .iter()
-                    .map(|hash_bytes| Self::convert_http_input_to_lightweight(hash_bytes))
-                    .collect::<WalletResult<Vec<_>>>()
-            })
-            .transpose()?
-            .unwrap_or_default();
+            .iter()
+            .map(|hash_bytes| Self::convert_http_input_to_lightweight(hash_bytes))
+            .collect::<WalletResult<Vec<_>>>()?;
 
         Ok(BlockInfo {
-            height: http_block.height,
-            hash: http_block.header_hash.clone(),
+            height: 0,        // Block height not available in sync_utxos_by_block response
+            hash: Vec::new(), // Block hash not available in sync_utxos_by_block response
             timestamp: http_block.mined_timestamp,
             outputs,
             inputs,
@@ -754,10 +719,7 @@ impl HttpBlockchainScanner {
         extraction_config: &ExtractionConfig,
     ) -> WalletResult<Option<WalletOutput>> {
         // Skip non-payment outputs for this scan type
-        if !matches!(
-            output.features().output_type,
-            OutputType::Payment
-        ) {
+        if !matches!(output.features().output_type, OutputType::Payment) {
             return Ok(None);
         }
 
@@ -774,10 +736,7 @@ impl HttpBlockchainScanner {
         extraction_config: &ExtractionConfig,
     ) -> WalletResult<Option<WalletOutput>> {
         // Skip non-payment outputs for this scan type
-        if !matches!(
-            output.features().output_type,
-            OutputType::Payment
-        ) {
+        if !matches!(output.features().output_type, OutputType::Payment) {
             return Ok(None);
         }
 
@@ -789,14 +748,9 @@ impl HttpBlockchainScanner {
     }
 
     /// Scan for coinbase outputs
-    fn scan_for_coinbase_output(
-        output: &TransactionOutput,
-    ) -> WalletResult<Option<WalletOutput>> {
+    fn scan_for_coinbase_output(output: &TransactionOutput) -> WalletResult<Option<WalletOutput>> {
         // Only handle coinbase outputs
-        if !matches!(
-            output.features().output_type,
-            OutputType::Coinbase
-        ) {
+        if !matches!(output.features().output_type, OutputType::Coinbase) {
             return Ok(None);
         }
 
@@ -831,15 +785,22 @@ impl HttpBlockchainScanner {
         &self,
         start_height: u64,
         end_height: u64,
-    ) -> WalletResult<Vec<HttpBlockUtxoInfo>> {
+    ) -> WalletResult<Vec<HttpBlockData>> {
         // Get the starting header hash
         let start_header = self.get_header_by_height(start_height).await?;
         let mut current_header_hash = Self::bytes_to_hex(&start_header.hash);
 
         let mut all_blocks = Vec::new();
-        let mut current_height = start_height;
+        let mut blocks_collected = 0;
+        let max_blocks = (end_height - start_height + 1) as usize;
 
-        while current_height <= end_height {
+        #[cfg(feature = "tracing")]
+        debug!(
+            "Starting fetch_block_range from height {} to {} (max {} blocks)",
+            start_height, end_height, max_blocks
+        );
+
+        while blocks_collected < max_blocks {
             // Use sync_utxos_by_block to get batch of blocks
             let sync_response = self.sync_utxos_by_block(&current_header_hash).await?;
 
@@ -849,40 +810,39 @@ impl HttpBlockchainScanner {
                 break;
             }
 
-            // Filter blocks within our target range
+            // Add all blocks from this response (we can't filter by height since it's not provided)
             for block in sync_response.blocks {
-                if block.height >= start_height && block.height <= end_height {
-                    all_blocks.push(block.clone());
-                    current_height = std::cmp::max(current_height, block.height + 1);
+                all_blocks.push(block);
+                blocks_collected += 1;
+
+                // Stop if we've collected enough blocks
+                if blocks_collected >= max_blocks {
+                    break;
                 }
             }
 
-            // Check if we have a next header to continue with
-            if let Some(next_header) = sync_response.next_header_to_scan {
-                current_header_hash = Self::bytes_to_hex(&next_header);
-                #[cfg(feature = "tracing")]
-                debug!(
-                    "Continuing with next header: {}",
-                    &current_header_hash[..16]
-                );
-            } else {
-                #[cfg(feature = "tracing")]
-                debug!("No more headers to scan, reached end of available data");
-                break;
-            }
-
-            // Safety check to prevent infinite loops
-            if current_height > end_height {
-                break;
+            // Check if we have a next header to continue with and haven't reached our limit
+            if blocks_collected < max_blocks {
+                if let Some(next_header) = sync_response.next_header_to_scan {
+                    current_header_hash = Self::bytes_to_hex(&next_header);
+                    #[cfg(feature = "tracing")]
+                    debug!(
+                        "Continuing with next header: {} (collected {}/{} blocks)",
+                        &current_header_hash[..16],
+                        blocks_collected,
+                        max_blocks
+                    );
+                } else {
+                    #[cfg(feature = "tracing")]
+                    debug!("No more headers to scan, reached end of available data");
+                    break;
+                }
             }
         }
 
-        // Sort blocks by height
-        all_blocks.sort_by_key(|block| block.height);
-
         #[cfg(feature = "tracing")]
         debug!(
-            "Fetched {} blocks in range {} to {}",
+            "Fetched {} blocks for range {} to {}",
             all_blocks.len(),
             start_height,
             end_height
@@ -1104,10 +1064,7 @@ impl BlockchainScanner for HttpBlockchainScanner {
         ))
     }
 
-    async fn fetch_utxos(
-        &mut self,
-        _hashes: Vec<Vec<u8>>,
-    ) -> WalletResult<Vec<TransactionOutput>> {
+    async fn fetch_utxos(&mut self, _hashes: Vec<Vec<u8>>) -> WalletResult<Vec<TransactionOutput>> {
         // This endpoint is not implemented in the current HTTP API
         // It would require a different endpoint that fetches specific UTXOs by hash
         Err(WalletError::ScanningError(
@@ -1119,19 +1076,19 @@ impl BlockchainScanner for HttpBlockchainScanner {
 
     async fn get_blocks_by_heights(&mut self, heights: Vec<u64>) -> WalletResult<Vec<BlockInfo>> {
         let mut blocks = Vec::new();
-        
+
         for height in heights {
             if let Some(block) = self.get_block_by_height(height).await? {
                 blocks.push(block);
             }
         }
-        
+
         Ok(blocks)
     }
 
     async fn get_block_by_height(&mut self, height: u64) -> WalletResult<Option<BlockInfo>> {
         let url = format!("{}/base_node/blocks/{}", self.base_url, height);
-        
+
         let response = self
             .client
             .get(&url)
@@ -1159,11 +1116,9 @@ impl BlockchainScanner for HttpBlockchainScanner {
         }
 
         let block_response: SingleBlockResponse = response.json().await.map_err(|e| {
-            WalletError::ScanningError(
-                crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                    "Failed to parse block response for height {height}: {e}"
-                )),
-            )
+            WalletError::ScanningError(crate::errors::ScanningError::blockchain_connection_failed(
+                &format!("Failed to parse block response for height {height}: {e}"),
+            ))
         })?;
 
         let block = block_response.block;
@@ -1172,12 +1127,12 @@ impl BlockchainScanner for HttpBlockchainScanner {
             hash: hex::decode(&block.header.hash).map_err(|_| {
                 WalletError::ScanningError(
                     crate::errors::ScanningError::blockchain_connection_failed(
-                        "Invalid block hash format"
+                        "Invalid block hash format",
                     ),
                 )
             })?,
             outputs: block.body.outputs,
-            inputs: Vec::new(), // HTTP API doesn't provide input details
+            inputs: Vec::new(),  // HTTP API doesn't provide input details
             kernels: Vec::new(), // HTTP API doesn't provide kernel details
             timestamp: block.header.timestamp,
         }))

@@ -25,11 +25,8 @@ use crate::{
         encrypted_data::EncryptedData,
         transaction_output::TransactionOutput,
         types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
-        wallet_output::{
-            Covenant, OutputFeatures, RangeProof,
-            Script, Signature, WalletOutput,
-        },
-        OutputType, LightweightRangeProofType,
+        wallet_output::{Covenant, OutputFeatures, RangeProof, Script, Signature, WalletOutput},
+        LightweightRangeProofType, OutputType,
     },
     errors::{DataStructureError, WalletError, WalletResult},
     extraction::{extract_wallet_output, ExtractionConfig},
@@ -174,12 +171,9 @@ impl GrpcBlockchainScanner {
         };
 
         // Convert RangeProof
-        let proof = grpc_output
-            .range_proof
-            .as_ref()
-            .map(|rp| RangeProof {
-                bytes: rp.proof_bytes.clone(),
-            });
+        let proof = grpc_output.range_proof.as_ref().map(|rp| RangeProof {
+            bytes: rp.proof_bytes.clone(),
+        });
 
         // Convert Script
         let script = Script {
@@ -551,11 +545,9 @@ impl GrpcBlockchainScanner {
             .into_inner();
 
         if let Some(grpc_block) = stream.message().await.map_err(|e| {
-            WalletError::ScanningError(
-                crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                    "Stream error: {e}"
-                )),
-            )
+            WalletError::ScanningError(crate::errors::ScanningError::blockchain_connection_failed(
+                &format!("Stream error: {e}"),
+            ))
         })? {
             if let Some(block_info) = Self::convert_block(&grpc_block)? {
                 return Ok(block_info.outputs);
@@ -590,11 +582,9 @@ impl GrpcBlockchainScanner {
             .into_inner();
 
         if let Some(grpc_block) = stream.message().await.map_err(|e| {
-            WalletError::ScanningError(
-                crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                    "Stream error: {e}"
-                )),
-            )
+            WalletError::ScanningError(crate::errors::ScanningError::blockchain_connection_failed(
+                &format!("Stream error: {e}"),
+            ))
         })? {
             if let Some(block_info) = Self::convert_block(&grpc_block)? {
                 return Ok(block_info.inputs);
@@ -629,11 +619,9 @@ impl GrpcBlockchainScanner {
             .into_inner();
 
         if let Some(grpc_block) = stream.message().await.map_err(|e| {
-            WalletError::ScanningError(
-                crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                    "Stream error: {e}"
-                )),
-            )
+            WalletError::ScanningError(crate::errors::ScanningError::blockchain_connection_failed(
+                &format!("Stream error: {e}"),
+            ))
         })? {
             if let Some(block_info) = Self::convert_block(&grpc_block)? {
                 return Ok(block_info.kernels);
@@ -668,11 +656,9 @@ impl GrpcBlockchainScanner {
             .into_inner();
 
         if let Some(grpc_block) = stream.message().await.map_err(|e| {
-            WalletError::ScanningError(
-                crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                    "Stream error: {e}"
-                )),
-            )
+            WalletError::ScanningError(crate::errors::ScanningError::blockchain_connection_failed(
+                &format!("Stream error: {e}"),
+            ))
         })? {
             return Self::convert_block(&grpc_block);
         }
@@ -748,11 +734,9 @@ impl GrpcBlockchainScanner {
 
         let mut blocks = Vec::new();
         while let Some(grpc_block) = stream.message().await.map_err(|e| {
-            WalletError::ScanningError(
-                crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                    "GRPC stream error: {e}"
-                )),
-            )
+            WalletError::ScanningError(crate::errors::ScanningError::blockchain_connection_failed(
+                &format!("GRPC stream error: {e}"),
+            ))
         })? {
             if let Some(block_info) = Self::convert_block(&grpc_block)? {
                 blocks.push(block_info);
@@ -915,11 +899,9 @@ impl BlockchainScanner for GrpcBlockchainScanner {
 
         let mut results = Vec::new();
         while let Some(grpc_block) = stream.message().await.map_err(|e| {
-            WalletError::ScanningError(
-                crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                    "Stream error: {e}"
-                )),
-            )
+            WalletError::ScanningError(crate::errors::ScanningError::blockchain_connection_failed(
+                &format!("Stream error: {e}"),
+            ))
         })? {
             if let Some(block_info) = Self::convert_block(&grpc_block)? {
                 let mut wallet_outputs = Vec::new();
@@ -950,10 +932,7 @@ impl BlockchainScanner for GrpcBlockchainScanner {
         Ok(results)
     }
 
-    async fn fetch_utxos(
-        &mut self,
-        hashes: Vec<Vec<u8>>,
-    ) -> WalletResult<Vec<TransactionOutput>> {
+    async fn fetch_utxos(&mut self, hashes: Vec<Vec<u8>>) -> WalletResult<Vec<TransactionOutput>> {
         let request = tari_rpc::FetchMatchingUtxosRequest { hashes };
 
         let mut stream = self
@@ -972,11 +951,9 @@ impl BlockchainScanner for GrpcBlockchainScanner {
 
         let mut results = Vec::new();
         while let Some(response) = stream.message().await.map_err(|e| {
-            WalletError::ScanningError(
-                crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                    "Stream error: {e}"
-                )),
-            )
+            WalletError::ScanningError(crate::errors::ScanningError::blockchain_connection_failed(
+                &format!("Stream error: {e}"),
+            ))
         })? {
             if let Some(output) = response.output {
                 results.push(Self::convert_transaction_output(&output)?);
@@ -1009,11 +986,9 @@ impl BlockchainScanner for GrpcBlockchainScanner {
 
         let mut blocks = Vec::new();
         while let Some(grpc_block) = stream.message().await.map_err(|e| {
-            WalletError::ScanningError(
-                crate::errors::ScanningError::blockchain_connection_failed(&format!(
-                    "GRPC stream error: {e}"
-                )),
-            )
+            WalletError::ScanningError(crate::errors::ScanningError::blockchain_connection_failed(
+                &format!("GRPC stream error: {e}"),
+            ))
         })? {
             if let Some(block_info) = Self::convert_block(&grpc_block)? {
                 blocks.push(block_info);
@@ -1079,9 +1054,9 @@ impl GrpcScannerBuilder {
 
     /// Build the GRPC scanner
     pub async fn build(self) -> WalletResult<GrpcBlockchainScanner> {
-        let base_url = self.base_url.ok_or_else(|| {
-            WalletError::ConfigurationError("Base URL not specified".to_string())
-        })?;
+        let base_url = self
+            .base_url
+            .ok_or_else(|| WalletError::ConfigurationError("Base URL not specified".to_string()))?;
 
         match self.timeout {
             Some(timeout) => GrpcBlockchainScanner::with_timeout(base_url, timeout).await,
@@ -1104,11 +1079,9 @@ pub struct GrpcBlockchainScanner;
 #[cfg(not(feature = "grpc"))]
 impl GrpcBlockchainScanner {
     pub async fn new(_base_url: String) -> crate::errors::WalletResult<Self> {
-        Err(
-            crate::errors::WalletError::OperationNotSupported(
-                "GRPC feature not enabled".to_string(),
-            ),
-        )
+        Err(crate::errors::WalletError::OperationNotSupported(
+            "GRPC feature not enabled".to_string(),
+        ))
     }
 }
 
@@ -1122,11 +1095,9 @@ impl GrpcScannerBuilder {
     }
 
     pub async fn build(self) -> crate::errors::WalletResult<GrpcBlockchainScanner> {
-        Err(
-            crate::errors::WalletError::OperationNotSupported(
-                "GRPC feature not enabled".to_string(),
-            ),
-        )
+        Err(crate::errors::WalletError::OperationNotSupported(
+            "GRPC feature not enabled".to_string(),
+        ))
     }
 }
 

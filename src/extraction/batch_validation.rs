@@ -224,9 +224,7 @@ pub fn validate_output_batch_parallel(
 }
 
 // Helper functions for validation
-fn validate_commitment_integrity(
-    output: &TransactionOutput,
-) -> Result<(), ValidationError> {
+fn validate_commitment_integrity(output: &TransactionOutput) -> Result<(), ValidationError> {
     // Basic commitment validation
     let commitment_bytes = output.commitment().as_bytes();
     if commitment_bytes.len() != 32 {
@@ -278,10 +276,7 @@ mod tests {
         encrypted_data::EncryptedData,
         transaction_output::TransactionOutput,
         types::{CompressedCommitment, CompressedPublicKey, MicroMinotari},
-        wallet_output::{
-            Covenant, OutputFeatures, RangeProof,
-            Script, Signature,
-        },
+        wallet_output::{Covenant, OutputFeatures, RangeProof, Script, Signature},
     };
 
     fn create_test_output(_value: u64, is_valid: bool) -> TransactionOutput {

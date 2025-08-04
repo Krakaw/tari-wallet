@@ -2,12 +2,9 @@ use crate::data_structures::{
     encrypted_data::EncryptedData,
     transaction_input::TransactionInput,
     types::{CompressedCommitment, CompressedPublicKey, MicroMinotari},
-    wallet_output::{
-        Covenant, OutputFeatures, OutputType,
-        RangeProof, Script, Signature,
-    },
+    wallet_output::{Covenant, OutputFeatures, OutputType, RangeProof, Script, Signature},
 };
-use crate::errors::{WalletError, SerializationError, ValidationError};
+use crate::errors::{SerializationError, ValidationError, WalletError};
 use crate::hex_utils::{HexEncodable, HexError, HexValidatable};
 use blake2::{Blake2b, Digest};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -217,9 +214,9 @@ impl TransactionOutput {
     pub fn get_features_and_scripts_size(&self) -> Result<usize, WalletError> {
         let features_size = borsh::to_vec(&self.features)
             .map_err(|e| {
-                WalletError::SerializationError(
-                    SerializationError::BorshSerializationError(e.to_string()),
-                )
+                WalletError::SerializationError(SerializationError::BorshSerializationError(
+                    e.to_string(),
+                ))
             })?
             .len();
         let script_size = self.script.bytes.len();

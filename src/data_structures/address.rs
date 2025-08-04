@@ -345,10 +345,7 @@ impl DualAddress {
         )
     }
 
-    pub fn add_payment_id_user_data(
-        &mut self,
-        data: Vec<u8>,
-    ) -> Result<(), WalletError> {
+    pub fn add_payment_id_user_data(&mut self, data: Vec<u8>) -> Result<(), WalletError> {
         if data.len() > MAX_ENCRYPTED_DATA_SIZE {
             return Err(
                 DataStructureError::InvalidAddress("Payment ID too large".to_string()).into(),

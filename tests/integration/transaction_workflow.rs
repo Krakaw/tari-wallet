@@ -13,7 +13,7 @@ use lightweight_wallet_libs::data_structures::{
     address::{TariAddress, TariAddressFeatures},
     types::{CompressedPublicKey, MicroMinotari, PrivateKey},
 };
-use lightweight_wallet_libs::errors::{WalletError, ValidationError};
+use lightweight_wallet_libs::errors::{ValidationError, WalletError};
 
 use lightweight_wallet_libs::wallet::*;
 
@@ -267,10 +267,7 @@ impl MockTransactionPool {
         Ok(tx_id)
     }
 
-    fn validate_transaction(
-        &self,
-        transaction: &MockTransaction,
-    ) -> Result<(), WalletError> {
+    fn validate_transaction(&self, transaction: &MockTransaction) -> Result<(), WalletError> {
         // Check signature is present
         if transaction.signature.is_none() {
             return Err(WalletError::ValidationError(

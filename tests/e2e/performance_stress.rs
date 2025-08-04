@@ -173,8 +173,7 @@ impl DatasetGenerator {
             transaction_output::TransactionOutput,
             types::{CompressedCommitment, CompressedPublicKey, MicroMinotari},
             wallet_output::{
-                Covenant, OutputFeatures, OutputType,
-                LightweightRangeProofType, Script, Signature,
+                Covenant, LightweightRangeProofType, OutputFeatures, OutputType, Script, Signature,
             },
         };
 

@@ -34,8 +34,7 @@ use crate::common::format_number;
 
 use crate::{
     data_structures::{
-        transaction::TransactionDirection, transaction_output::TransactionOutput,
-        types::PrivateKey,
+        transaction::TransactionDirection, transaction_output::TransactionOutput, types::PrivateKey,
     },
     errors::KeyManagementError,
     key_management::key_derivation,
@@ -111,9 +110,8 @@ fn create_stored_output_from_blockchain_data(
 
         // Output features and type
         output_type: blockchain_output.features.output_type.clone() as u32,
-        features_json: serde_json::to_string(&blockchain_output.features).map_err(|e| {
-            WalletError::StorageError(format!("Failed to serialize features: {e}"))
-        })?,
+        features_json: serde_json::to_string(&blockchain_output.features)
+            .map_err(|e| WalletError::StorageError(format!("Failed to serialize features: {e}")))?,
 
         // Maturity and lock constraints
         maturity: blockchain_output.features.maturity,
@@ -3278,15 +3276,13 @@ mod tests {
         let scanner = WalletScanner::new();
 
         // Network errors should be retryable
-        let connection_error =
-            WalletError::StorageError("connection failed".to_string());
+        let connection_error = WalletError::StorageError("connection failed".to_string());
         assert!(scanner.is_retryable_error(&connection_error));
 
         let timeout_error = WalletError::StorageError("timeout occurred".to_string());
         assert!(scanner.is_retryable_error(&timeout_error));
 
-        let unavailable_error =
-            WalletError::StorageError("service unavailable".to_string());
+        let unavailable_error = WalletError::StorageError("service unavailable".to_string());
         assert!(scanner.is_retryable_error(&unavailable_error));
 
         // Other errors should not be retryable

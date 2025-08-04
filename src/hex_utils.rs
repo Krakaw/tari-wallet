@@ -260,8 +260,8 @@ mod tests {
     use super::*;
 
     use crate::data_structures::{
-        CompressedCommitment, CompressedPublicKey, EncryptedData, TransactionOutput,
-        WalletOutput, PaymentId, PrivateKey, SafeArray,
+        CompressedCommitment, CompressedPublicKey, EncryptedData, PaymentId, PrivateKey, SafeArray,
+        TransactionOutput, WalletOutput,
     };
     use primitive_types::U256;
 

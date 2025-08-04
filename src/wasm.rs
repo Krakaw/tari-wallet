@@ -11,9 +11,7 @@ use crate::{
         transaction_input::TransactionInput,
         transaction_output::TransactionOutput,
         types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
-        wallet_output::{
-            Covenant, OutputFeatures, Script, Signature,
-        },
+        wallet_output::{Covenant, OutputFeatures, Script, Signature},
         wallet_transaction::WalletState,
     },
     key_management::{
@@ -602,7 +600,7 @@ impl WasmScanner {
             let output = TransactionOutput::new_current_version(
                 OutputFeatures::default(), // Default features (will be 0/Standard)
                 commitment,
-                None,                         // Range proof not provided in HTTP API
+                None,              // Range proof not provided in HTTP API
                 Script::default(), // Script not provided, use empty/default
                 sender_offset_public_key,
                 Signature::default(), // Metadata signature not provided, use default
@@ -922,7 +920,7 @@ impl WasmScanner {
         Ok(TransactionOutput::new_current_version(
             OutputFeatures::default(), // Use default features
             commitment,
-            None,                         // Range proof not provided in UTXO sync
+            None,              // Range proof not provided in UTXO sync
             Script::default(), // Script not provided or use default
             sender_offset_public_key,
             Signature::default(), // Metadata signature not provided or use default
@@ -966,13 +964,13 @@ impl WasmScanner {
             commitment,
             script_signature: [0u8; 64], // Not provided in UTXO sync
             sender_offset_public_key,
-            covenant: Vec::new(),                         // Not provided
-            input_data: ExecutionStack::new(), // Not provided
-            output_hash: [0u8; 32],                       // Not provided in UTXO sync
-            output_features: 0,                           // Not provided
-            output_metadata_signature: [0u8; 64],         // Not provided
-            maturity: 0,                                  // Not provided
-            value: MicroMinotari::from(0u64),             // Not provided in UTXO sync
+            covenant: Vec::new(),                 // Not provided
+            input_data: ExecutionStack::new(),    // Not provided
+            output_hash: [0u8; 32],               // Not provided in UTXO sync
+            output_features: 0,                   // Not provided
+            output_metadata_signature: [0u8; 64], // Not provided
+            maturity: 0,                          // Not provided
+            value: MicroMinotari::from(0u64),     // Not provided in UTXO sync
         })
     }
 
@@ -1009,8 +1007,8 @@ impl WasmScanner {
                 // Create minimal TransactionInput with the output hash
                 // The output_hash field is what we use for spent detection
                 let transaction_input = TransactionInput::new(
-                    1,                                // version
-                    0,                                // features (default)
+                    1,                              // version
+                    0,                              // features (default)
                     [0u8; 32], // commitment (not available from HTTP API, use placeholder)
                     [0u8; 64], // script_signature (not available)
                     CompressedPublicKey::default(), // sender_offset_public_key (not available)

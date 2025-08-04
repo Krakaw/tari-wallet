@@ -27,7 +27,7 @@ use tari_crypto::{
 use tari_utilities::hex::Hex;
 
 use super::hash_domain::WalletMessageSigningDomain;
-use crate::errors::{WalletError, ValidationError};
+use crate::errors::{ValidationError, WalletError};
 use crate::key_management::{
     derive_view_and_spend_keys_from_entropy, mnemonic_to_bytes, seed_phrase::CipherSeed,
 };
@@ -64,9 +64,9 @@ pub fn sign_message(
     let message_bytes = message.as_bytes();
 
     WalletSignature::sign(secret_key, message_bytes, &mut OsRng).map_err(|e| {
-        WalletError::ValidationError(ValidationError::SignatureValidationFailed(
-            format!("Failed to sign message: {e}"),
-        ))
+        WalletError::ValidationError(ValidationError::SignatureValidationFailed(format!(
+            "Failed to sign message: {e}"
+        )))
     })
 }
 
@@ -171,15 +171,15 @@ pub fn verify_message_from_hex(
 ) -> Result<bool, WalletError> {
     // Parse signature components from hex
     let signature_scalar = RistrettoSecretKey::from_hex(hex_signature).map_err(|e| {
-        WalletError::ValidationError(ValidationError::SignatureValidationFailed(
-            format!("Invalid signature hex: {e}"),
-        ))
+        WalletError::ValidationError(ValidationError::SignatureValidationFailed(format!(
+            "Invalid signature hex: {e}"
+        )))
     })?;
 
     let public_nonce = RistrettoPublicKey::from_hex(hex_nonce).map_err(|e| {
-        WalletError::ValidationError(ValidationError::SignatureValidationFailed(
-            format!("Invalid nonce hex: {e}"),
-        ))
+        WalletError::ValidationError(ValidationError::SignatureValidationFailed(format!(
+            "Invalid nonce hex: {e}"
+        )))
     })?;
 
     // Reconstruct the signature
@@ -213,16 +213,16 @@ pub fn derive_tari_signing_key(
 ) -> Result<RistrettoSecretKey, WalletError> {
     // Convert seed phrase to CipherSeed
     let encrypted_bytes = mnemonic_to_bytes(seed_phrase).map_err(|e| {
-        WalletError::ValidationError(ValidationError::SignatureValidationFailed(
-            format!("Invalid seed phrase: {e}"),
-        ))
+        WalletError::ValidationError(ValidationError::SignatureValidationFailed(format!(
+            "Invalid seed phrase: {e}"
+        )))
     })?;
 
     let cipher_seed =
         CipherSeed::from_enciphered_bytes(&encrypted_bytes, passphrase).map_err(|e| {
-            WalletError::ValidationError(ValidationError::SignatureValidationFailed(
-                format!("Failed to decrypt CipherSeed: {e}"),
-            ))
+            WalletError::ValidationError(ValidationError::SignatureValidationFailed(format!(
+                "Failed to decrypt CipherSeed: {e}"
+            )))
         })?;
 
     // Convert entropy to required array type
@@ -234,9 +234,9 @@ pub fn derive_tari_signing_key(
 
     // Derive the communication key (second key from the pair)
     let (_, comms_key) = derive_view_and_spend_keys_from_entropy(entropy_array).map_err(|e| {
-        WalletError::ValidationError(ValidationError::SignatureValidationFailed(
-            format!("Failed to derive communication key: {e}"),
-        ))
+        WalletError::ValidationError(ValidationError::SignatureValidationFailed(format!(
+            "Failed to derive communication key: {e}"
+        )))
     })?;
 
     Ok(comms_key)

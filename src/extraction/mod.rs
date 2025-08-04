@@ -41,9 +41,7 @@ pub use batch_validation::validate_output_batch_parallel;
 
 use crate::{
     data_structures::types::{CompressedPublicKey, PrivateKey},
-    data_structures::{
-        transaction_output::TransactionOutput, wallet_output::WalletOutput,
-    },
+    data_structures::{transaction_output::TransactionOutput, wallet_output::WalletOutput},
     errors::WalletResult,
     key_management::{ImportedPrivateKey, KeyStore},
 };
@@ -116,11 +114,9 @@ pub fn extract_wallet_output(
 ) -> WalletResult<WalletOutput> {
     // Check if we have the necessary keys for extraction
     if config.private_key.is_none() && config.public_key.is_none() {
-        return Err(
-            crate::errors::WalletError::OperationNotSupported(
-                "No keys provided for wallet output extraction".to_string(),
-            ),
-        );
+        return Err(crate::errors::WalletError::OperationNotSupported(
+            "No keys provided for wallet output extraction".to_string(),
+        ));
     }
 
     // Create a key store and decryptor for this extraction
@@ -153,11 +149,9 @@ pub fn extract_wallet_output(
         let error_msg = decryption_result
             .error_message()
             .unwrap_or("decryption failed");
-        return Err(
-            crate::errors::WalletError::OperationNotSupported(format!(
-                "Output does not belong to wallet: {error_msg}"
-            )),
-        );
+        return Err(crate::errors::WalletError::OperationNotSupported(format!(
+            "Output does not belong to wallet: {error_msg}"
+        )));
     }
 
     // Extract the decrypted values
@@ -170,7 +164,7 @@ pub fn extract_wallet_output(
     // Create wallet output with the decrypted value and payment ID
     let wallet_output = WalletOutput::new(
         transaction_output.version,
-        value, // Use the actual decrypted value
+        value,                                              // Use the actual decrypted value
         crate::data_structures::wallet_output::KeyId::Zero, // Default key ID
         transaction_output.features.clone(),
         transaction_output.script.clone(),
@@ -199,10 +193,9 @@ mod tests {
     use crate::{
         crypto::{RistrettoSecretKey, SecretKey},
         data_structures::{
-            CompressedCommitment, CompressedPublicKey, EncryptedData, Covenant,
-            OutputFeatures, OutputType, RangeProof,
-            LightweightRangeProofType, Script, Signature,
-            TransactionOutput, MicroMinotari, PrivateKey,
+            CompressedCommitment, CompressedPublicKey, Covenant, EncryptedData,
+            LightweightRangeProofType, MicroMinotari, OutputFeatures, OutputType, PrivateKey,
+            RangeProof, Script, Signature, TransactionOutput,
         },
         key_management::derive_view_and_spend_keys_from_entropy,
         wallet::Wallet,

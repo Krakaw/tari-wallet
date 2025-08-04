@@ -4,8 +4,7 @@
 //! and integrate with the UTXO extraction process.
 
 use crate::{
-    data_structures::types::PrivateKey, errors::WalletError,
-    key_management::StealthAddress,
+    data_structures::types::PrivateKey, errors::WalletError, key_management::StealthAddress,
 };
 
 /// Result of stealth address key recovery

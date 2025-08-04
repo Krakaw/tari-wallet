@@ -47,9 +47,7 @@ impl SqliteStorage {
     /// Create an in-memory SQLite storage instance (useful for testing)
     pub async fn new_in_memory() -> WalletResult<Self> {
         let connection = Connection::open(":memory:").await.map_err(|e| {
-            WalletError::StorageError(format!(
-                "Failed to create in-memory database: {e}"
-            ))
+            WalletError::StorageError(format!("Failed to create in-memory database: {e}"))
         })?;
 
         Ok(Self { connection })
@@ -207,9 +205,7 @@ impl SqliteStorage {
         self.connection
             .call(move |conn| Ok(conn.execute_batch(sql)?))
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to create schema: {e}"))
-            })?;
+            .map_err(|e| WalletError::StorageError(format!("Failed to create schema: {e}")))?;
 
         Ok(())
     }
@@ -497,9 +493,7 @@ impl WalletStorage for SqliteStorage {
                 }
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to get wallet by ID: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get wallet by ID: {e}")))
     }
 
     async fn get_wallet_by_name(&self, name: &str) -> WalletResult<Option<StoredWallet>> {
@@ -516,9 +510,7 @@ impl WalletStorage for SqliteStorage {
                 }
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to get wallet by name: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get wallet by name: {e}")))
     }
 
     async fn list_wallets(&self) -> WalletResult<Vec<StoredWallet>> {
@@ -535,9 +527,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(wallets)
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to list wallets: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to list wallets: {e}")))
     }
 
     async fn delete_wallet(&self, wallet_id: u32) -> WalletResult<bool> {
@@ -561,9 +551,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(rows_affected > 0)
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to delete wallet: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to delete wallet: {e}")))
     }
 
     async fn wallet_name_exists(&self, name: &str) -> WalletResult<bool> {
@@ -575,9 +563,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(exists)
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to check wallet name: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to check wallet name: {e}")))
     }
 
     async fn update_wallet_scanned_block(
@@ -602,9 +588,7 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                WalletError::StorageError(format!(
-                    "Failed to update wallet scanned block: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to update wallet scanned block: {e}"))
             })
     }
 
@@ -762,9 +746,7 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                WalletError::StorageError(format!(
-                    "Failed to mark transaction spent: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to mark transaction spent: {e}"))
             })
     }
 
@@ -815,9 +797,7 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                WalletError::StorageError(format!(
-                    "Failed to batch mark transactions spent: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to batch mark transactions spent: {e}"))
             })
     }
 
@@ -842,9 +822,7 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                WalletError::StorageError(format!(
-                    "Failed to get transaction by commitment: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to get transaction by commitment: {e}"))
             })
     }
 
@@ -893,9 +871,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(transactions)
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to get transactions: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get transactions: {e}")))
     }
 
     async fn load_wallet_state(&self, wallet_id: u32) -> WalletResult<WalletState> {
@@ -1148,9 +1124,7 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                WalletError::StorageError(format!(
-                    "Failed to check commitment existence: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to check commitment existence: {e}"))
             })
     }
 
@@ -1162,9 +1136,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(block_height.map(|h| h as u64))
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to get highest block: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get highest block: {e}")))
     }
 
     async fn get_lowest_block(&self) -> WalletResult<Option<u64>> {
@@ -1175,9 +1147,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(block_height.map(|h| h as u64))
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to get lowest block: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get lowest block: {e}")))
     }
 
     async fn clear_all_transactions(&self) -> WalletResult<()> {
@@ -1187,18 +1157,14 @@ impl WalletStorage for SqliteStorage {
                 Ok(())
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to clear transactions: {e}"))
-            })?;
+            .map_err(|e| WalletError::StorageError(format!("Failed to clear transactions: {e}")))?;
         self.connection
             .call(|conn| {
                 conn.execute("DELETE FROM outputs", [])?;
                 Ok(())
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to clear outputs: {e}"))
-            })?;
+            .map_err(|e| WalletError::StorageError(format!("Failed to clear outputs: {e}")))?;
         self.connection
             .call(|conn| {
                 conn.execute("UPDATE wallets SET latest_scanned_block = 0", [])?;
@@ -1206,9 +1172,7 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                WalletError::StorageError(format!(
-                    "Failed to clear latest scanned block: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to clear latest scanned block: {e}"))
             })?;
         Ok(())
     }
@@ -1221,11 +1185,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(count as usize)
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!(
-                    "Failed to get transaction count: {e}"
-                ))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get transaction count: {e}")))
     }
 
     // === UTXO Output Management Methods (NEW) ===
@@ -1512,9 +1472,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(())
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to update output: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to update output: {e}")))
     }
 
     async fn mark_output_spent(&self, output_id: u32, spent_in_tx_id: u64) -> WalletResult<()> {
@@ -1534,9 +1492,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(())
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to mark output spent: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to mark output spent: {e}")))
     }
 
     async fn get_output_by_id(&self, output_id: u32) -> WalletResult<Option<StoredOutput>> {
@@ -1552,9 +1508,7 @@ impl WalletStorage for SqliteStorage {
                 }
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to get output by ID: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get output by ID: {e}")))
     }
 
     async fn get_output_by_commitment(
@@ -1576,9 +1530,7 @@ impl WalletStorage for SqliteStorage {
             })
             .await
             .map_err(|e| {
-                WalletError::StorageError(format!(
-                    "Failed to get output by commitment: {e}"
-                ))
+                WalletError::StorageError(format!("Failed to get output by commitment: {e}"))
             })
     }
 
@@ -1624,9 +1576,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(outputs)
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to get outputs: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get outputs: {e}")))
     }
 
     async fn get_unspent_outputs(&self, wallet_id: u32) -> WalletResult<Vec<StoredOutput>> {
@@ -1666,11 +1616,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(balance as u64)
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!(
-                    "Failed to get spendable balance: {e}"
-                ))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get spendable balance: {e}")))
     }
 
     async fn delete_output(&self, output_id: u32) -> WalletResult<bool> {
@@ -1683,9 +1629,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(rows_affected > 0)
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to delete output: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to delete output: {e}")))
     }
 
     async fn clear_outputs(&self, wallet_id: u32) -> WalletResult<()> {
@@ -1698,9 +1642,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(())
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to clear outputs: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to clear outputs: {e}")))
     }
 
     async fn get_output_count(&self, wallet_id: u32) -> WalletResult<usize> {
@@ -1714,9 +1656,7 @@ impl WalletStorage for SqliteStorage {
                 Ok(count as usize)
             })
             .await
-            .map_err(|e| {
-                WalletError::StorageError(format!("Failed to get output count: {e}"))
-            })
+            .map_err(|e| WalletError::StorageError(format!("Failed to get output count: {e}")))
     }
 
     async fn close(&self) -> WalletResult<()> {

@@ -181,12 +181,13 @@ impl ScannerStorage {
         &self,
         quiet: bool,
     ) -> WalletResult<Option<ScanContext>> {
-        let storage = self.database.as_ref().ok_or_else(|| {
-            WalletError::StorageError("No database available".to_string())
-        })?;
-        let wallet_id = self.wallet_id.ok_or_else(|| {
-            WalletError::StorageError("No wallet selected".to_string())
-        })?;
+        let storage = self
+            .database
+            .as_ref()
+            .ok_or_else(|| WalletError::StorageError("No database available".to_string()))?;
+        let wallet_id = self
+            .wallet_id
+            .ok_or_else(|| WalletError::StorageError("No wallet selected".to_string()))?;
 
         if let Some(wallet) = storage.get_wallet_by_id(wallet_id).await? {
             // Note: In library mode, we don't print directly. The caller can decide what to log.
@@ -195,9 +196,9 @@ impl ScannerStorage {
                 // For now, we'll skip the printing in library mode
             }
 
-            let view_key = wallet.get_view_key().map_err(|e| {
-                WalletError::StorageError(format!("Failed to get view key: {e}"))
-            })?;
+            let view_key = wallet
+                .get_view_key()
+                .map_err(|e| WalletError::StorageError(format!("Failed to get view key: {e}")))?;
 
             // Create entropy array - derive from seed phrase if available
             let entropy = if wallet.has_seed_phrase() {
@@ -266,9 +267,10 @@ impl ScannerStorage {
         config: &BinaryScanConfig,
         scan_context: Option<&ScanContext>,
     ) -> WalletResult<Option<u32>> {
-        let storage = self.database.as_ref().ok_or_else(|| {
-            WalletError::StorageError("No database available".to_string())
-        })?;
+        let storage = self
+            .database
+            .as_ref()
+            .ok_or_else(|| WalletError::StorageError("No database available".to_string()))?;
 
         // Handle wallet selection by name
         if let Some(wallet_name) = &config.wallet_name {
@@ -376,9 +378,7 @@ impl ScannerStorage {
                     response_tx,
                 })
                 .map_err(|_| {
-                    WalletError::StorageError(
-                        "Background writer channel closed".to_string(),
-                    )
+                    WalletError::StorageError("Background writer channel closed".to_string())
                 })?;
 
             response_rx.await.map_err(|_| {
@@ -437,9 +437,7 @@ impl ScannerStorage {
                     response_tx,
                 })
                 .map_err(|_| {
-                    WalletError::StorageError(
-                        "Background writer channel closed".to_string(),
-                    )
+                    WalletError::StorageError("Background writer channel closed".to_string())
                 })?;
 
             response_rx.await.map_err(|_| {
@@ -494,9 +492,7 @@ impl ScannerStorage {
                     response_tx,
                 })
                 .map_err(|_| {
-                    WalletError::StorageError(
-                        "Background writer channel closed".to_string(),
-                    )
+                    WalletError::StorageError("Background writer channel closed".to_string())
                 })?;
 
             response_rx.await.map_err(|_| {
@@ -565,9 +561,7 @@ impl ScannerStorage {
                     response_tx,
                 })
                 .map_err(|_| {
-                    WalletError::StorageError(
-                        "Background writer channel closed".to_string(),
-                    )
+                    WalletError::StorageError("Background writer channel closed".to_string())
                 })?;
 
             response_rx.await.map_err(|_| {
@@ -617,9 +611,7 @@ impl ScannerStorage {
                     response_tx,
                 })
                 .map_err(|_| {
-                    WalletError::StorageError(
-                        "Background writer channel closed".to_string(),
-                    )
+                    WalletError::StorageError("Background writer channel closed".to_string())
                 })?;
 
             response_rx.await.map_err(|_| {

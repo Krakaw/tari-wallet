@@ -294,10 +294,7 @@ impl EncryptedDataDecryptor {
     /// # Returns
     /// * `Ok(PrivateKey)` if the key was successfully derived
     /// * `Err(LightweightWalletError)` if key derivation failed
-    fn try_derive_key_at_index(
-        &self,
-        _key_index: u64,
-    ) -> Result<PrivateKey, WalletError> {
+    fn try_derive_key_at_index(&self, _key_index: u64) -> Result<PrivateKey, WalletError> {
         // This is a simplified implementation
         // In practice, you'd need the actual key derivation logic from the key manager
         // For now, we'll return an error to indicate that this needs to be implemented

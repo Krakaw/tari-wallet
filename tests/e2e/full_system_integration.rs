@@ -11,8 +11,7 @@ use lightweight_wallet_libs::data_structures::{
     transaction_output::TransactionOutput,
     types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
     wallet_output::{
-        Covenant, OutputFeatures, OutputType,
-        LightweightRangeProofType, Script, Signature,
+        Covenant, LightweightRangeProofType, OutputFeatures, OutputType, Script, Signature,
     },
     Network,
 };

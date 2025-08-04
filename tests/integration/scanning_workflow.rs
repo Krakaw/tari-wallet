@@ -13,9 +13,9 @@ use lightweight_wallet_libs::data_structures::{
     encrypted_data::EncryptedData,
     transaction_output::TransactionOutput,
     types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
-    wallet_output::{OutputFeatures, OutputType, LightweightRangeProofType},
+    wallet_output::{LightweightRangeProofType, OutputFeatures, OutputType},
 };
-use lightweight_wallet_libs::errors::{WalletError, ValidationError};
+use lightweight_wallet_libs::errors::{ValidationError, WalletError};
 use lightweight_wallet_libs::extraction::ExtractionConfig;
 use lightweight_wallet_libs::WalletResult;
 
@@ -84,10 +84,7 @@ impl BlockchainScanner for TestBlockchainScanner {
         Ok(vec![])
     }
 
-    async fn fetch_utxos(
-        &mut self,
-        _hashes: Vec<Vec<u8>>,
-    ) -> WalletResult<Vec<TransactionOutput>> {
+    async fn fetch_utxos(&mut self, _hashes: Vec<Vec<u8>>) -> WalletResult<Vec<TransactionOutput>> {
         Ok(vec![])
     }
 
@@ -142,9 +139,9 @@ fn create_test_output(
     let encrypted_data =
         EncryptedData::encrypt_data(&encryption_key, &commitment, micro_value, &mask, payment_id)
             .map_err(|e| {
-            WalletError::ValidationError(ValidationError::ValueValidationFailed(
-                format!("Failed to encrypt data: {e}"),
-            ))
+            WalletError::ValidationError(ValidationError::ValueValidationFailed(format!(
+                "Failed to encrypt data: {e}"
+            )))
         })?;
 
     // Create features

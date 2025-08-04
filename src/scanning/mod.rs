@@ -372,10 +372,7 @@ pub trait BlockchainScanner: Send + Sync {
     ) -> WalletResult<Vec<BlockScanResult>>;
 
     /// Fetch specific UTXOs by hash
-    async fn fetch_utxos(
-        &mut self,
-        hashes: Vec<Vec<u8>>,
-    ) -> WalletResult<Vec<TransactionOutput>>;
+    async fn fetch_utxos(&mut self, hashes: Vec<Vec<u8>>) -> WalletResult<Vec<TransactionOutput>>;
 
     /// Get blocks by height range
     async fn get_blocks_by_heights(&mut self, heights: Vec<u64>) -> WalletResult<Vec<BlockInfo>>;
@@ -675,9 +672,7 @@ impl DefaultScanningLogic {
     }
 
     /// Scan for coinbase outputs (special handling for mining rewards)
-    fn scan_for_coinbase_output(
-        output: &TransactionOutput,
-    ) -> WalletResult<Option<WalletOutput>> {
+    fn scan_for_coinbase_output(output: &TransactionOutput) -> WalletResult<Option<WalletOutput>> {
         // Only handle coinbase outputs
         if !matches!(
             output.features().output_type,
@@ -904,10 +899,7 @@ impl BlockchainScanner for MockBlockchainScanner {
         Ok(Vec::new())
     }
 
-    async fn fetch_utxos(
-        &mut self,
-        _hashes: Vec<Vec<u8>>,
-    ) -> WalletResult<Vec<TransactionOutput>> {
+    async fn fetch_utxos(&mut self, _hashes: Vec<Vec<u8>>) -> WalletResult<Vec<TransactionOutput>> {
         // Mock implementation - return empty results
         Ok(Vec::new())
     }

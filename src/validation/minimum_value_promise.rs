@@ -7,7 +7,7 @@
 use crate::{
     data_structures::{
         types::{CompressedCommitment, MicroMinotari, PrivateKey},
-        wallet_output::{RangeProof, LightweightRangeProofType},
+        wallet_output::{LightweightRangeProofType, RangeProof},
     },
     errors::ValidationError,
 };

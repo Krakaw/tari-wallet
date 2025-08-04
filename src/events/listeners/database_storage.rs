@@ -677,9 +677,7 @@ impl DatabaseStorageListener {
                     })?;
 
                 return response_rx.await.map_err(|_| {
-                    crate::WalletError::StorageError(
-                        "Background writer response lost".to_string(),
-                    )
+                    crate::WalletError::StorageError("Background writer response lost".to_string())
                 })?;
             }
         }
@@ -712,9 +710,7 @@ impl DatabaseStorageListener {
                     })?;
 
                 return response_rx.await.map_err(|_| {
-                    crate::WalletError::StorageError(
-                        "Background writer response lost".to_string(),
-                    )
+                    crate::WalletError::StorageError("Background writer response lost".to_string())
                 })?;
             }
         }

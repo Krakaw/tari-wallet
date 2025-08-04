@@ -651,8 +651,7 @@ mod tests {
 
     #[test]
     fn test_process_outputs_coinbase_maturity() {
-        let mut output =
-            create_test_output_with_features(OutputType::Coinbase, 100, 5000);
+        let mut output = create_test_output_with_features(OutputType::Coinbase, 100, 5000);
         // Add some encrypted data to simulate ownership verification
         output.encrypted_data = EncryptedData::from_bytes(&[1, 2, 3, 4]).unwrap_or_default();
 
@@ -840,8 +839,7 @@ mod tests {
         assert_eq!(block_empty_hash.hash.len(), 0);
 
         // Test with large numbers of outputs and inputs
-        let outputs =
-            vec![create_test_output_with_features(OutputType::Payment, 0, 1000); 100];
+        let outputs = vec![create_test_output_with_features(OutputType::Payment, 0, 1000); 100];
         let inputs = vec![create_test_input([1u8; 32], [2u8; 32]); 50];
 
         let large_block = Block::new(1000, vec![1, 2, 3, 4], 1234567890, outputs, inputs);
@@ -852,8 +850,7 @@ mod tests {
     #[test]
     fn test_output_processing_result() {
         // Test the internal OutputProcessingResult structure indirectly
-        let mut output =
-            create_test_output_with_features(OutputType::Coinbase, 100, 5000);
+        let mut output = create_test_output_with_features(OutputType::Coinbase, 100, 5000);
         output.encrypted_data = EncryptedData::from_bytes(&[1, 2, 3, 4]).unwrap_or_default();
 
         let block = Block::new(150, vec![1, 2, 3, 4], 1234567890, vec![output], vec![]);

@@ -416,19 +416,18 @@ async fn handle_interactive_wallet_selection(
 
         // Read user input
         let mut input = String::new();
-        std::io::stdin().read_line(&mut input).map_err(|e| {
-            WalletError::StorageError(format!("Failed to read user input: {e}"))
-        })?;
+        std::io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| WalletError::StorageError(format!("Failed to read user input: {e}")))?;
 
-        let choice: usize =
-            input
-                .trim()
-                .parse()
-                .map_err(|_| WalletError::InvalidArgument {
-                    argument: "wallet_selection".to_string(),
-                    value: input.trim().to_string(),
-                    message: "Invalid wallet number".to_string(),
-                })?;
+        let choice: usize = input
+            .trim()
+            .parse()
+            .map_err(|_| WalletError::InvalidArgument {
+                argument: "wallet_selection".to_string(),
+                value: input.trim().to_string(),
+                message: "Invalid wallet number".to_string(),
+            })?;
 
         if choice == 0 || choice > wallets.len() {
             return Err(WalletError::InvalidArgument {
