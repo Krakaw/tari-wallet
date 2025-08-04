@@ -1345,12 +1345,11 @@ mod tests {
             }
         }
 
-        // Note: We don't expect to find any UTXOs with our test private key since it's
-        // not associated with the real outputs in the block data. This test verifies
-        // the scanning logic works without errors.
-        println!(
-            "Found {} wallet outputs with test private key",
-            wallet_outputs.len()
+        // Verify the expected number of wallet outputs found
+        assert_eq!(
+            wallet_outputs.len(),
+            2,
+            "Expected 2 wallet outputs with test private key"
         );
     }
 
@@ -1368,11 +1367,6 @@ mod tests {
             let header = &headers[i];
 
             for block in &sync_response.blocks {
-                println!("Block {} (height {}):", header.name, header.height);
-                println!("  - Outputs: {}", block.outputs.len());
-                println!("  - Inputs: {}", block.inputs.len());
-                println!("  - Timestamp: {}", block.mined_timestamp);
-
                 // Basic validation
                 assert!(
                     !block.outputs.is_empty(),
@@ -1442,100 +1436,84 @@ mod tests {
         let block_info = HttpBlockchainScanner::convert_http_block_to_block_info(http_block)
             .expect("Block conversion should work");
 
-        println!("Block 32038 has {} outputs", block_info.outputs.len());
+        // Verify block has expected number of outputs
+        assert_eq!(
+            block_info.outputs.len(),
+            199,
+            "Block 32038 should have 199 outputs"
+        );
 
         // Focus on output 92 (the one with the correct commitment)
         if block_info.outputs.len() > 92 {
             let output_5 = &block_info.outputs[92];
-            println!("=== DEBUG OUTPUT 92 (commitment 080e9955...) ===");
-            println!("Output type: {:?}", output_5.features().output_type);
-            println!(
-                "Commitment: {}",
-                hex::encode(output_5.commitment().as_bytes())
+
+            // Verify output properties
+            assert_eq!(
+                hex::encode(output_5.commitment().as_bytes()),
+                "080e9955f7b1cfaf04b879b98126269c92a7ee3a3387e1a1bdd92e6b1db54604",
+                "Expected specific commitment for output 92"
             );
-            println!(
-                "Encrypted data length: {}",
-                output_5.encrypted_data().as_bytes().len()
-            );
-            println!(
-                "Encrypted data hex: {}",
-                hex::encode(output_5.encrypted_data().as_bytes())
-            );
-            println!(
-                "Sender offset public key: {}",
-                hex::encode(output_5.sender_offset_public_key().as_bytes())
+            assert_eq!(
+                output_5.encrypted_data().as_bytes().len(),
+                161,
+                "Expected encrypted data length of 161 bytes"
             );
 
-            // Try to decrypt with extraction config
-            println!("Attempting extraction...");
+            // Test direct decryption mechanisms
 
-            // Debug: Also try direct decryption to see if the data can be decrypted at all
-            println!("🔍 Testing direct decryption mechanisms...");
-
-            // Test direct change output decryption
+            // Test direct change output decryption - should fail for this test case
             let test_private_key = create_test_private_key();
-            if let Ok((value, _mask, payment_id)) =
+            assert!(
                 crate::data_structures::encrypted_data::EncryptedData::decrypt_data(
                     &test_private_key,
                     output_5.commitment(),
                     output_5.encrypted_data(),
                 )
-            {
-                println!("✅ Direct change output decryption succeeded!");
-                println!("🔍 Value: {} µT", value.as_u64());
-                println!("🔍 Payment ID: {payment_id:?}");
-            } else {
-                println!("❌ Direct change output decryption failed");
-            }
+                .is_err(),
+                "Direct change output decryption should fail for this output"
+            );
 
-            // Test direct one-sided payment decryption
-            if let Ok((value, _mask, payment_id)) =
+            // Test direct one-sided payment decryption - should succeed
+            let (value, _mask, _payment_id) =
                 crate::data_structures::encrypted_data::EncryptedData::decrypt_one_sided_data(
                     &test_private_key,
                     output_5.commitment(),
                     output_5.sender_offset_public_key(),
                     output_5.encrypted_data(),
                 )
-            {
-                println!("✅ Direct one-sided payment decryption succeeded!");
-                println!("🔍 Value: {} µT", value.as_u64());
-                println!("🔍 Payment ID: {payment_id:?}");
-            } else {
-                println!("❌ Direct one-sided payment decryption failed");
-            }
+                .expect("Direct one-sided payment decryption should succeed");
 
-            match crate::extraction::extract_wallet_output(output_5, &extraction_config) {
-                Ok(wallet_output) => {
-                    println!("✅ Successfully extracted wallet output!");
-                    println!("  Value: {} µT", wallet_output.value().as_u64());
-                    println!("  Payment ID: {:?}", wallet_output.payment_id());
-                }
-                Err(e) => {
-                    println!("❌ Extraction failed: {e:?}");
-                }
-            }
+            assert_eq!(value.as_u64(), 4011796, "Expected value 4011796 µT");
 
-            // Also test the scan functions directly
-            println!("Testing scan_for_recoverable_output...");
-            match HttpBlockchainScanner::scan_for_recoverable_output(output_5, &extraction_config) {
-                Ok(Some(wallet_output)) => {
-                    println!("✅ scan_for_recoverable_output succeeded!");
-                    println!("  Value: {} µT", wallet_output.value().as_u64());
-                }
-                Ok(None) => {
-                    println!("❌ scan_for_recoverable_output returned None (not a wallet output)");
-                }
-                Err(e) => {
-                    println!("❌ scan_for_recoverable_output failed: {e:?}");
-                }
-            }
+            // Test wallet output extraction
+            let wallet_output =
+                crate::extraction::extract_wallet_output(output_5, &extraction_config)
+                    .expect("Wallet output extraction should succeed");
+
+            assert_eq!(
+                wallet_output.value().as_u64(),
+                4011796,
+                "Expected wallet output value 4011796 µT"
+            );
+
+            // Test scan_for_recoverable_output
+            let scanned_wallet_output =
+                HttpBlockchainScanner::scan_for_recoverable_output(output_5, &extraction_config)
+                    .expect("scan_for_recoverable_output should not error")
+                    .expect("scan_for_recoverable_output should return Some");
+
+            assert_eq!(
+                scanned_wallet_output.value().as_u64(),
+                4011796,
+                "Expected scanned value 4011796 µT"
+            );
         }
     }
 
     #[test]
     fn test_scanning_all_blocks_with_test_key() {
         let all_blocks = load_all_test_block_data();
-        let headers = load_test_block_headers();
+        let _headers = load_test_block_headers();
         let private_key = create_test_private_key();
         let extraction_config = ExtractionConfig::with_private_key(private_key);
 
@@ -1544,9 +1522,7 @@ mod tests {
         let mut total_wallet_outputs_found = 0;
         let mut wallet_output_hashes = std::collections::HashSet::new();
 
-        for (i, sync_response) in all_blocks.iter().enumerate() {
-            let header = &headers[i];
-
+        for (_i, sync_response) in all_blocks.iter().enumerate() {
             for http_block in &sync_response.blocks {
                 // Convert HTTP block to BlockInfo
                 let block_info =
@@ -1565,16 +1541,7 @@ mod tests {
                     )
                     .expect("Scan should not error")
                     {
-                        // Debug successful outputs to compare with failing ones
-                        println!(
-                            "✅ HTTP: Successfully decrypted output at block {}, index {}",
-                            header.height, output_index
-                        );
-                        println!(
-                            "  - commitment: {}",
-                            hex::encode(output.commitment().as_bytes())
-                        );
-                        println!("  - value: {} µT", wallet_output.value().as_u64());
+                        // Track successful outputs for validation
 
                         // Store the output hash for later input matching (this is what inputs reference)
                         let http_output = &http_block.outputs[output_index];
@@ -1586,21 +1553,14 @@ mod tests {
 
                 total_wallet_outputs_found += wallet_outputs.len();
 
-                println!(
-                    "Block {} (height {}): Found {} wallet outputs from {} total outputs",
-                    header.name,
-                    header.height,
-                    wallet_outputs.len(),
-                    block_info.outputs.len()
-                );
+                // Track wallet outputs found per block
             }
         }
 
         // Now scan all blocks for spent inputs that match our wallet outputs
         let mut total_spent_wallet_inputs = 0;
 
-        for (i, sync_response) in all_blocks.iter().enumerate() {
-            let header = &headers[i];
+        for (_i, sync_response) in all_blocks.iter().enumerate() {
             let http_block = &sync_response.blocks[0];
 
             // Convert HTTP block to BlockInfo
@@ -1622,31 +1582,27 @@ mod tests {
 
             total_spent_wallet_inputs += spent_wallet_inputs;
 
-            println!(
-                "Block {} (height {}): Found {} spent wallet inputs from {} total inputs",
-                header.name,
-                header.height,
-                spent_wallet_inputs,
-                block_info.inputs.len()
-            );
+            // Track spent wallet inputs per block
         }
 
-        println!("Total scan results:");
-        println!(
-            "  - {} wallet outputs found from {} total outputs across {} blocks",
-            total_wallet_outputs_found,
-            total_outputs_scanned,
-            all_blocks.len()
+        // Assert the expected values from test output
+        assert_eq!(
+            total_wallet_outputs_found, 24,
+            "Expected 24 wallet outputs found"
         );
-        println!(
-            "  - {} spent wallet inputs found from {} total inputs across {} blocks",
-            total_spent_wallet_inputs,
-            total_inputs_scanned,
-            all_blocks.len()
+        assert_eq!(
+            total_outputs_scanned, 495,
+            "Expected 495 total outputs scanned"
         );
-
-        // The test key should detect both outputs and spent inputs in these blocks
-        // since they contain inputs and outputs for the private view key according to the user
+        assert_eq!(
+            total_spent_wallet_inputs, 3,
+            "Expected 3 spent wallet inputs found"
+        );
+        assert_eq!(
+            total_inputs_scanned, 338,
+            "Expected 338 total inputs scanned"
+        );
+        assert_eq!(all_blocks.len(), 4, "Expected 4 blocks processed");
     }
 
     #[test]
@@ -1691,11 +1647,7 @@ mod tests {
                         (header.height, output_hash.clone()),
                     );
 
-                    println!(
-                        "Found wallet output in block {} with output hash: {}",
-                        header.height,
-                        hex::encode(&output_hash[..8])
-                    );
+                    // Track wallet output found
                 }
             }
         }
@@ -1703,20 +1655,18 @@ mod tests {
         // Second pass: check for spent wallet outputs by matching input hashes
         let mut spent_outputs_detected = 0;
 
-        for (i, sync_response) in all_blocks.iter().enumerate() {
-            let header = &headers[i];
+        for (_i, sync_response) in all_blocks.iter().enumerate() {
             let http_block = &sync_response.blocks[0];
             let block_info = HttpBlockchainScanner::convert_http_block_to_block_info(http_block)
                 .expect("Block conversion should work");
 
             for input in &block_info.inputs {
                 // Check if this input hash matches any of our wallet output hashes
-                for (origin_height, output_hash) in wallet_output_identifiers.values() {
+                for (_origin_height, output_hash) in wallet_output_identifiers.values() {
                     // Check if the input references one of our wallet outputs by hash
                     if input.output_hash.as_slice() == output_hash.as_slice() {
                         spent_outputs_detected += 1;
-                        println!("Detected spent wallet output: Block {} input spends output from block {} (output hash match)", 
-                                 header.height, origin_height);
+                        // Track spent wallet output
                     }
 
                     // 2. Check if the input output_hash appears in our collected hashes
@@ -1728,42 +1678,46 @@ mod tests {
             }
         }
 
-        println!("Input detection summary:");
-        println!(
-            "  - Total wallet outputs found: {}",
-            wallet_output_identifiers.len()
+        // Assert expected values from test output
+        assert_eq!(
+            wallet_output_identifiers.len(),
+            24,
+            "Expected 24 wallet outputs found"
         );
-        println!("  - Total spent wallet outputs detected: {spent_outputs_detected}");
-        println!("  - Total unique input hashes: {}", all_input_hashes.len());
-
-        // Verify that we can detect both creation and spending of wallet outputs
-        assert!(
-            !wallet_output_identifiers.is_empty(),
-            "Should find wallet outputs"
+        assert_eq!(
+            spent_outputs_detected, 3,
+            "Expected 3 spent wallet outputs detected"
+        );
+        assert_eq!(
+            all_input_hashes.len(),
+            338,
+            "Expected 338 unique input hashes"
         );
 
         // Additional analysis: check if any inputs reference the actual output hashes from HTTP data
         let mut cross_referenced_inputs = 0;
-        for (i, sync_response) in all_blocks.iter().enumerate() {
-            let header = &headers[i];
+        for (_i, sync_response) in all_blocks.iter().enumerate() {
             let http_block = &sync_response.blocks[0];
 
             for input_hash in &http_block.inputs {
                 // Check if this input hash matches any output hash from the same or other blocks
-                for (j, other_sync_response) in all_blocks.iter().enumerate() {
+                for (_j, other_sync_response) in all_blocks.iter().enumerate() {
                     let other_http_block = &other_sync_response.blocks[0];
                     for output in &other_http_block.outputs {
                         if input_hash.as_slice() == output.output_hash.as_slice() {
                             cross_referenced_inputs += 1;
-                            println!("Found input in block {} that spends output from block {} (output hash match)", 
-                                     header.height, headers[j].height);
+                            // Track cross-referenced input
                         }
                     }
                 }
             }
         }
 
-        println!("Cross-reference analysis: {cross_referenced_inputs} inputs reference outputs within our test blocks");
+        // Assert expected cross-reference value
+        assert_eq!(
+            cross_referenced_inputs, 4,
+            "Expected 4 cross-referenced inputs"
+        );
     }
 
     #[test]
@@ -1908,9 +1862,11 @@ mod tests {
         assert_eq!(result.mined_timestamp, 1750340139);
         assert!(!result.outputs.is_empty(), "Block should have outputs");
 
-        println!(
-            "Scanning workflow completed successfully with {} wallet outputs found",
-            result.wallet_outputs.len()
+        // Verify the expected number of wallet outputs found
+        assert_eq!(
+            result.wallet_outputs.len(),
+            1,
+            "Expected 1 wallet output found"
         );
     }
 }
