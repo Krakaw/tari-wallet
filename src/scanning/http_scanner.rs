@@ -66,7 +66,7 @@ use crate::{
         },
         LightweightOutputType, LightweightRangeProofType,
     },
-    errors::{LightweightWalletError, LightweightWalletResult},
+    errors::{LightweightWalletError, WalletResult},
     extraction::{extract_wallet_output, ExtractionConfig},
     scanning::{
         BlockInfo, BlockScanResult, BlockchainScanner, DefaultScanningLogic,
@@ -153,7 +153,7 @@ pub struct HttpBlockchainScanner {
 
 impl HttpBlockchainScanner {
     /// Create a new HTTP scanner with the given base URL
-    pub async fn new(base_url: String) -> LightweightWalletResult<Self> {
+    pub async fn new(base_url: String) -> WalletResult<Self> {
         #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
         {
             let timeout = Duration::from_secs(30);
@@ -230,10 +230,7 @@ impl HttpBlockchainScanner {
 
     /// Create a new HTTP scanner with custom timeout (native only)
     #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
-    pub async fn with_timeout(
-        base_url: String,
-        timeout: Duration,
-    ) -> LightweightWalletResult<Self> {
+    pub async fn with_timeout(base_url: String, timeout: Duration) -> WalletResult<Self> {
         let client = Client::builder().timeout(timeout).build().map_err(|e| {
             LightweightWalletError::ScanningError(
                 crate::errors::ScanningError::blockchain_connection_failed(&format!(
@@ -262,19 +259,13 @@ impl HttpBlockchainScanner {
 
     /// Create a new HTTP scanner with custom timeout (WASM - timeout ignored)
     #[cfg(all(feature = "http", target_arch = "wasm32"))]
-    pub async fn with_timeout(
-        base_url: String,
-        _timeout: Duration,
-    ) -> LightweightWalletResult<Self> {
+    pub async fn with_timeout(base_url: String, _timeout: Duration) -> WalletResult<Self> {
         // WASM doesn't support timeouts in the same way, so we ignore the timeout parameter
         Self::new(base_url).await
     }
 
     /// Get header by height - matches WASM example usage
-    async fn get_header_by_height(
-        &self,
-        height: u64,
-    ) -> LightweightWalletResult<HttpHeaderResponse> {
+    async fn get_header_by_height(&self, height: u64) -> WalletResult<HttpHeaderResponse> {
         let url = format!("{}/get_header_by_height", self.base_url);
 
         // Native implementation using reqwest
@@ -396,7 +387,7 @@ impl HttpBlockchainScanner {
     async fn sync_utxos_by_block(
         &self,
         start_header_hash: &str,
-    ) -> LightweightWalletResult<HttpSyncUtxosResponse> {
+    ) -> WalletResult<HttpSyncUtxosResponse> {
         let url = format!("{}/sync_utxos_by_block", self.base_url);
         let limit = 10u64;
         let page = 0u64;
@@ -531,7 +522,7 @@ impl HttpBlockchainScanner {
     /// Convert HTTP output data to LightweightTransactionOutput
     fn convert_http_output_to_lightweight(
         http_output: &HttpOutputData,
-    ) -> LightweightWalletResult<LightweightTransactionOutput> {
+    ) -> WalletResult<LightweightTransactionOutput> {
         // Parse commitment
         if http_output.commitment.len() != 32 {
             return Err(LightweightWalletError::ConversionError(
@@ -625,7 +616,7 @@ impl HttpBlockchainScanner {
     /// Convert HTTP input data to TransactionInput - simplified version
     fn convert_http_input_to_lightweight(
         output_hash_bytes: &[u8],
-    ) -> LightweightWalletResult<TransactionInput> {
+    ) -> WalletResult<TransactionInput> {
         // Parse output hash
         if output_hash_bytes.len() != 32 {
             return Err(LightweightWalletError::ConversionError(
@@ -653,14 +644,12 @@ impl HttpBlockchainScanner {
     }
 
     /// Convert HTTP block data to BlockInfo
-    fn convert_http_block_to_block_info(
-        http_block: &HttpBlockUtxoInfo,
-    ) -> LightweightWalletResult<BlockInfo> {
+    fn convert_http_block_to_block_info(http_block: &HttpBlockUtxoInfo) -> WalletResult<BlockInfo> {
         let outputs = http_block
             .outputs
             .iter()
             .map(Self::convert_http_output_to_lightweight)
-            .collect::<LightweightWalletResult<Vec<_>>>()?;
+            .collect::<WalletResult<Vec<_>>>()?;
 
         // Handle simplified inputs structure
         let inputs = http_block
@@ -670,7 +659,7 @@ impl HttpBlockchainScanner {
                 input_hashes
                     .iter()
                     .map(|hash_bytes| Self::convert_http_input_to_lightweight(hash_bytes))
-                    .collect::<LightweightWalletResult<Vec<_>>>()
+                    .collect::<WalletResult<Vec<_>>>()
             })
             .transpose()?
             .unwrap_or_default();
@@ -691,7 +680,7 @@ impl HttpBlockchainScanner {
         wallet: &Wallet,
         start_height: u64,
         end_height: Option<u64>,
-    ) -> LightweightWalletResult<ScanConfig> {
+    ) -> WalletResult<ScanConfig> {
         // Get the master key from the wallet for scanning
         let master_key_bytes = wallet.master_key_bytes();
 
@@ -751,7 +740,7 @@ impl HttpBlockchainScanner {
     fn scan_for_recoverable_output(
         output: &LightweightTransactionOutput,
         extraction_config: &ExtractionConfig,
-    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+    ) -> WalletResult<Option<LightweightWalletOutput>> {
         // Skip non-payment outputs for this scan type
         if !matches!(
             output.features().output_type,
@@ -771,7 +760,7 @@ impl HttpBlockchainScanner {
     fn scan_for_one_sided_payment(
         output: &LightweightTransactionOutput,
         extraction_config: &ExtractionConfig,
-    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+    ) -> WalletResult<Option<LightweightWalletOutput>> {
         // Skip non-payment outputs for this scan type
         if !matches!(
             output.features().output_type,
@@ -790,7 +779,7 @@ impl HttpBlockchainScanner {
     /// Scan for coinbase outputs
     fn scan_for_coinbase_output(
         output: &LightweightTransactionOutput,
-    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+    ) -> WalletResult<Option<LightweightWalletOutput>> {
         // Only handle coinbase outputs
         if !matches!(
             output.features().output_type,
@@ -830,7 +819,7 @@ impl HttpBlockchainScanner {
         &self,
         start_height: u64,
         end_height: u64,
-    ) -> LightweightWalletResult<Vec<HttpBlockUtxoInfo>> {
+    ) -> WalletResult<Vec<HttpBlockUtxoInfo>> {
         // Get the starting header hash
         let start_header = self.get_header_by_height(start_height).await?;
         let mut current_header_hash = Self::bytes_to_hex(&start_header.hash);
@@ -890,10 +879,7 @@ impl HttpBlockchainScanner {
         Ok(all_blocks)
     }
 
-    async fn get_blocks_by_heights(
-        &mut self,
-        heights: Vec<u64>,
-    ) -> LightweightWalletResult<Vec<BlockInfo>> {
+    async fn get_blocks_by_heights(&mut self, heights: Vec<u64>) -> WalletResult<Vec<BlockInfo>> {
         if heights.is_empty() {
             return Ok(Vec::new());
         }
@@ -921,10 +907,7 @@ impl HttpBlockchainScanner {
 #[cfg(feature = "http")]
 #[async_trait(?Send)]
 impl BlockchainScanner for HttpBlockchainScanner {
-    async fn scan_blocks(
-        &mut self,
-        config: ScanConfig,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    async fn scan_blocks(&mut self, config: ScanConfig) -> WalletResult<Vec<BlockScanResult>> {
         #[cfg(feature = "tracing")]
         debug!(
             "Starting HTTP block scan from height {} to {:?}",
@@ -998,7 +981,7 @@ impl BlockchainScanner for HttpBlockchainScanner {
         Ok(results)
     }
 
-    async fn get_tip_info(&mut self) -> LightweightWalletResult<TipInfo> {
+    async fn get_tip_info(&mut self) -> WalletResult<TipInfo> {
         let url = format!("{}/get_tip_info", self.base_url);
 
         // Native implementation using reqwest
@@ -1123,7 +1106,7 @@ impl BlockchainScanner for HttpBlockchainScanner {
     async fn search_utxos(
         &mut self,
         _commitments: Vec<Vec<u8>>,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    ) -> WalletResult<Vec<BlockScanResult>> {
         // This endpoint is not implemented in the current HTTP API
         // It would require a different endpoint that searches for specific commitments
         Err(LightweightWalletError::ScanningError(
@@ -1136,7 +1119,7 @@ impl BlockchainScanner for HttpBlockchainScanner {
     async fn get_utxos_by_block(
         &mut self,
         heights: Vec<u64>,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    ) -> WalletResult<Vec<BlockScanResult>> {
         let blocks = self.get_blocks_by_heights(heights).await?;
 
         let mut results = Vec::new();

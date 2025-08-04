@@ -1115,7 +1115,7 @@ impl EncryptionError {
 }
 
 /// Result type for lightweight wallet operations
-pub type LightweightWalletResult<T> = Result<T, LightweightWalletError>;
+pub type WalletResult<T> = Result<T, LightweightWalletError>;
 
 #[cfg(test)]
 mod tests {

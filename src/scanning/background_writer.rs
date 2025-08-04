@@ -9,7 +9,7 @@
 #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 use crate::{
     data_structures::{types::CompressedCommitment, wallet_transaction::WalletTransaction},
-    errors::LightweightWalletResult,
+    errors::WalletResult,
     storage::{StoredOutput, WalletStorage},
 };
 #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
@@ -30,14 +30,14 @@ pub enum BackgroundWriterCommand {
         /// List of transactions to save
         transactions: Vec<WalletTransaction>,
         /// Response channel for operation result
-        response_tx: oneshot::Sender<LightweightWalletResult<()>>,
+        response_tx: oneshot::Sender<WalletResult<()>>,
     },
     /// Save outputs to the database
     SaveOutputs {
         /// List of outputs to save
         outputs: Vec<StoredOutput>,
         /// Response channel returning saved output IDs
-        response_tx: oneshot::Sender<LightweightWalletResult<Vec<u32>>>,
+        response_tx: oneshot::Sender<WalletResult<Vec<u32>>>,
     },
     /// Update the last scanned block height for a wallet
     UpdateWalletScannedBlock {
@@ -46,7 +46,7 @@ pub enum BackgroundWriterCommand {
         /// New block height that was scanned
         block_height: u64,
         /// Response channel for operation result
-        response_tx: oneshot::Sender<LightweightWalletResult<()>>,
+        response_tx: oneshot::Sender<WalletResult<()>>,
     },
     /// Mark a single transaction as spent
     MarkTransactionSpent {
@@ -57,14 +57,14 @@ pub enum BackgroundWriterCommand {
         /// Input index within the block
         input_index: usize,
         /// Response channel returning whether transaction was found and marked
-        response_tx: oneshot::Sender<LightweightWalletResult<bool>>,
+        response_tx: oneshot::Sender<WalletResult<bool>>,
     },
     /// Mark multiple transactions as spent in a batch operation
     MarkTransactionsSpentBatch {
         /// List of commitments with their spending details (commitment, block_height, input_index)
         commitments: Vec<(CompressedCommitment, u64, usize)>,
         /// Response channel returning number of transactions marked as spent
-        response_tx: oneshot::Sender<LightweightWalletResult<usize>>,
+        response_tx: oneshot::Sender<WalletResult<usize>>,
     },
     /// Shutdown the background writer thread
     Shutdown {
@@ -254,7 +254,7 @@ mod tests {
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     #[async_trait]
     impl WalletStorage for MockStorage {
-        async fn initialize(&self) -> LightweightWalletResult<()> {
+        async fn initialize(&self) -> WalletResult<()> {
             if *self.should_fail.lock().unwrap() {
                 Err(crate::errors::LightweightWalletError::StorageError(
                     "Mock failure".to_string(),
@@ -264,7 +264,7 @@ mod tests {
             }
         }
 
-        async fn save_wallet(&self, _wallet: &StoredWallet) -> LightweightWalletResult<u32> {
+        async fn save_wallet(&self, _wallet: &StoredWallet) -> WalletResult<u32> {
             if *self.should_fail.lock().unwrap() {
                 Err(crate::errors::LightweightWalletError::StorageError(
                     "Mock failure".to_string(),
@@ -274,10 +274,7 @@ mod tests {
             }
         }
 
-        async fn get_wallet_by_id(
-            &self,
-            _id: u32,
-        ) -> LightweightWalletResult<Option<StoredWallet>> {
+        async fn get_wallet_by_id(&self, _id: u32) -> WalletResult<Option<StoredWallet>> {
             if *self.should_fail.lock().unwrap() {
                 Err(crate::errors::LightweightWalletError::StorageError(
                     "Mock failure".to_string(),
@@ -287,10 +284,7 @@ mod tests {
             }
         }
 
-        async fn get_wallet_by_name(
-            &self,
-            _name: &str,
-        ) -> LightweightWalletResult<Option<StoredWallet>> {
+        async fn get_wallet_by_name(&self, _name: &str) -> WalletResult<Option<StoredWallet>> {
             if *self.should_fail.lock().unwrap() {
                 Err(crate::errors::LightweightWalletError::StorageError(
                     "Mock failure".to_string(),
@@ -300,7 +294,7 @@ mod tests {
             }
         }
 
-        async fn list_wallets(&self) -> LightweightWalletResult<Vec<StoredWallet>> {
+        async fn list_wallets(&self) -> WalletResult<Vec<StoredWallet>> {
             if *self.should_fail.lock().unwrap() {
                 Err(crate::errors::LightweightWalletError::StorageError(
                     "Mock failure".to_string(),
@@ -314,7 +308,7 @@ mod tests {
             &self,
             wallet_id: u32,
             transactions: &[WalletTransaction],
-        ) -> LightweightWalletResult<()> {
+        ) -> WalletResult<()> {
             if *self.should_fail.lock().unwrap() {
                 Err(crate::errors::LightweightWalletError::StorageError(
                     "Mock failure".to_string(),
@@ -328,10 +322,7 @@ mod tests {
             }
         }
 
-        async fn save_outputs(
-            &self,
-            outputs: &[StoredOutput],
-        ) -> LightweightWalletResult<Vec<u32>> {
+        async fn save_outputs(&self, outputs: &[StoredOutput]) -> WalletResult<Vec<u32>> {
             if *self.should_fail.lock().unwrap() {
                 Err(crate::errors::LightweightWalletError::StorageError(
                     "Mock failure".to_string(),
@@ -342,10 +333,7 @@ mod tests {
             }
         }
 
-        async fn get_unspent_outputs(
-            &self,
-            _wallet_id: u32,
-        ) -> LightweightWalletResult<Vec<StoredOutput>> {
+        async fn get_unspent_outputs(&self, _wallet_id: u32) -> WalletResult<Vec<StoredOutput>> {
             if *self.should_fail.lock().unwrap() {
                 Err(crate::errors::LightweightWalletError::StorageError(
                     "Mock failure".to_string(),
@@ -359,7 +347,7 @@ mod tests {
             &self,
             wallet_id: u32,
             block_height: u64,
-        ) -> LightweightWalletResult<()> {
+        ) -> WalletResult<()> {
             if *self.should_fail.lock().unwrap() {
                 Err(crate::errors::LightweightWalletError::StorageError(
                     "Mock failure".to_string(),
@@ -378,7 +366,7 @@ mod tests {
             commitment: &CompressedCommitment,
             block_height: u64,
             input_index: usize,
-        ) -> LightweightWalletResult<bool> {
+        ) -> WalletResult<bool> {
             if *self.should_fail.lock().unwrap() {
                 Err(crate::errors::LightweightWalletError::StorageError(
                     "Mock failure".to_string(),
@@ -396,7 +384,7 @@ mod tests {
         async fn mark_transactions_spent_batch(
             &self,
             commitments: &[(CompressedCommitment, u64, usize)],
-        ) -> LightweightWalletResult<usize> {
+        ) -> WalletResult<usize> {
             if *self.should_fail.lock().unwrap() {
                 Err(crate::errors::LightweightWalletError::StorageError(
                     "Mock failure".to_string(),
@@ -410,7 +398,7 @@ mod tests {
         async fn get_wallet_statistics(
             &self,
             _wallet_id: Option<u32>,
-        ) -> LightweightWalletResult<StorageStats> {
+        ) -> WalletResult<StorageStats> {
             if *self.should_fail.lock().unwrap() {
                 Err(crate::errors::LightweightWalletError::StorageError(
                     "Mock failure".to_string(),
@@ -433,41 +421,38 @@ mod tests {
         }
 
         // Minimal implementations for unused methods
-        async fn delete_wallet(&self, _wallet_id: u32) -> LightweightWalletResult<bool> {
+        async fn delete_wallet(&self, _wallet_id: u32) -> WalletResult<bool> {
             Ok(false)
         }
-        async fn wallet_name_exists(&self, _name: &str) -> LightweightWalletResult<bool> {
+        async fn wallet_name_exists(&self, _name: &str) -> WalletResult<bool> {
             Ok(false)
         }
         async fn save_transaction(
             &self,
             _wallet_id: u32,
             _transaction: &WalletTransaction,
-        ) -> LightweightWalletResult<()> {
+        ) -> WalletResult<()> {
             Ok(())
         }
-        async fn update_transaction(
-            &self,
-            _transaction: &WalletTransaction,
-        ) -> LightweightWalletResult<()> {
+        async fn update_transaction(&self, _transaction: &WalletTransaction) -> WalletResult<()> {
             Ok(())
         }
         async fn get_transaction_by_commitment(
             &self,
             _commitment: &CompressedCommitment,
-        ) -> LightweightWalletResult<Option<WalletTransaction>> {
+        ) -> WalletResult<Option<WalletTransaction>> {
             Ok(None)
         }
         async fn get_transactions(
             &self,
             _filter: Option<TransactionFilter>,
-        ) -> LightweightWalletResult<Vec<WalletTransaction>> {
+        ) -> WalletResult<Vec<WalletTransaction>> {
             Ok(Vec::new())
         }
-        async fn load_wallet_state(&self, _wallet_id: u32) -> LightweightWalletResult<WalletState> {
+        async fn load_wallet_state(&self, _wallet_id: u32) -> WalletResult<WalletState> {
             Ok(WalletState::new())
         }
-        async fn get_statistics(&self) -> LightweightWalletResult<StorageStats> {
+        async fn get_statistics(&self) -> WalletResult<StorageStats> {
             Ok(StorageStats {
                 total_transactions: 0,
                 inbound_count: 0,
@@ -486,90 +471,82 @@ mod tests {
             &self,
             _from_block: u64,
             _to_block: u64,
-        ) -> LightweightWalletResult<Vec<WalletTransaction>> {
+        ) -> WalletResult<Vec<WalletTransaction>> {
             Ok(Vec::new())
         }
-        async fn get_unspent_transactions(
-            &self,
-        ) -> LightweightWalletResult<Vec<WalletTransaction>> {
+        async fn get_unspent_transactions(&self) -> WalletResult<Vec<WalletTransaction>> {
             Ok(Vec::new())
         }
-        async fn get_spent_transactions(&self) -> LightweightWalletResult<Vec<WalletTransaction>> {
+        async fn get_spent_transactions(&self) -> WalletResult<Vec<WalletTransaction>> {
             Ok(Vec::new())
         }
-        async fn has_commitment(
-            &self,
-            _commitment: &CompressedCommitment,
-        ) -> LightweightWalletResult<bool> {
+        async fn has_commitment(&self, _commitment: &CompressedCommitment) -> WalletResult<bool> {
             Ok(false)
         }
-        async fn get_highest_block(&self) -> LightweightWalletResult<Option<u64>> {
+        async fn get_highest_block(&self) -> WalletResult<Option<u64>> {
             Ok(None)
         }
-        async fn get_lowest_block(&self) -> LightweightWalletResult<Option<u64>> {
+        async fn get_lowest_block(&self) -> WalletResult<Option<u64>> {
             Ok(None)
         }
-        async fn clear_all_transactions(&self) -> LightweightWalletResult<()> {
+        async fn clear_all_transactions(&self) -> WalletResult<()> {
             Ok(())
         }
-        async fn get_transaction_count(&self) -> LightweightWalletResult<usize> {
+        async fn get_transaction_count(&self) -> WalletResult<usize> {
             Ok(0)
         }
-        async fn close(&self) -> LightweightWalletResult<()> {
+        async fn close(&self) -> WalletResult<()> {
             Ok(())
         }
-        async fn save_output(&self, _output: &StoredOutput) -> LightweightWalletResult<u32> {
+        async fn save_output(&self, _output: &StoredOutput) -> WalletResult<u32> {
             Ok(1)
         }
-        async fn update_output(&self, _output: &StoredOutput) -> LightweightWalletResult<()> {
+        async fn update_output(&self, _output: &StoredOutput) -> WalletResult<()> {
             Ok(())
         }
         async fn mark_output_spent(
             &self,
             _output_id: u32,
             _spent_in_tx_id: u64,
-        ) -> LightweightWalletResult<()> {
+        ) -> WalletResult<()> {
             Ok(())
         }
-        async fn get_output_by_id(
-            &self,
-            _output_id: u32,
-        ) -> LightweightWalletResult<Option<StoredOutput>> {
+        async fn get_output_by_id(&self, _output_id: u32) -> WalletResult<Option<StoredOutput>> {
             Ok(None)
         }
         async fn get_output_by_commitment(
             &self,
             _commitment: &[u8],
-        ) -> LightweightWalletResult<Option<StoredOutput>> {
+        ) -> WalletResult<Option<StoredOutput>> {
             Ok(None)
         }
         async fn get_outputs(
             &self,
             _filter: Option<OutputFilter>,
-        ) -> LightweightWalletResult<Vec<StoredOutput>> {
+        ) -> WalletResult<Vec<StoredOutput>> {
             Ok(Vec::new())
         }
         async fn get_spendable_outputs(
             &self,
             _wallet_id: u32,
             _block_height: u64,
-        ) -> LightweightWalletResult<Vec<StoredOutput>> {
+        ) -> WalletResult<Vec<StoredOutput>> {
             Ok(Vec::new())
         }
         async fn get_spendable_balance(
             &self,
             _wallet_id: u32,
             _block_height: u64,
-        ) -> LightweightWalletResult<u64> {
+        ) -> WalletResult<u64> {
             Ok(0)
         }
-        async fn delete_output(&self, _output_id: u32) -> LightweightWalletResult<bool> {
+        async fn delete_output(&self, _output_id: u32) -> WalletResult<bool> {
             Ok(false)
         }
-        async fn clear_outputs(&self, _wallet_id: u32) -> LightweightWalletResult<()> {
+        async fn clear_outputs(&self, _wallet_id: u32) -> WalletResult<()> {
             Ok(())
         }
-        async fn get_output_count(&self, _wallet_id: u32) -> LightweightWalletResult<usize> {
+        async fn get_output_count(&self, _wallet_id: u32) -> WalletResult<usize> {
             Ok(0)
         }
         async fn mark_spent_outputs_from_inputs(
@@ -577,7 +554,7 @@ mod tests {
             _wallet_id: u32,
             _from_block: u64,
             _to_block: u64,
-        ) -> LightweightWalletResult<usize> {
+        ) -> WalletResult<usize> {
             Ok(0)
         }
     }

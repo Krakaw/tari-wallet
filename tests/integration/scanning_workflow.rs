@@ -17,7 +17,7 @@ use lightweight_wallet_libs::data_structures::{
 };
 use lightweight_wallet_libs::errors::{LightweightWalletError, ValidationError};
 use lightweight_wallet_libs::extraction::ExtractionConfig;
-use lightweight_wallet_libs::LightweightWalletResult;
+use lightweight_wallet_libs::WalletResult;
 
 use lightweight_wallet_libs::scanning::*;
 use lightweight_wallet_libs::wallet::*;
@@ -58,10 +58,7 @@ impl TestBlockchainScanner {
 
 #[async_trait(?Send)]
 impl BlockchainScanner for TestBlockchainScanner {
-    async fn scan_blocks(
-        &mut self,
-        config: ScanConfig,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    async fn scan_blocks(&mut self, config: ScanConfig) -> WalletResult<Vec<BlockScanResult>> {
         // Simulate network latency
         if self.latency_ms > 0 {
             tokio::time::sleep(Duration::from_millis(self.latency_ms)).await;
@@ -70,7 +67,7 @@ impl BlockchainScanner for TestBlockchainScanner {
         DefaultScanningLogic::scan_blocks_with_progress(self, config, None).await
     }
 
-    async fn get_tip_info(&mut self) -> LightweightWalletResult<TipInfo> {
+    async fn get_tip_info(&mut self) -> WalletResult<TipInfo> {
         Ok(TipInfo {
             best_block_height: self.tip_height,
             best_block_hash: vec![self.tip_height as u8; 32],
@@ -83,21 +80,18 @@ impl BlockchainScanner for TestBlockchainScanner {
     async fn search_utxos(
         &mut self,
         _commitments: Vec<Vec<u8>>,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    ) -> WalletResult<Vec<BlockScanResult>> {
         Ok(vec![])
     }
 
     async fn fetch_utxos(
         &mut self,
         _hashes: Vec<Vec<u8>>,
-    ) -> LightweightWalletResult<Vec<LightweightTransactionOutput>> {
+    ) -> WalletResult<Vec<LightweightTransactionOutput>> {
         Ok(vec![])
     }
 
-    async fn get_blocks_by_heights(
-        &mut self,
-        heights: Vec<u64>,
-    ) -> LightweightWalletResult<Vec<BlockInfo>> {
+    async fn get_blocks_by_heights(&mut self, heights: Vec<u64>) -> WalletResult<Vec<BlockInfo>> {
         // Simulate network latency
         if self.latency_ms > 0 {
             tokio::time::sleep(Duration::from_millis(self.latency_ms)).await;
@@ -112,10 +106,7 @@ impl BlockchainScanner for TestBlockchainScanner {
         Ok(result)
     }
 
-    async fn get_block_by_height(
-        &mut self,
-        height: u64,
-    ) -> LightweightWalletResult<Option<BlockInfo>> {
+    async fn get_block_by_height(&mut self, height: u64) -> WalletResult<Option<BlockInfo>> {
         // Simulate network latency
         if self.latency_ms > 0 {
             tokio::time::sleep(Duration::from_millis(self.latency_ms)).await;

@@ -108,7 +108,7 @@ use clap::Parser;
 use lightweight_wallet_libs::{
     // Core library utilities
     common::format_number,
-    errors::LightweightWalletResult,
+    errors::WalletResult,
     // Scanning library components (main business logic)
     scanning::{
         // Wallet creation functions
@@ -241,7 +241,7 @@ pub struct CliArgs {
 async fn display_storage_info(
     storage_backend: &ScannerStorage,
     config: &BinaryScanConfig,
-) -> LightweightWalletResult<()> {
+) -> WalletResult<()> {
     if config.quiet {
         return Ok(());
     }
@@ -278,7 +278,7 @@ async fn display_storage_info(
 async fn display_completion_info(
     storage_backend: &ScannerStorage,
     config: &BinaryScanConfig,
-) -> LightweightWalletResult<()> {
+) -> WalletResult<()> {
     if config.quiet {
         return Ok(());
     }
@@ -315,7 +315,7 @@ fn create_scan_config(
     args: &CliArgs,
     from_block: u64,
     to_block: u64,
-) -> LightweightWalletResult<BinaryScanConfig> {
+) -> WalletResult<BinaryScanConfig> {
     let output_format: OutputFormat = args
         .format
         .parse()
@@ -363,7 +363,7 @@ fn create_scanner_configs(
     args: &CliArgs,
     from_block: u64,
     to_block: u64,
-) -> LightweightWalletResult<(BinaryScanConfig, WalletScannerConfig)> {
+) -> WalletResult<(BinaryScanConfig, WalletScannerConfig)> {
     let scan_config = create_scan_config(args, from_block, to_block)?;
     let wallet_scanner_config = create_wallet_scanner_config(args);
     Ok((scan_config, wallet_scanner_config))
@@ -374,7 +374,7 @@ fn create_scanner_configs(
 async fn handle_interactive_wallet_selection(
     storage_backend: &ScannerStorage,
     args: &CliArgs,
-) -> LightweightWalletResult<u32> {
+) -> WalletResult<u32> {
     let wallets = storage_backend.get_wallet_selection_info().await?;
 
     if wallets.is_empty() {
@@ -454,13 +454,13 @@ async fn handle_interactive_wallet_selection(
 
 #[cfg(feature = "grpc")]
 #[tokio::main]
-async fn main() -> LightweightWalletResult<()> {
+async fn main() -> WalletResult<()> {
     main_unified().await
 }
 
 /// Unified main function that handles both storage and non-storage modes
 #[cfg(feature = "grpc")]
-async fn main_unified() -> LightweightWalletResult<()> {
+async fn main_unified() -> WalletResult<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 

@@ -17,7 +17,7 @@ use tokio::time::Instant;
 
 use crate::{
     data_structures::wallet_transaction::WalletState,
-    errors::{LightweightWalletError, LightweightWalletResult},
+    errors::{LightweightWalletError, WalletResult},
     wallet::Wallet,
 };
 
@@ -82,7 +82,7 @@ fn create_stored_output_from_blockchain_data(
     scan_context: &ScanContext,
     wallet_id: u32,
     output_index: usize,
-) -> LightweightWalletResult<StoredOutput> {
+) -> WalletResult<StoredOutput> {
     // Derive spending keys for this output
     let (spending_key, script_private_key) =
         derive_utxo_spending_keys(&scan_context.entropy, output_index as u64)?;
@@ -180,7 +180,7 @@ pub fn extract_utxo_outputs_from_wallet_state(
     wallet_id: u32,
     block_outputs: &[LightweightTransactionOutput],
     block_height: u64,
-) -> LightweightWalletResult<Vec<StoredOutput>> {
+) -> WalletResult<Vec<StoredOutput>> {
     let mut utxo_outputs = Vec::new();
 
     // Get inbound transactions from this specific block
@@ -208,7 +208,7 @@ pub fn extract_utxo_outputs_from_wallet_state(
 }
 
 /// Extract script input data and script lock height from script bytes
-fn extract_script_data(script_bytes: &[u8]) -> LightweightWalletResult<(Vec<u8>, u64)> {
+fn extract_script_data(script_bytes: &[u8]) -> WalletResult<(Vec<u8>, u64)> {
     // If script is empty, return empty data
     if script_bytes.is_empty() {
         return Ok((Vec::new(), 0));
@@ -295,7 +295,7 @@ fn generate_transaction_id(block_height: u64, input_index: usize) -> u64 {
 fn derive_utxo_spending_keys(
     entropy: &[u8; 16],
     output_index: u64,
-) -> LightweightWalletResult<(PrivateKey, PrivateKey)> {
+) -> WalletResult<(PrivateKey, PrivateKey)> {
     // Check if we have real entropy or if this is view-key mode
     let has_real_entropy = entropy != &[0u8; 16];
 
@@ -341,7 +341,7 @@ fn derive_utxo_spending_keys(
 }
 
 /// Compute output hash for UTXO identification
-fn compute_output_hash(output: &LightweightTransactionOutput) -> LightweightWalletResult<Vec<u8>> {
+fn compute_output_hash(output: &LightweightTransactionOutput) -> WalletResult<Vec<u8>> {
     // Compute hash of output fields for identification
     let mut hasher = Blake2b::<U32>::new();
     hasher.update(output.commitment.as_bytes());
@@ -371,9 +371,7 @@ fn compute_output_hash(output: &LightweightTransactionOutput) -> LightweightWall
 ///
 /// # Errors
 /// Returns an error if the wallet creation or scan context creation fails
-pub fn create_wallet_from_seed_phrase(
-    seed_phrase: &str,
-) -> LightweightWalletResult<(ScanContext, u64)> {
+pub fn create_wallet_from_seed_phrase(seed_phrase: &str) -> WalletResult<(ScanContext, u64)> {
     let wallet = Wallet::new_from_seed_phrase(seed_phrase, None)?;
     let scan_context = ScanContext::from_wallet(&wallet)?;
     let default_from_block = wallet.birthday();
@@ -395,9 +393,7 @@ pub fn create_wallet_from_seed_phrase(
 ///
 /// # Errors
 /// Returns an error if the view key is invalid or cannot be parsed
-pub fn create_wallet_from_view_key(
-    view_key_hex: &str,
-) -> LightweightWalletResult<(ScanContext, u64)> {
+pub fn create_wallet_from_view_key(view_key_hex: &str) -> WalletResult<(ScanContext, u64)> {
     let scan_context = ScanContext::from_view_key(view_key_hex)?;
     let default_from_block = 0; // Start from genesis when using view key only
     Ok((scan_context, default_from_block))
@@ -1207,7 +1203,7 @@ impl WalletScanner {
         to_block: u64,
         data_processor: &mut T,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-    ) -> LightweightWalletResult<ScanResult> {
+    ) -> WalletResult<ScanResult> {
         let start_time = Instant::now();
 
         // Emit scan started event if event emitter is available
@@ -1359,7 +1355,7 @@ impl WalletScanner {
         scan_context: &ScanContext,
         config: &BinaryScanConfig,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-    ) -> LightweightWalletResult<ScanResult> {
+    ) -> WalletResult<ScanResult> {
         // Check that event emitter is configured
         if self.config.event_emitter.is_none() {
             return Err(LightweightWalletError::InvalidArgument {
@@ -1419,7 +1415,7 @@ impl WalletScanner {
         to_block: u64,
         data_processor: &mut T,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-    ) -> LightweightWalletResult<ScanResult> {
+    ) -> WalletResult<ScanResult> {
         let mut attempts = 0;
         let max_retries = self.config.retry_config.max_retries;
 
@@ -1475,7 +1471,7 @@ impl WalletScanner {
         config: &BinaryScanConfig,
         event_emitter: &mut super::event_emitter::ScanEventEmitter,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-    ) -> LightweightWalletResult<ScanResult> {
+    ) -> WalletResult<ScanResult> {
         let mut attempts = 0;
         let max_retries = self.config.retry_config.max_retries;
 
@@ -1557,7 +1553,7 @@ impl Default for WalletScanner {
 async fn determine_scan_range(
     config: &BinaryScanConfig,
     storage_backend: &mut ScannerStorage,
-) -> LightweightWalletResult<(u64, u64)> {
+) -> WalletResult<(u64, u64)> {
     // Handle automatic resume functionality for database storage
     if config.use_database && config.explicit_from_block.is_none() && config.block_heights.is_none()
     {
@@ -1599,7 +1595,7 @@ async fn determine_scan_range(
 async fn determine_scan_range_with_events(
     config: &BinaryScanConfig,
     _event_emitter: &mut super::event_emitter::ScanEventEmitter,
-) -> LightweightWalletResult<(u64, u64)> {
+) -> WalletResult<(u64, u64)> {
     // For now, use the configuration directly since resume functionality
     // will be handled by the DatabaseStorageListener through events
     // The event system will track the last scanned block via events
@@ -1646,7 +1642,7 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
     batch_size: usize,
     _verbose_logging: bool,
     mut event_emitter: Option<&mut crate::scanning::event_emitter::ScanEventEmitter>,
-) -> LightweightWalletResult<ScanResult> {
+) -> WalletResult<ScanResult> {
     // Initialize scanning state
     let (mut wallet_state, _start_time) = initialize_scan_state();
 
@@ -1884,7 +1880,7 @@ async fn scan_wallet_across_blocks_with_cancellation(
     config: &BinaryScanConfig,
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
     event_emitter: &mut super::event_emitter::ScanEventEmitter,
-) -> LightweightWalletResult<ScanResult> {
+) -> WalletResult<ScanResult> {
     // Determine scanning block range (now simplified without storage backend)
     let (from_block, to_block) = determine_scan_range_with_events(config, event_emitter).await?;
 

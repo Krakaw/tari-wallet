@@ -18,7 +18,7 @@ use crate::{
         wallet_output::LightweightOutputType,
         wallet_transaction::WalletState,
     },
-    errors::LightweightWalletResult,
+    errors::WalletResult,
 };
 
 #[cfg(feature = "grpc")]
@@ -102,7 +102,7 @@ impl Block {
         view_key: &PrivateKey,
         _entropy: &[u8; 16],
         wallet_state: &mut WalletState,
-    ) -> LightweightWalletResult<usize> {
+    ) -> WalletResult<usize> {
         if self.outputs.is_empty() {
             return Ok(0);
         }
@@ -289,7 +289,7 @@ impl Block {
     }
 
     /// Process all inputs in this block to detect spending of wallet outputs
-    pub fn process_inputs(&self, wallet_state: &mut WalletState) -> LightweightWalletResult<usize> {
+    pub fn process_inputs(&self, wallet_state: &mut WalletState) -> WalletResult<usize> {
         let mut spent_outputs = 0;
 
         for (input_index, input) in self.inputs.iter().enumerate() {
@@ -328,7 +328,7 @@ impl Block {
     pub fn process_inputs_with_details(
         &self,
         wallet_state: &WalletState,
-    ) -> LightweightWalletResult<Vec<SpentOutputInfo>> {
+    ) -> WalletResult<Vec<SpentOutputInfo>> {
         let mut spent_outputs = Vec::new();
 
         for (input_index, input) in self.inputs.iter().enumerate() {
@@ -393,7 +393,7 @@ impl Block {
         view_key: &PrivateKey,
         entropy: &[u8; 16],
         wallet_state: &mut WalletState,
-    ) -> LightweightWalletResult<(usize, usize)> {
+    ) -> WalletResult<(usize, usize)> {
         let found_outputs = self.process_outputs(view_key, entropy, wallet_state)?;
         let spent_outputs = self.process_inputs(wallet_state)?;
         Ok((found_outputs, spent_outputs))
@@ -408,7 +408,7 @@ impl Block {
         view_key: &PrivateKey,
         entropy: &[u8; 16],
         wallet_state: &mut WalletState,
-    ) -> LightweightWalletResult<(usize, Vec<SpentOutputInfo>)> {
+    ) -> WalletResult<(usize, Vec<SpentOutputInfo>)> {
         // First process outputs to find new wallet outputs
         let found_outputs = self.process_outputs(view_key, entropy, wallet_state)?;
 

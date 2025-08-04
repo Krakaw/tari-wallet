@@ -12,7 +12,7 @@ use crate::{
         types::{CompressedCommitment, PrivateKey},
         wallet_transaction::{WalletState, WalletTransaction},
     },
-    errors::LightweightWalletResult,
+    errors::WalletResult,
 };
 
 use super::output_status::OutputStatus;
@@ -310,38 +310,34 @@ pub struct StorageStats {
 #[async_trait]
 pub trait WalletStorage: Send + Sync {
     /// Initialize the storage backend (create tables, indexes, etc.)
-    async fn initialize(&self) -> LightweightWalletResult<()>;
+    async fn initialize(&self) -> WalletResult<()>;
 
     // === Wallet Management Methods ===
 
     /// Save a wallet to storage (create or update)
-    async fn save_wallet(&self, wallet: &StoredWallet) -> LightweightWalletResult<u32>;
+    async fn save_wallet(&self, wallet: &StoredWallet) -> WalletResult<u32>;
 
     /// Get a wallet by ID
-    async fn get_wallet_by_id(
-        &self,
-        wallet_id: u32,
-    ) -> LightweightWalletResult<Option<StoredWallet>>;
+    async fn get_wallet_by_id(&self, wallet_id: u32) -> WalletResult<Option<StoredWallet>>;
 
     /// Get a wallet by name
-    async fn get_wallet_by_name(&self, name: &str)
-        -> LightweightWalletResult<Option<StoredWallet>>;
+    async fn get_wallet_by_name(&self, name: &str) -> WalletResult<Option<StoredWallet>>;
 
     /// List all wallets
-    async fn list_wallets(&self) -> LightweightWalletResult<Vec<StoredWallet>>;
+    async fn list_wallets(&self) -> WalletResult<Vec<StoredWallet>>;
 
     /// Delete a wallet and all its transactions
-    async fn delete_wallet(&self, wallet_id: u32) -> LightweightWalletResult<bool>;
+    async fn delete_wallet(&self, wallet_id: u32) -> WalletResult<bool>;
 
     /// Check if a wallet name exists
-    async fn wallet_name_exists(&self, name: &str) -> LightweightWalletResult<bool>;
+    async fn wallet_name_exists(&self, name: &str) -> WalletResult<bool>;
 
     /// Update the latest scanned block for a wallet
     async fn update_wallet_scanned_block(
         &self,
         wallet_id: u32,
         block_height: u64,
-    ) -> LightweightWalletResult<()>;
+    ) -> WalletResult<()>;
 
     // === Transaction Management Methods (updated with wallet support) ===
 
@@ -350,20 +346,17 @@ pub trait WalletStorage: Send + Sync {
         &self,
         wallet_id: u32,
         transaction: &WalletTransaction,
-    ) -> LightweightWalletResult<()>;
+    ) -> WalletResult<()>;
 
     /// Save multiple transactions in a batch for efficiency
     async fn save_transactions(
         &self,
         wallet_id: u32,
         transactions: &[WalletTransaction],
-    ) -> LightweightWalletResult<()>;
+    ) -> WalletResult<()>;
 
     /// Update an existing transaction (e.g., mark as spent)
-    async fn update_transaction(
-        &self,
-        transaction: &WalletTransaction,
-    ) -> LightweightWalletResult<()>;
+    async fn update_transaction(&self, transaction: &WalletTransaction) -> WalletResult<()>;
 
     /// Mark a transaction as spent by commitment
     async fn mark_transaction_spent(
@@ -371,44 +364,41 @@ pub trait WalletStorage: Send + Sync {
         commitment: &CompressedCommitment,
         spent_in_block: u64,
         spent_in_input: usize,
-    ) -> LightweightWalletResult<bool>;
+    ) -> WalletResult<bool>;
 
     /// Mark multiple transactions as spent in a batch for efficiency
     async fn mark_transactions_spent_batch(
         &self,
         spent_commitments: &[(CompressedCommitment, u64, usize)], // (commitment, block_height, input_index)
-    ) -> LightweightWalletResult<usize>; // Returns number of transactions marked as spent
+    ) -> WalletResult<usize>; // Returns number of transactions marked as spent
 
     /// Get a transaction by commitment
     async fn get_transaction_by_commitment(
         &self,
         commitment: &CompressedCommitment,
-    ) -> LightweightWalletResult<Option<WalletTransaction>>;
+    ) -> WalletResult<Option<WalletTransaction>>;
 
     /// Get transactions with optional filtering
     async fn get_transactions(
         &self,
         filter: Option<TransactionFilter>,
-    ) -> LightweightWalletResult<Vec<WalletTransaction>>;
+    ) -> WalletResult<Vec<WalletTransaction>>;
 
     /// Get all transactions for a wallet and build a WalletState
-    async fn load_wallet_state(&self, wallet_id: u32) -> LightweightWalletResult<WalletState>;
+    async fn load_wallet_state(&self, wallet_id: u32) -> WalletResult<WalletState>;
 
     /// Get storage statistics
-    async fn get_statistics(&self) -> LightweightWalletResult<StorageStats>;
+    async fn get_statistics(&self) -> WalletResult<StorageStats>;
 
     /// Get storage statistics for a specific wallet
-    async fn get_wallet_statistics(
-        &self,
-        wallet_id: Option<u32>,
-    ) -> LightweightWalletResult<StorageStats>;
+    async fn get_wallet_statistics(&self, wallet_id: Option<u32>) -> WalletResult<StorageStats>;
 
     /// Get transactions by block height range
     async fn get_transactions_by_block_range(
         &self,
         from_block: u64,
         to_block: u64,
-    ) -> LightweightWalletResult<Vec<WalletTransaction>>;
+    ) -> WalletResult<Vec<WalletTransaction>>;
 
     /// Process all inputs in the specified block range and mark corresponding outputs as spent
     ///
@@ -419,99 +409,79 @@ pub trait WalletStorage: Send + Sync {
         wallet_id: u32,
         from_block: u64,
         to_block: u64,
-    ) -> LightweightWalletResult<usize>;
+    ) -> WalletResult<usize>;
 
     /// Get unspent transactions only
-    async fn get_unspent_transactions(&self) -> LightweightWalletResult<Vec<WalletTransaction>>;
+    async fn get_unspent_transactions(&self) -> WalletResult<Vec<WalletTransaction>>;
 
     /// Get spent transactions only
-    async fn get_spent_transactions(&self) -> LightweightWalletResult<Vec<WalletTransaction>>;
+    async fn get_spent_transactions(&self) -> WalletResult<Vec<WalletTransaction>>;
 
     /// Check if a commitment exists in storage
-    async fn has_commitment(
-        &self,
-        commitment: &CompressedCommitment,
-    ) -> LightweightWalletResult<bool>;
+    async fn has_commitment(&self, commitment: &CompressedCommitment) -> WalletResult<bool>;
 
     /// Get the highest block height processed
-    async fn get_highest_block(&self) -> LightweightWalletResult<Option<u64>>;
+    async fn get_highest_block(&self) -> WalletResult<Option<u64>>;
 
     /// Get the lowest block height processed
-    async fn get_lowest_block(&self) -> LightweightWalletResult<Option<u64>>;
+    async fn get_lowest_block(&self) -> WalletResult<Option<u64>>;
 
     /// Clear all transactions (useful for re-scanning)
-    async fn clear_all_transactions(&self) -> LightweightWalletResult<()>;
+    async fn clear_all_transactions(&self) -> WalletResult<()>;
 
     /// Get transaction count
-    async fn get_transaction_count(&self) -> LightweightWalletResult<usize>;
+    async fn get_transaction_count(&self) -> WalletResult<usize>;
 
     /// Close the storage connection gracefully
-    async fn close(&self) -> LightweightWalletResult<()>;
+    async fn close(&self) -> WalletResult<()>;
 
     // === UTXO Output Management Methods (NEW) ===
 
     /// Save a UTXO output to storage
-    async fn save_output(&self, output: &StoredOutput) -> LightweightWalletResult<u32>;
+    async fn save_output(&self, output: &StoredOutput) -> WalletResult<u32>;
 
     /// Save multiple UTXO outputs in a batch
-    async fn save_outputs(&self, outputs: &[StoredOutput]) -> LightweightWalletResult<Vec<u32>>;
+    async fn save_outputs(&self, outputs: &[StoredOutput]) -> WalletResult<Vec<u32>>;
 
     /// Update an existing output (e.g., mark as spent)
-    async fn update_output(&self, output: &StoredOutput) -> LightweightWalletResult<()>;
+    async fn update_output(&self, output: &StoredOutput) -> WalletResult<()>;
 
     /// Mark an output as spent
-    async fn mark_output_spent(
-        &self,
-        output_id: u32,
-        spent_in_tx_id: u64,
-    ) -> LightweightWalletResult<()>;
+    async fn mark_output_spent(&self, output_id: u32, spent_in_tx_id: u64) -> WalletResult<()>;
 
     /// Get an output by ID
-    async fn get_output_by_id(
-        &self,
-        output_id: u32,
-    ) -> LightweightWalletResult<Option<StoredOutput>>;
+    async fn get_output_by_id(&self, output_id: u32) -> WalletResult<Option<StoredOutput>>;
 
     /// Get an output by commitment
     async fn get_output_by_commitment(
         &self,
         commitment: &[u8],
-    ) -> LightweightWalletResult<Option<StoredOutput>>;
+    ) -> WalletResult<Option<StoredOutput>>;
 
     /// Get outputs with optional filtering
-    async fn get_outputs(
-        &self,
-        filter: Option<OutputFilter>,
-    ) -> LightweightWalletResult<Vec<StoredOutput>>;
+    async fn get_outputs(&self, filter: Option<OutputFilter>) -> WalletResult<Vec<StoredOutput>>;
 
     /// Get all unspent outputs for a wallet
-    async fn get_unspent_outputs(
-        &self,
-        wallet_id: u32,
-    ) -> LightweightWalletResult<Vec<StoredOutput>>;
+    async fn get_unspent_outputs(&self, wallet_id: u32) -> WalletResult<Vec<StoredOutput>>;
 
     /// Get outputs spendable at a specific block height
     async fn get_spendable_outputs(
         &self,
         wallet_id: u32,
         block_height: u64,
-    ) -> LightweightWalletResult<Vec<StoredOutput>>;
+    ) -> WalletResult<Vec<StoredOutput>>;
 
     /// Get total value of unspent outputs for a wallet
-    async fn get_spendable_balance(
-        &self,
-        wallet_id: u32,
-        block_height: u64,
-    ) -> LightweightWalletResult<u64>;
+    async fn get_spendable_balance(&self, wallet_id: u32, block_height: u64) -> WalletResult<u64>;
 
     /// Delete an output
-    async fn delete_output(&self, output_id: u32) -> LightweightWalletResult<bool>;
+    async fn delete_output(&self, output_id: u32) -> WalletResult<bool>;
 
     /// Clear all outputs for a wallet
-    async fn clear_outputs(&self, wallet_id: u32) -> LightweightWalletResult<()>;
+    async fn clear_outputs(&self, wallet_id: u32) -> WalletResult<()>;
 
     /// Get output count for a wallet
-    async fn get_output_count(&self, wallet_id: u32) -> LightweightWalletResult<usize>;
+    async fn get_output_count(&self, wallet_id: u32) -> WalletResult<usize>;
 }
 
 impl TransactionFilter {

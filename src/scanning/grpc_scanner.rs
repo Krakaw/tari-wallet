@@ -31,7 +31,7 @@ use crate::{
         },
         LightweightOutputType, LightweightRangeProofType,
     },
-    errors::{DataStructureError, LightweightWalletError, LightweightWalletResult},
+    errors::{DataStructureError, LightweightWalletError, WalletResult},
     extraction::{extract_wallet_output, ExtractionConfig},
     scanning::{
         BlockInfo, BlockScanResult, BlockchainScanner, DefaultScanningLogic,
@@ -58,7 +58,7 @@ pub struct GrpcBlockchainScanner {
 #[cfg(feature = "grpc")]
 impl GrpcBlockchainScanner {
     /// Create a new GRPC scanner with the given base URL
-    pub async fn new(base_url: String) -> LightweightWalletResult<Self> {
+    pub async fn new(base_url: String) -> WalletResult<Self> {
         let timeout = Duration::from_secs(30);
         let channel = Channel::from_shared(base_url.clone())
             .map_err(|e| {
@@ -92,10 +92,7 @@ impl GrpcBlockchainScanner {
     }
 
     /// Create a new GRPC scanner with custom timeout
-    pub async fn with_timeout(
-        base_url: String,
-        timeout: Duration,
-    ) -> LightweightWalletResult<Self> {
+    pub async fn with_timeout(base_url: String, timeout: Duration) -> WalletResult<Self> {
         let channel = Channel::from_shared(base_url.clone())
             .map_err(|e| {
                 LightweightWalletError::ScanningError(
@@ -130,7 +127,7 @@ impl GrpcBlockchainScanner {
     /// Convert GRPC transaction output to lightweight transaction output
     fn convert_transaction_output(
         grpc_output: &tari_rpc::TransactionOutput,
-    ) -> LightweightWalletResult<LightweightTransactionOutput> {
+    ) -> WalletResult<LightweightTransactionOutput> {
         // Convert OutputFeatures
         let features = grpc_output
             .features
@@ -240,9 +237,7 @@ impl GrpcBlockchainScanner {
     }
 
     /// Convert GRPC block to lightweight block info
-    fn convert_block(
-        grpc_block: &tari_rpc::HistoricalBlock,
-    ) -> LightweightWalletResult<Option<BlockInfo>> {
+    fn convert_block(grpc_block: &tari_rpc::HistoricalBlock) -> WalletResult<Option<BlockInfo>> {
         let block = match grpc_block.block.as_ref() {
             Some(block) => block,
             None => return Ok(None),
@@ -255,7 +250,7 @@ impl GrpcBlockchainScanner {
             Some(body) => body,
             None => return Ok(None),
         };
-        let outputs: LightweightWalletResult<Vec<_>> = body
+        let outputs: WalletResult<Vec<_>> = body
             .outputs
             .iter()
             .map(Self::convert_transaction_output)
@@ -401,7 +396,7 @@ impl GrpcBlockchainScanner {
         wallet: &Wallet,
         start_height: u64,
         end_height: Option<u64>,
-    ) -> LightweightWalletResult<ScanConfig> {
+    ) -> WalletResult<ScanConfig> {
         // Get the master key from the wallet for scanning
         let master_key_bytes = wallet.master_key_bytes();
 
@@ -456,7 +451,7 @@ impl GrpcBlockchainScanner {
     fn scan_for_recoverable_output_grpc(
         output: &LightweightTransactionOutput,
         extraction_config: &ExtractionConfig,
-    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+    ) -> WalletResult<Option<LightweightWalletOutput>> {
         // Skip non-payment outputs for this scan type
         if !matches!(
             output.features().output_type,
@@ -476,7 +471,7 @@ impl GrpcBlockchainScanner {
     fn scan_for_one_sided_payment_grpc(
         output: &LightweightTransactionOutput,
         extraction_config: &ExtractionConfig,
-    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+    ) -> WalletResult<Option<LightweightWalletOutput>> {
         // Skip non-payment outputs for this scan type
         if !matches!(
             output.features().output_type,
@@ -496,7 +491,7 @@ impl GrpcBlockchainScanner {
     /// Scan for coinbase outputs (GRPC version)
     fn scan_for_coinbase_output_grpc(
         output: &LightweightTransactionOutput,
-    ) -> LightweightWalletResult<Option<LightweightWalletOutput>> {
+    ) -> WalletResult<Option<LightweightWalletOutput>> {
         // Only handle coinbase outputs
         if !matches!(
             output.features().output_type,
@@ -535,7 +530,7 @@ impl GrpcBlockchainScanner {
     pub async fn get_outputs_from_block(
         &mut self,
         block_height: u64,
-    ) -> LightweightWalletResult<Vec<LightweightTransactionOutput>> {
+    ) -> WalletResult<Vec<LightweightTransactionOutput>> {
         // Get the block at the specified height
         let request = tari_rpc::GetBlocksRequest {
             heights: vec![block_height],
@@ -574,8 +569,7 @@ impl GrpcBlockchainScanner {
     pub async fn get_inputs_from_block(
         &mut self,
         block_height: u64,
-    ) -> LightweightWalletResult<Vec<crate::data_structures::transaction_input::TransactionInput>>
-    {
+    ) -> WalletResult<Vec<crate::data_structures::transaction_input::TransactionInput>> {
         // Get the block at the specified height
         let request = tari_rpc::GetBlocksRequest {
             heights: vec![block_height],
@@ -614,7 +608,7 @@ impl GrpcBlockchainScanner {
     pub async fn get_kernels_from_block(
         &mut self,
         block_height: u64,
-    ) -> LightweightWalletResult<Vec<crate::data_structures::TransactionKernel>> {
+    ) -> WalletResult<Vec<crate::data_structures::TransactionKernel>> {
         // Get the block at the specified height
         let request = tari_rpc::GetBlocksRequest {
             heights: vec![block_height],
@@ -653,7 +647,7 @@ impl GrpcBlockchainScanner {
     pub async fn get_complete_block_data(
         &mut self,
         block_height: u64,
-    ) -> LightweightWalletResult<Option<crate::scanning::BlockInfo>> {
+    ) -> WalletResult<Option<crate::scanning::BlockInfo>> {
         // Get the block at the specified height
         let request = tari_rpc::GetBlocksRequest {
             heights: vec![block_height],
@@ -691,7 +685,7 @@ impl GrpcBlockchainScanner {
         &mut self,
         block_height: u64,
         entropy: &[u8; 16],
-    ) -> LightweightWalletResult<Vec<LightweightWalletOutput>> {
+    ) -> WalletResult<Vec<LightweightWalletOutput>> {
         let mut wallet_outputs = Vec::new();
 
         // Get all outputs from the block
@@ -731,7 +725,7 @@ impl GrpcBlockchainScanner {
     pub async fn get_blocks_by_heights(
         &mut self,
         heights: Vec<u64>,
-    ) -> LightweightWalletResult<Vec<BlockInfo>> {
+    ) -> WalletResult<Vec<BlockInfo>> {
         if heights.is_empty() {
             return Ok(Vec::new());
         }
@@ -772,10 +766,7 @@ impl GrpcBlockchainScanner {
 #[cfg(feature = "grpc")]
 #[async_trait(?Send)]
 impl BlockchainScanner for GrpcBlockchainScanner {
-    async fn scan_blocks(
-        &mut self,
-        config: ScanConfig,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    async fn scan_blocks(&mut self, config: ScanConfig) -> WalletResult<Vec<BlockScanResult>> {
         debug!(
             "Starting GRPC block scan from height {} to {:?}",
             config.start_height, config.end_height
@@ -882,7 +873,7 @@ impl BlockchainScanner for GrpcBlockchainScanner {
         Ok(results)
     }
 
-    async fn get_tip_info(&mut self) -> LightweightWalletResult<TipInfo> {
+    async fn get_tip_info(&mut self) -> WalletResult<TipInfo> {
         let request = Request::new(tari_rpc::Empty {});
 
         let response = self
@@ -905,7 +896,7 @@ impl BlockchainScanner for GrpcBlockchainScanner {
     async fn search_utxos(
         &mut self,
         commitments: Vec<Vec<u8>>,
-    ) -> LightweightWalletResult<Vec<BlockScanResult>> {
+    ) -> WalletResult<Vec<BlockScanResult>> {
         let request = tari_rpc::SearchUtxosRequest { commitments };
 
         let mut stream = self
@@ -962,7 +953,7 @@ impl BlockchainScanner for GrpcBlockchainScanner {
     async fn fetch_utxos(
         &mut self,
         hashes: Vec<Vec<u8>>,
-    ) -> LightweightWalletResult<Vec<LightweightTransactionOutput>> {
+    ) -> WalletResult<Vec<LightweightTransactionOutput>> {
         let request = tari_rpc::FetchMatchingUtxosRequest { hashes };
 
         let mut stream = self
@@ -995,10 +986,7 @@ impl BlockchainScanner for GrpcBlockchainScanner {
         Ok(results)
     }
 
-    async fn get_blocks_by_heights(
-        &mut self,
-        heights: Vec<u64>,
-    ) -> LightweightWalletResult<Vec<BlockInfo>> {
+    async fn get_blocks_by_heights(&mut self, heights: Vec<u64>) -> WalletResult<Vec<BlockInfo>> {
         if heights.is_empty() {
             return Ok(Vec::new());
         }
@@ -1035,10 +1023,7 @@ impl BlockchainScanner for GrpcBlockchainScanner {
         Ok(blocks)
     }
 
-    async fn get_block_by_height(
-        &mut self,
-        height: u64,
-    ) -> LightweightWalletResult<Option<BlockInfo>> {
+    async fn get_block_by_height(&mut self, height: u64) -> WalletResult<Option<BlockInfo>> {
         let blocks = self.get_blocks_by_heights(vec![height]).await?;
         Ok(blocks.into_iter().next())
     }
@@ -1093,7 +1078,7 @@ impl GrpcScannerBuilder {
     }
 
     /// Build the GRPC scanner
-    pub async fn build(self) -> LightweightWalletResult<GrpcBlockchainScanner> {
+    pub async fn build(self) -> WalletResult<GrpcBlockchainScanner> {
         let base_url = self.base_url.ok_or_else(|| {
             LightweightWalletError::ConfigurationError("Base URL not specified".to_string())
         })?;
@@ -1118,7 +1103,7 @@ pub struct GrpcBlockchainScanner;
 
 #[cfg(not(feature = "grpc"))]
 impl GrpcBlockchainScanner {
-    pub async fn new(_base_url: String) -> crate::errors::LightweightWalletResult<Self> {
+    pub async fn new(_base_url: String) -> crate::errors::WalletResult<Self> {
         Err(
             crate::errors::LightweightWalletError::OperationNotSupported(
                 "GRPC feature not enabled".to_string(),
@@ -1136,7 +1121,7 @@ impl GrpcScannerBuilder {
         Self
     }
 
-    pub async fn build(self) -> crate::errors::LightweightWalletResult<GrpcBlockchainScanner> {
+    pub async fn build(self) -> crate::errors::WalletResult<GrpcBlockchainScanner> {
         Err(
             crate::errors::LightweightWalletError::OperationNotSupported(
                 "GRPC feature not enabled".to_string(),
@@ -1148,10 +1133,7 @@ impl GrpcScannerBuilder {
 #[cfg(feature = "grpc")]
 #[async_trait(?Send)]
 impl WalletScanner for GrpcBlockchainScanner {
-    async fn scan_wallet(
-        &mut self,
-        config: WalletScanConfig,
-    ) -> LightweightWalletResult<WalletScanResult> {
+    async fn scan_wallet(&mut self, config: WalletScanConfig) -> WalletResult<WalletScanResult> {
         self.scan_wallet_with_progress(config, None).await
     }
 
@@ -1159,7 +1141,7 @@ impl WalletScanner for GrpcBlockchainScanner {
         &mut self,
         config: WalletScanConfig,
         progress_callback: Option<&LegacyProgressCallback>,
-    ) -> LightweightWalletResult<WalletScanResult> {
+    ) -> WalletResult<WalletScanResult> {
         // Validate that we have key management set up
         if config.key_manager.is_none() && config.key_store.is_none() {
             return Err(LightweightWalletError::ConfigurationError(

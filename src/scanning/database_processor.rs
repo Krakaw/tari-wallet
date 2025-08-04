@@ -6,7 +6,7 @@
 
 #[cfg(feature = "storage")]
 use crate::{
-    errors::LightweightWalletResult,
+    errors::WalletResult,
     scanning::{
         data_processor::{BlockData, CompletionData, DataProcessor, ProgressData},
         ScannerStorage,
@@ -42,7 +42,7 @@ impl DatabaseDataProcessor {
     }
 
     /// Create a new database data processor with SQLite database
-    pub async fn new_with_database(database_path: &str) -> LightweightWalletResult<Self> {
+    pub async fn new_with_database(database_path: &str) -> WalletResult<Self> {
         let storage = ScannerStorage::new_with_database(database_path).await?;
         Ok(Self { storage })
     }
@@ -70,21 +70,18 @@ impl DatabaseDataProcessor {
     /// Get storage statistics
     pub async fn get_statistics(
         &self,
-    ) -> LightweightWalletResult<crate::storage::storage_trait::StorageStats> {
+    ) -> WalletResult<crate::storage::storage_trait::StorageStats> {
         self.storage.get_statistics().await
     }
 
     /// Get unspent outputs count
-    pub async fn get_unspent_outputs_count(&self) -> LightweightWalletResult<usize> {
+    pub async fn get_unspent_outputs_count(&self) -> WalletResult<usize> {
         self.storage.get_unspent_outputs_count().await
     }
 
     /// Start background writer (for non-memory storage)
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn start_background_writer(
-        &mut self,
-        database_path: &str,
-    ) -> LightweightWalletResult<()> {
+    pub async fn start_background_writer(&mut self, database_path: &str) -> WalletResult<()> {
         if !self.storage.is_memory_only {
             self.storage.start_background_writer(database_path).await
         } else {
@@ -94,7 +91,7 @@ impl DatabaseDataProcessor {
 
     /// Stop background writer (for non-memory storage)
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn stop_background_writer(&mut self) -> LightweightWalletResult<()> {
+    pub async fn stop_background_writer(&mut self) -> WalletResult<()> {
         if !self.storage.is_memory_only {
             self.storage.stop_background_writer().await
         } else {
@@ -107,7 +104,7 @@ impl DatabaseDataProcessor {
         &mut self,
         config: &crate::scanning::BinaryScanConfig,
         scan_context: Option<&crate::scanning::ScanContext>,
-    ) -> LightweightWalletResult<Option<crate::scanning::ScanContext>> {
+    ) -> WalletResult<Option<crate::scanning::ScanContext>> {
         self.storage
             .handle_wallet_operations(config, scan_context)
             .await
@@ -117,17 +114,17 @@ impl DatabaseDataProcessor {
     pub async fn load_scan_context_from_wallet(
         &mut self,
         quiet: bool,
-    ) -> LightweightWalletResult<Option<crate::scanning::ScanContext>> {
+    ) -> WalletResult<Option<crate::scanning::ScanContext>> {
         self.storage.load_scan_context_from_wallet(quiet).await
     }
 
     /// Get wallet birthday
-    pub async fn get_wallet_birthday(&self) -> LightweightWalletResult<Option<u64>> {
+    pub async fn get_wallet_birthday(&self) -> WalletResult<Option<u64>> {
         self.storage.get_wallet_birthday().await
     }
 
     /// Get wallet selection info (placeholder - actual implementation depends on storage interface)
-    pub async fn get_wallet_selection_info(&self) -> LightweightWalletResult<Vec<String>> {
+    pub async fn get_wallet_selection_info(&self) -> WalletResult<Vec<String>> {
         // This is a placeholder - the actual storage interface may differ
         // For now, return empty vector
         Ok(Vec::new())
@@ -137,7 +134,7 @@ impl DatabaseDataProcessor {
 #[cfg(feature = "storage")]
 #[async_trait]
 impl DataProcessor for DatabaseDataProcessor {
-    async fn process_block(&mut self, block_data: BlockData) -> LightweightWalletResult<()> {
+    async fn process_block(&mut self, block_data: BlockData) -> WalletResult<()> {
         // Only save transactions if we found any wallet activity
         if block_data.has_activity() {
             // Save transactions incrementally
@@ -149,18 +146,12 @@ impl DataProcessor for DatabaseDataProcessor {
         Ok(())
     }
 
-    async fn process_progress(
-        &mut self,
-        _progress_data: ProgressData,
-    ) -> LightweightWalletResult<()> {
+    async fn process_progress(&mut self, _progress_data: ProgressData) -> WalletResult<()> {
         // Progress updates don't need to be stored to database
         Ok(())
     }
 
-    async fn process_completion(
-        &mut self,
-        completion_data: CompletionData,
-    ) -> LightweightWalletResult<()> {
+    async fn process_completion(&mut self, completion_data: CompletionData) -> WalletResult<()> {
         // Update the wallet's latest scanned block if scan completed successfully
         if completion_data.is_completed() && !self.storage.is_memory_only {
             self.storage
@@ -171,13 +162,13 @@ impl DataProcessor for DatabaseDataProcessor {
         Ok(())
     }
 
-    async fn initialize(&mut self) -> LightweightWalletResult<()> {
+    async fn initialize(&mut self) -> WalletResult<()> {
         // Initialize storage if needed
         // The storage should already be initialized by this point
         Ok(())
     }
 
-    async fn finalize(&mut self) -> LightweightWalletResult<()> {
+    async fn finalize(&mut self) -> WalletResult<()> {
         // Finalize storage operations
         // Any cleanup needed can be done here
         Ok(())
@@ -235,7 +226,7 @@ impl MemoryStorageProcessor {
 
 #[async_trait]
 impl DataProcessor for MemoryStorageProcessor {
-    async fn process_block(&mut self, block_data: BlockData) -> LightweightWalletResult<()> {
+    async fn process_block(&mut self, block_data: BlockData) -> WalletResult<()> {
         // Store all transactions from this block
         if block_data.has_activity() {
             self.transactions.extend(block_data.transactions);
@@ -252,10 +243,7 @@ impl DataProcessor for MemoryStorageProcessor {
         Ok(())
     }
 
-    async fn process_completion(
-        &mut self,
-        _completion_data: CompletionData,
-    ) -> LightweightWalletResult<()> {
+    async fn process_completion(&mut self, _completion_data: CompletionData) -> WalletResult<()> {
         Ok(())
     }
 

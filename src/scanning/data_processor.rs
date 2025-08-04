@@ -4,9 +4,7 @@
 //! scanning operations. Instead of coupling the scanner to a specific storage backend,
 //! the scanner accepts callback functions that can handle different types of data.
 
-use crate::{
-    data_structures::wallet_transaction::WalletTransaction, errors::LightweightWalletResult,
-};
+use crate::{data_structures::wallet_transaction::WalletTransaction, errors::WalletResult};
 use async_trait::async_trait;
 
 /// Block data that can be processed during scanning
@@ -186,16 +184,13 @@ pub trait DataProcessor: Send + Sync {
     ///
     /// This method is called for each block processed during scanning,
     /// regardless of whether wallet activity was found.
-    async fn process_block(&mut self, block_data: BlockData) -> LightweightWalletResult<()>;
+    async fn process_block(&mut self, block_data: BlockData) -> WalletResult<()>;
 
     /// Process progress updates (optional)
     ///
     /// This method is called periodically to report scanning progress.
     /// The default implementation does nothing.
-    async fn process_progress(
-        &mut self,
-        _progress_data: ProgressData,
-    ) -> LightweightWalletResult<()> {
+    async fn process_progress(&mut self, _progress_data: ProgressData) -> WalletResult<()> {
         Ok(())
     }
 
@@ -203,10 +198,7 @@ pub trait DataProcessor: Send + Sync {
     ///
     /// This method is called when scanning completes or is interrupted.
     /// The default implementation does nothing.
-    async fn process_completion(
-        &mut self,
-        _completion_data: CompletionData,
-    ) -> LightweightWalletResult<()> {
+    async fn process_completion(&mut self, _completion_data: CompletionData) -> WalletResult<()> {
         Ok(())
     }
 
@@ -214,7 +206,7 @@ pub trait DataProcessor: Send + Sync {
     ///
     /// This method is called before scanning begins.
     /// The default implementation does nothing.
-    async fn initialize(&mut self) -> LightweightWalletResult<()> {
+    async fn initialize(&mut self) -> WalletResult<()> {
         Ok(())
     }
 
@@ -222,7 +214,7 @@ pub trait DataProcessor: Send + Sync {
     ///
     /// This method is called after scanning ends, regardless of success or failure.
     /// The default implementation does nothing.
-    async fn finalize(&mut self) -> LightweightWalletResult<()> {
+    async fn finalize(&mut self) -> WalletResult<()> {
         Ok(())
     }
 
@@ -285,23 +277,17 @@ impl MemoryDataProcessor {
 
 #[async_trait]
 impl DataProcessor for MemoryDataProcessor {
-    async fn process_block(&mut self, block_data: BlockData) -> LightweightWalletResult<()> {
+    async fn process_block(&mut self, block_data: BlockData) -> WalletResult<()> {
         self.blocks.push(block_data);
         Ok(())
     }
 
-    async fn process_progress(
-        &mut self,
-        progress_data: ProgressData,
-    ) -> LightweightWalletResult<()> {
+    async fn process_progress(&mut self, progress_data: ProgressData) -> WalletResult<()> {
         self.progress_updates.push(progress_data);
         Ok(())
     }
 
-    async fn process_completion(
-        &mut self,
-        completion_data: CompletionData,
-    ) -> LightweightWalletResult<()> {
+    async fn process_completion(&mut self, completion_data: CompletionData) -> WalletResult<()> {
         self.completion = Some(completion_data);
         Ok(())
     }
@@ -326,7 +312,7 @@ impl NoOpDataProcessor {
 
 #[async_trait]
 impl DataProcessor for NoOpDataProcessor {
-    async fn process_block(&mut self, _block_data: BlockData) -> LightweightWalletResult<()> {
+    async fn process_block(&mut self, _block_data: BlockData) -> WalletResult<()> {
         Ok(())
     }
 
@@ -366,27 +352,21 @@ impl CompositeDataProcessor {
 
 #[async_trait]
 impl DataProcessor for CompositeDataProcessor {
-    async fn process_block(&mut self, block_data: BlockData) -> LightweightWalletResult<()> {
+    async fn process_block(&mut self, block_data: BlockData) -> WalletResult<()> {
         for processor in &mut self.processors {
             processor.process_block(block_data.clone()).await?;
         }
         Ok(())
     }
 
-    async fn process_progress(
-        &mut self,
-        progress_data: ProgressData,
-    ) -> LightweightWalletResult<()> {
+    async fn process_progress(&mut self, progress_data: ProgressData) -> WalletResult<()> {
         for processor in &mut self.processors {
             processor.process_progress(progress_data.clone()).await?;
         }
         Ok(())
     }
 
-    async fn process_completion(
-        &mut self,
-        completion_data: CompletionData,
-    ) -> LightweightWalletResult<()> {
+    async fn process_completion(&mut self, completion_data: CompletionData) -> WalletResult<()> {
         for processor in &mut self.processors {
             processor
                 .process_completion(completion_data.clone())
@@ -395,14 +375,14 @@ impl DataProcessor for CompositeDataProcessor {
         Ok(())
     }
 
-    async fn initialize(&mut self) -> LightweightWalletResult<()> {
+    async fn initialize(&mut self) -> WalletResult<()> {
         for processor in &mut self.processors {
             processor.initialize().await?;
         }
         Ok(())
     }
 
-    async fn finalize(&mut self) -> LightweightWalletResult<()> {
+    async fn finalize(&mut self) -> WalletResult<()> {
         for processor in &mut self.processors {
             processor.finalize().await?;
         }

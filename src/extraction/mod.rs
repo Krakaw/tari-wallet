@@ -44,7 +44,7 @@ use crate::{
     data_structures::{
         transaction_output::LightweightTransactionOutput, wallet_output::LightweightWalletOutput,
     },
-    errors::LightweightWalletResult,
+    errors::WalletResult,
     key_management::{ImportedPrivateKey, KeyStore},
 };
 
@@ -113,7 +113,7 @@ impl ExtractionConfig {
 pub fn extract_wallet_output(
     transaction_output: &LightweightTransactionOutput,
     config: &ExtractionConfig,
-) -> LightweightWalletResult<LightweightWalletOutput> {
+) -> WalletResult<LightweightWalletOutput> {
     // Check if we have the necessary keys for extraction
     if config.private_key.is_none() && config.public_key.is_none() {
         return Err(

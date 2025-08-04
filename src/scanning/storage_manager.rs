@@ -10,7 +10,7 @@
 #[cfg(feature = "storage")]
 use crate::{
     data_structures::{types::CompressedCommitment, wallet_transaction::WalletTransaction},
-    errors::{LightweightWalletError, LightweightWalletResult},
+    errors::{LightweightWalletError, WalletResult},
     storage::{SqliteStorage, StoredOutput, StoredWallet, WalletStorage},
 };
 
@@ -31,7 +31,7 @@ use crate::{
 
 /// Derive entropy from a seed phrase string
 #[cfg(feature = "storage")]
-pub fn derive_entropy_from_seed_phrase(seed_phrase: &str) -> LightweightWalletResult<[u8; 16]> {
+pub fn derive_entropy_from_seed_phrase(seed_phrase: &str) -> WalletResult<[u8; 16]> {
     let encrypted_bytes = mnemonic_to_bytes(seed_phrase)?;
     let cipher_seed = CipherSeed::from_enciphered_bytes(&encrypted_bytes, None)?;
     let entropy = cipher_seed.entropy();
@@ -82,7 +82,7 @@ impl ScannerStorage {
 
     /// Create a new scanner storage instance with database
     #[cfg(feature = "storage")]
-    pub async fn new_with_database(database_path: &str) -> LightweightWalletResult<Self> {
+    pub async fn new_with_database(database_path: &str) -> WalletResult<Self> {
         let storage: Box<dyn WalletStorage> = if database_path == ":memory:" {
             Box::new(SqliteStorage::new_in_memory().await?)
         } else {
@@ -103,10 +103,7 @@ impl ScannerStorage {
 
     /// Start the background writer service (non-WASM32 only)
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
-    pub async fn start_background_writer(
-        &mut self,
-        database_path: &str,
-    ) -> LightweightWalletResult<()> {
+    pub async fn start_background_writer(&mut self, database_path: &str) -> WalletResult<()> {
         if self.background_writer.is_some() || self.database.is_none() {
             return Ok(()); // Already started or no database
         }
@@ -139,7 +136,7 @@ impl ScannerStorage {
 
     /// Stop the background writer service (non-WASM32 only)
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
-    pub async fn stop_background_writer(&mut self) -> LightweightWalletResult<()> {
+    pub async fn stop_background_writer(&mut self) -> WalletResult<()> {
         if let Some(writer) = self.background_writer.take() {
             let (response_tx, response_rx) = oneshot::channel();
             if writer
@@ -156,7 +153,7 @@ impl ScannerStorage {
 
     /// List available wallets in the database
     #[cfg(feature = "storage")]
-    pub async fn list_wallets(&self) -> LightweightWalletResult<Vec<StoredWallet>> {
+    pub async fn list_wallets(&self) -> WalletResult<Vec<StoredWallet>> {
         if let Some(storage) = &self.database {
             storage.list_wallets().await
         } else {
@@ -166,7 +163,7 @@ impl ScannerStorage {
 
     /// Get wallet birthday for resume functionality
     #[cfg(feature = "storage")]
-    pub async fn get_wallet_birthday(&self) -> LightweightWalletResult<Option<u64>> {
+    pub async fn get_wallet_birthday(&self) -> WalletResult<Option<u64>> {
         if let (Some(storage), Some(wallet_id)) = (&self.database, self.wallet_id) {
             if let Some(wallet) = storage.get_wallet_by_id(wallet_id).await? {
                 Ok(Some(wallet.get_resume_block()))
@@ -183,7 +180,7 @@ impl ScannerStorage {
     pub async fn load_scan_context_from_wallet(
         &self,
         quiet: bool,
-    ) -> LightweightWalletResult<Option<ScanContext>> {
+    ) -> WalletResult<Option<ScanContext>> {
         let storage = self.database.as_ref().ok_or_else(|| {
             LightweightWalletError::StorageError("No database available".to_string())
         })?;
@@ -241,7 +238,7 @@ impl ScannerStorage {
         &mut self,
         config: &BinaryScanConfig,
         scan_context: Option<&ScanContext>,
-    ) -> LightweightWalletResult<Option<ScanContext>> {
+    ) -> WalletResult<Option<ScanContext>> {
         // Only perform database operations if database is available
         if self.database.is_none() {
             return Ok(None);
@@ -268,7 +265,7 @@ impl ScannerStorage {
         &self,
         config: &BinaryScanConfig,
         scan_context: Option<&ScanContext>,
-    ) -> LightweightWalletResult<Option<u32>> {
+    ) -> WalletResult<Option<u32>> {
         let storage = self.database.as_ref().ok_or_else(|| {
             LightweightWalletError::StorageError("No database available".to_string())
         })?;
@@ -327,7 +324,7 @@ impl ScannerStorage {
     /// This method is designed to be used by the binary when interactive
     /// wallet selection is needed (when multiple wallets are available).
     #[cfg(feature = "storage")]
-    pub async fn get_wallet_selection_info(&self) -> LightweightWalletResult<Vec<StoredWallet>> {
+    pub async fn get_wallet_selection_info(&self) -> WalletResult<Vec<StoredWallet>> {
         if let Some(storage) = &self.database {
             storage.list_wallets().await
         } else {
@@ -346,7 +343,7 @@ impl ScannerStorage {
     pub async fn save_transactions_incremental(
         &mut self,
         all_transactions: &[WalletTransaction],
-    ) -> LightweightWalletResult<()> {
+    ) -> WalletResult<()> {
         if let Some(wallet_id) = self.wallet_id {
             // Only save new transactions since last save
             if all_transactions.len() > self.last_saved_transaction_count {
@@ -368,7 +365,7 @@ impl ScannerStorage {
         &self,
         wallet_id: u32,
         transactions: Vec<WalletTransaction>,
-    ) -> LightweightWalletResult<()> {
+    ) -> WalletResult<()> {
         if let Some(writer) = &self.background_writer {
             let (response_tx, response_rx) = oneshot::channel();
             writer
@@ -401,7 +398,7 @@ impl ScannerStorage {
         &self,
         wallet_id: u32,
         transactions: Vec<WalletTransaction>,
-    ) -> LightweightWalletResult<()> {
+    ) -> WalletResult<()> {
         if let Some(storage) = &self.database {
             storage.save_transactions(wallet_id, &transactions).await
         } else {
@@ -411,10 +408,7 @@ impl ScannerStorage {
 
     /// Save transactions to storage (legacy method for compatibility)
     #[cfg(feature = "storage")]
-    pub async fn save_transactions(
-        &self,
-        transactions: &[WalletTransaction],
-    ) -> LightweightWalletResult<()> {
+    pub async fn save_transactions(&self, transactions: &[WalletTransaction]) -> WalletResult<()> {
         if let (Some(storage), Some(wallet_id)) = (&self.database, self.wallet_id) {
             storage.save_transactions(wallet_id, transactions).await
         } else {
@@ -424,10 +418,7 @@ impl ScannerStorage {
 
     /// Save UTXO outputs to storage - architecture-specific implementation
     #[cfg(feature = "storage")]
-    pub async fn save_outputs(
-        &self,
-        outputs: &[StoredOutput],
-    ) -> LightweightWalletResult<Vec<u32>> {
+    pub async fn save_outputs(&self, outputs: &[StoredOutput]) -> WalletResult<Vec<u32>> {
         self.save_outputs_arch_specific(outputs.to_vec()).await
     }
 
@@ -436,7 +427,7 @@ impl ScannerStorage {
     async fn save_outputs_arch_specific(
         &self,
         outputs: Vec<StoredOutput>,
-    ) -> LightweightWalletResult<Vec<u32>> {
+    ) -> WalletResult<Vec<u32>> {
         if let Some(writer) = &self.background_writer {
             let (response_tx, response_rx) = oneshot::channel();
             writer
@@ -467,7 +458,7 @@ impl ScannerStorage {
     async fn save_outputs_arch_specific(
         &self,
         outputs: Vec<StoredOutput>,
-    ) -> LightweightWalletResult<Vec<u32>> {
+    ) -> WalletResult<Vec<u32>> {
         if let Some(storage) = &self.database {
             storage.save_outputs(&outputs).await
         } else {
@@ -477,10 +468,7 @@ impl ScannerStorage {
 
     /// Update wallet's latest scanned block - architecture-specific implementation
     #[cfg(feature = "storage")]
-    pub async fn update_wallet_scanned_block(
-        &self,
-        block_height: u64,
-    ) -> LightweightWalletResult<()> {
+    pub async fn update_wallet_scanned_block(&self, block_height: u64) -> WalletResult<()> {
         if let Some(wallet_id) = self.wallet_id {
             self.update_wallet_scanned_block_arch_specific(wallet_id, block_height)
                 .await
@@ -495,7 +483,7 @@ impl ScannerStorage {
         &self,
         wallet_id: u32,
         block_height: u64,
-    ) -> LightweightWalletResult<()> {
+    ) -> WalletResult<()> {
         if let Some(writer) = &self.background_writer {
             let (response_tx, response_rx) = oneshot::channel();
             writer
@@ -530,7 +518,7 @@ impl ScannerStorage {
         &self,
         wallet_id: u32,
         block_height: u64,
-    ) -> LightweightWalletResult<()> {
+    ) -> WalletResult<()> {
         if let Some(storage) = &self.database {
             storage
                 .update_wallet_scanned_block(wallet_id, block_height)
@@ -547,7 +535,7 @@ impl ScannerStorage {
         commitment: &CompressedCommitment,
         block_height: u64,
         input_index: usize,
-    ) -> LightweightWalletResult<bool> {
+    ) -> WalletResult<bool> {
         self.mark_transaction_spent_impl(commitment, block_height, input_index)
             .await
     }
@@ -557,7 +545,7 @@ impl ScannerStorage {
     pub async fn mark_transactions_spent_batch_arch_specific(
         &self,
         spent_commitments: &[(CompressedCommitment, u64, usize)],
-    ) -> LightweightWalletResult<usize> {
+    ) -> WalletResult<usize> {
         self.mark_transactions_spent_batch_impl(spent_commitments)
             .await
     }
@@ -567,7 +555,7 @@ impl ScannerStorage {
     async fn mark_transactions_spent_batch_impl(
         &self,
         spent_commitments: &[(CompressedCommitment, u64, usize)],
-    ) -> LightweightWalletResult<usize> {
+    ) -> WalletResult<usize> {
         if let Some(writer) = &self.background_writer {
             let (response_tx, response_rx) = oneshot::channel();
             writer
@@ -600,7 +588,7 @@ impl ScannerStorage {
     async fn mark_transactions_spent_batch_impl(
         &self,
         spent_commitments: &[(CompressedCommitment, u64, usize)],
-    ) -> LightweightWalletResult<usize> {
+    ) -> WalletResult<usize> {
         if let Some(storage) = &self.database {
             storage
                 .mark_transactions_spent_batch(spent_commitments)
@@ -617,7 +605,7 @@ impl ScannerStorage {
         commitment: &CompressedCommitment,
         block_height: u64,
         input_index: usize,
-    ) -> LightweightWalletResult<bool> {
+    ) -> WalletResult<bool> {
         if let Some(writer) = &self.background_writer {
             let (response_tx, response_rx) = oneshot::channel();
             writer
@@ -654,7 +642,7 @@ impl ScannerStorage {
         commitment: &CompressedCommitment,
         block_height: u64,
         input_index: usize,
-    ) -> LightweightWalletResult<bool> {
+    ) -> WalletResult<bool> {
         if let Some(storage) = &self.database {
             storage
                 .mark_transaction_spent(commitment, block_height, input_index)
@@ -666,7 +654,7 @@ impl ScannerStorage {
 
     /// Get storage statistics for the current wallet
     #[cfg(feature = "storage")]
-    pub async fn get_statistics(&self) -> LightweightWalletResult<crate::storage::StorageStats> {
+    pub async fn get_statistics(&self) -> WalletResult<crate::storage::StorageStats> {
         if let Some(storage) = &self.database {
             // Get wallet-specific statistics if we have a wallet_id
             storage.get_wallet_statistics(self.wallet_id).await
@@ -690,7 +678,7 @@ impl ScannerStorage {
 
     /// Get unspent outputs count
     #[cfg(feature = "storage")]
-    pub async fn get_unspent_outputs_count(&self) -> LightweightWalletResult<usize> {
+    pub async fn get_unspent_outputs_count(&self) -> WalletResult<usize> {
         if let (Some(storage), Some(wallet_id)) = (&self.database, self.wallet_id) {
             let outputs = storage.get_unspent_outputs(wallet_id).await?;
             Ok(outputs.len())
