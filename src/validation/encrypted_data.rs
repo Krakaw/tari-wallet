@@ -5,19 +5,19 @@
 
 use crate::{data_structures::encrypted_data::EncryptedData, errors::ValidationError};
 
-/// Lightweight encrypted data integrity validator
+/// Encrypted data integrity validator
 ///
 /// This provides validation for encrypted data structure and integrity
 /// without requiring the encryption key or decryption.
 #[derive(Debug, Clone)]
-pub struct LightweightEncryptedDataValidator {
+pub struct EncryptedDataValidator {
     /// Maximum allowed encrypted data size in bytes
     max_size: usize,
     /// Minimum required encrypted data size in bytes
     min_size: usize,
 }
 
-impl Default for LightweightEncryptedDataValidator {
+impl Default for EncryptedDataValidator {
     fn default() -> Self {
         Self {
             max_size: 1024, // 1KB as reasonable default
@@ -26,7 +26,7 @@ impl Default for LightweightEncryptedDataValidator {
     }
 }
 
-impl LightweightEncryptedDataValidator {
+impl EncryptedDataValidator {
     /// Create a new validator with custom size limits
     pub fn new(min_size: usize, max_size: usize) -> Self {
         Self { min_size, max_size }
@@ -310,7 +310,7 @@ impl EncryptedDataValidationResult {
 pub fn validate_encrypted_data_comprehensive(
     encrypted_data: &EncryptedData,
 ) -> EncryptedDataValidationResult {
-    let validator = LightweightEncryptedDataValidator::default();
+    let validator = EncryptedDataValidator::default();
     let data_bytes = encrypted_data.as_bytes();
     let mut errors = Vec::new();
 
@@ -337,21 +337,21 @@ mod tests {
 
     #[test]
     fn test_validator_creation() {
-        let validator = LightweightEncryptedDataValidator::new(32, 1024);
+        let validator = EncryptedDataValidator::new(32, 1024);
         assert_eq!(validator.min_size(), 32);
         assert_eq!(validator.max_size(), 1024);
     }
 
     #[test]
     fn test_validator_default() {
-        let validator = LightweightEncryptedDataValidator::default();
+        let validator = EncryptedDataValidator::default();
         assert_eq!(validator.min_size(), 64);
         assert_eq!(validator.max_size(), 1024);
     }
 
     #[test]
     fn test_validate_integrity_valid_data() {
-        let validator = LightweightEncryptedDataValidator::default();
+        let validator = EncryptedDataValidator::default();
         let valid_data = EncryptedData::from_hex(
             "a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0fedcba9876543210aabbccddeeff00112233445566778899ffeeddccbbaa99887766554433221100cafebabedeadbeef0011223344556677"
         ).unwrap();
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_validate_integrity_too_small() {
-        let validator = LightweightEncryptedDataValidator::new(64, 1024);
+        let validator = EncryptedDataValidator::new(64, 1024);
         let small_data = EncryptedData::from_hex("0123456789abcdef").unwrap();
 
         let result = validator.validate_integrity(&small_data);
@@ -370,7 +370,7 @@ mod tests {
 
     #[test]
     fn test_validate_integrity_too_large() {
-        let validator = LightweightEncryptedDataValidator::new(32, 64);
+        let validator = EncryptedDataValidator::new(32, 64);
         let large_data = EncryptedData::from_hex(
             "a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0fedcba9876543210aabbccddeeff00112233445566778899ffeeddccbbaa99887766554433221100cafebabedeadbeef0011223344556677aabbccddeeff00112233445566778899"
         ).unwrap();
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_validate_integrity_all_zeros() {
-        let validator = LightweightEncryptedDataValidator::default();
+        let validator = EncryptedDataValidator::default();
         let zero_data = EncryptedData::from_hex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap();
 
         let result = validator.validate_integrity(&zero_data);
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn test_validate_integrity_all_ones() {
-        let validator = LightweightEncryptedDataValidator::default();
+        let validator = EncryptedDataValidator::default();
         let ones_data = EncryptedData::from_hex("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff").unwrap();
 
         let result = validator.validate_integrity(&ones_data);
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_validate_integrity_repeated_pattern() {
-        let validator = LightweightEncryptedDataValidator::default();
+        let validator = EncryptedDataValidator::default();
         let pattern_data = EncryptedData::from_hex("01010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101").unwrap();
 
         let result = validator.validate_integrity(&pattern_data);
@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_validate_batch_success() {
-        let validator = LightweightEncryptedDataValidator::default();
+        let validator = EncryptedDataValidator::default();
         let valid_data1 = EncryptedData::from_hex(
             "a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0fedcba9876543210aabbccddeeff00112233445566778899ffeeddccbbaa99887766554433221100cafebabedeadbeef0011223344556677"
         ).unwrap();
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_validate_batch_failure() {
-        let validator = LightweightEncryptedDataValidator::default();
+        let validator = EncryptedDataValidator::default();
         let valid_data = EncryptedData::from_hex(
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         ).unwrap();
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_appears_properly_encrypted() {
-        let validator = LightweightEncryptedDataValidator::default();
+        let validator = EncryptedDataValidator::default();
         let valid_data = EncryptedData::from_hex(
             "a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0fedcba9876543210aabbccddeeff00112233445566778899ffeeddccbbaa99887766554433221100cafebabedeadbeef0011223344556677"
         ).unwrap();

@@ -226,9 +226,9 @@ impl TransactionOutput {
         Ok(features_size + script_size + covenant_size + encrypted_data_size)
     }
 
-    /// Verify the metadata signature (simplified version for lightweight implementation)
+    /// Verify the metadata signature (simplified version for implementation)
     pub fn verify_metadata_signature(&self) -> Result<(), WalletError> {
-        // For the lightweight implementation, we perform a basic signature validation
+        // For the implementation, we perform a basic signature validation
         // This is a simplified version compared to the full cryptographic verification
         // in the reference implementation
 

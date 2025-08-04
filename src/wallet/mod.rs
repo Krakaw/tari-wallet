@@ -1,4 +1,4 @@
-//! Wallet functionality for lightweight Tari wallets
+//! Wallet functionality for Tari wallets
 //!
 //! This module provides the core wallet struct and operations for managing
 //! master keys, seed phrases, and wallet metadata.

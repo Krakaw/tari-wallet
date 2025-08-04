@@ -1,4 +1,4 @@
-# Tari Lightweight Wallet Libraries
+# Tari Wallet Libraries
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/Krakaw/tari-wallet/branch/main/graph/badge.svg)](https://codecov.io/gh/Krakaw/tari-wallet)
 [![CI](https://github.com/Krakaw/tari-wallet/workflows/CI/badge.svg)](https://github.com/Krakaw/tari-wallet/actions/workflows/ci.yml)
@@ -7,7 +7,7 @@ A standalone, minimal dependency implementation of core Tari wallet functionalit
 
 ## 🚀 **What is this?**
 
-The Tari Lightweight Wallet Libraries provide essential wallet functionality extracted from the main Tari codebase, designed to be:
+The Tari Wallet Libraries provide essential wallet functionality extracted from the main Tari codebase, designed to be:
 
 - **🪶 Lightweight**: Minimal dependencies, optimized for resource-constrained environments
 - **🌐 Cross-platform**: Native Rust, WASM, mobile, and web compatibility
@@ -309,14 +309,14 @@ struct CustomDataProcessor {
 
 #[async_trait::async_trait]
 impl DataProcessor for CustomDataProcessor {
-    async fn process_block(&mut self, block_data: BlockData) -> LightweightWalletResult<()> {
+    async fn process_block(&mut self, block_data: BlockData) -> WalletResult<()> {
         // Custom processing logic - send to API, save to file, etc.
         println!("Processing block {} with {} transactions", 
                  block_data.height, block_data.transactions.len());
         Ok(())
     }
 
-    async fn process_progress(&mut self, progress_data: ProgressData) -> LightweightWalletResult<()> {
+    async fn process_progress(&mut self, progress_data: ProgressData) -> WalletResult<()> {
         // Custom progress handling
         println!("Progress: {:.1}%", progress_data.progress_percent());
         Ok(())
@@ -776,7 +776,7 @@ cargo run --bin wallet --features storage -- list --database wallet.db
 
 ## 🆚 **vs. Main Tari Project**
 
-| Feature | Main Tari | Lightweight Libs |
+| Feature | Main Tari | Libs |
 |---------|-----------|------------------|
 | **Purpose** | Full blockchain protocol | Wallet functionality only |
 | **Dependencies** | Heavy (tari-* crates) | Minimal (crypto only) |

@@ -8,16 +8,15 @@ pub mod encrypted_data;
 pub mod minimum_value_promise;
 pub mod script_pattern;
 
-pub use commitment::LightweightCommitmentValidator;
+pub use commitment::CommitmentValidator;
 
 pub use encrypted_data::{
-    validate_encrypted_data_comprehensive, EncryptedDataValidationResult,
-    LightweightEncryptedDataValidator,
+    validate_encrypted_data_comprehensive, EncryptedDataValidationResult, EncryptedDataValidator,
 };
 
 pub use minimum_value_promise::{
-    LightweightMinimumValuePromiseValidator, MinimumValuePromiseValidationOptions,
-    MinimumValuePromiseValidationResult,
+    MinimumValuePromiseValidationOptions, MinimumValuePromiseValidationResult,
+    MinimumValuePromiseValidator,
 };
 
 // Re-export commonly used types and functions

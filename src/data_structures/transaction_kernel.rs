@@ -3,7 +3,7 @@ use crate::errors::DataStructureError;
 use borsh::{BorshDeserialize, BorshSerialize};
 use zeroize::Zeroize;
 
-/// Lightweight transaction kernel structure
+/// Transaction kernel structure
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct TransactionKernel {
     /// Kernel version

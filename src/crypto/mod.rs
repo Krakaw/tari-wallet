@@ -1,6 +1,6 @@
-//! Cryptographic primitives for lightweight wallets
+//! Cryptographic primitives for wallets
 //!
-//! This module re-exports tari-crypto functionality for use in lightweight wallets,
+//! This module re-exports tari-crypto functionality for use in wallets,
 //! avoiding duplication and ensuring compatibility with the main Tari implementation.
 
 // Re-export domain separated hashing from tari-crypto

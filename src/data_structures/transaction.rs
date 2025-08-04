@@ -1,7 +1,7 @@
-//! Transaction metadata types for lightweight wallets
+//! Transaction metadata types for wallets
 //!
 //! This module contains transaction status, direction, and import status types
-//! used for tracking transaction states and metadata in lightweight wallets.
+//! used for tracking transaction states and metadata in wallets.
 
 use std::{
     convert::TryFrom,

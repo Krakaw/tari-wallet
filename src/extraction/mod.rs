@@ -193,9 +193,9 @@ mod tests {
     use crate::{
         crypto::{RistrettoSecretKey, SecretKey},
         data_structures::{
-            CompressedCommitment, CompressedPublicKey, Covenant, EncryptedData,
-            LightweightRangeProofType, MicroMinotari, OutputFeatures, OutputType, PrivateKey,
-            RangeProof, Script, Signature, TransactionOutput,
+            CompressedCommitment, CompressedPublicKey, Covenant, EncryptedData, MicroMinotari,
+            OutputFeatures, OutputType, PrivateKey, RangeProof, RangeProofType, Script, Signature,
+            TransactionOutput,
         },
         key_management::derive_view_and_spend_keys_from_entropy,
         wallet::Wallet,
@@ -281,7 +281,7 @@ mod tests {
             OutputFeatures {
                 output_type: OutputType::Payment,
                 maturity: 0,
-                range_proof_type: LightweightRangeProofType::BulletProofPlus,
+                range_proof_type: RangeProofType::BulletProofPlus,
             },
             CompressedCommitment::new(hex::decode("0000000000000000000000000000000000000000000000000000000000000000").unwrap().try_into().unwrap()),
             Some(RangeProof { bytes: hex::decode("01c7712804b726228c41ee39a61a1b0a297b0c116f4a6b7739e99011eb639ecd035434f693b901f6e4fb1713daec283601076bb4430fef5a31bccaeab353d5e42614761e2b1cb1ff287287b27f6a942a973046d6ba40995bb207bfbf4bcd65605502c1e9bae6aa33190cf9a3ccdbb3dfae6a779cf3ee0d345f2c320ea2feda36366ad7572e5050e0ee45fb0ae3e5b58c133d0327443902bcb9701da2d35df6370afd51bd8b32484562cfbc53667316c10be7f66c8aea7656b90afc27732859440744cd63c27bec80468cdbacbf7b2d213e338f850bb026ff31b6c550bda7b22a6b46a641ed3874de2b70ceba6d98d889170e11c3237b730930777d7cc99f82693bc4cb588d7648b7c447ed521522a53284d3e5c7f8cc825bb789d3537ed14a7e404811defe3e889bbb9ae401ecdf16e01b44ecba7c51943dcfdb0fec04ca2ab950882e33b2044acac1aca49c3bc83a8b0599e5a291f70b24809b4505485a919b24189e9b3994956a39cc13ccd957f37aa0996bc5a1d4c10aafa6c88d370c95a81ace2335e3e40699821764be2e81213dcf8e0212e3c8b5c52a884d2026f1c2785b9ee3df8fd52c630e88e24b52aa9744fd7e25fc77cc24e5d6ab5363c1ab65a902ae6e8101ece73387727806a2cb9562c6075b52d40bbeed8ba83e4fc78359457e5ca9de7af78f37fc8efbe88a32314743be1cb57f699832d5700ce401a33c023532e194a2f2e314eccbf058133c18a5a489025cdd9a8aabe012caa466c9b7e1123a0bf0830b9a4e396a4a51ceef3061a1f8737c3522cbba9226680840e56b470c").unwrap() }),
@@ -299,7 +299,7 @@ mod tests {
             OutputFeatures {
                 output_type: OutputType::Payment,
                 maturity: 0,
-                range_proof_type: LightweightRangeProofType::BulletProofPlus,
+                range_proof_type: RangeProofType::BulletProofPlus,
             },
             CompressedCommitment::new(hex::decode("0000000000000000000000000000000000000000000000000000000000000000").unwrap().try_into().unwrap()),
             Some(RangeProof { bytes: hex::decode("01537cfdb77888ad135773fc224ac9a46b1168daa1be6790a2da236e24c837290d7aaed989a9839a4e336a0343e099018d5825c46911cd8ef4a9e182f79918f650bcb6d402288b16ead8e0eec760ab48ee24dce38df70059bab122014b60dd8b1708ca41fc2eccffca74c2b9d87f79e3aa91c5835555bf5f3ccac36a98a5d5d7525509b52ad095eb4cb90da1abf7726860ca9f2df51fa7100270531be97eca2a01849dd5c907403fe3f2361010532fb9ec94eee16a3941d063b760de565ffc2a08066d9bb2a0d67a18c47d64a9e930d634d84f805fda8d20c6ef32b3d97dc4fa040a3847ac577670990a2797aface97cecd40862681ebac6ed046c9ac6cf87042a1627acd58aa0fc42e0502dd8f440878cb8eb1803ccd31669a6388afb2b70134b52562240434e5269897b455cb5e5f89bfcb41e05ca8a362f1f888f01891b43670028b3bba101c6831588c6bfa429e77101f6217de6d7e8d8b2ccd707a88b21512a30e7792b82a2a954fae0741badbc01d987dbb28dcf319ce4d3b4524f1f3b0b32c9cd96aaa9fab01f069afb909319d6682e2fd76f41632f5137175fd8480b550a0d9bd4ef9874a50232326b366c0178b3080fcf08eedef1402baea87179e43dbe996130547c3a94cd34e687debbc710af7b5143d4db0ad38b10630dba148651367b28ad91d64fffb5e0ff46d3c2c4bcc83fa08e5357083b2ac2621d299d9522884facab9d7b71a3b170843952517af60491ad0c64ae52df89ea45e3ff7bcd75e4fe66fb4e77e6f396539ff366946aac56dde4e714a4ddc2799227070fbcc075").unwrap() }),
@@ -487,7 +487,7 @@ mod tests {
             OutputFeatures {
                 output_type: OutputType::Payment,
                 maturity: 0,
-                range_proof_type: LightweightRangeProofType::BulletProofPlus,
+                range_proof_type: RangeProofType::BulletProofPlus,
             },
             CompressedCommitment::new([0u8; 32]),
             Some(RangeProof {
@@ -537,7 +537,7 @@ mod tests {
         let features = OutputFeatures {
             output_type: OutputType::Payment,
             maturity: 0,
-            range_proof_type: LightweightRangeProofType::BulletProofPlus,
+            range_proof_type: RangeProofType::BulletProofPlus,
         };
 
         // Commitment data from JSON
@@ -751,7 +751,7 @@ mod tests {
             let features = OutputFeatures {
                 output_type: OutputType::Payment,
                 maturity: 0,
-                range_proof_type: LightweightRangeProofType::BulletProofPlus,
+                range_proof_type: RangeProofType::BulletProofPlus,
             };
 
             // Use some dummy commitment (in real scanning this would come from the blockchain)

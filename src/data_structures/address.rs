@@ -1,4 +1,4 @@
-//! Address handling utilities for lightweight wallets
+//! Address handling utilities for wallets
 //!
 //! This module provides functionality to load and parse Tari addresses
 //! from various formats including base58, hex, and emoji.

@@ -122,10 +122,10 @@ fn create_stored_output_from_blockchain_data(
             .sender_offset_public_key
             .as_bytes()
             .to_vec(),
-        // Note: LightweightSignature only contains raw bytes field. The structured fields
+        // Note: Signature only contains raw bytes field. The structured fields
         // below are not available in the current data structure, so we use zero values
-        metadata_signature_ephemeral_commitment: vec![0u8; 32], // Not available in LightweightSignature
-        metadata_signature_ephemeral_pubkey: vec![0u8; 32], // Not available in LightweightSignature
+        metadata_signature_ephemeral_commitment: vec![0u8; 32], // Not available in Signature
+        metadata_signature_ephemeral_pubkey: vec![0u8; 32],     // Not available in Signature
         metadata_signature_u_a: if blockchain_output.metadata_signature.bytes.len() >= 32 {
             blockchain_output.metadata_signature.bytes[0..32].to_vec()
         } else {
@@ -136,7 +136,7 @@ fn create_stored_output_from_blockchain_data(
         } else {
             vec![0u8; 32]
         },
-        metadata_signature_u_y: vec![0u8; 32], // Not available in LightweightSignature
+        metadata_signature_u_y: vec![0u8; 32], // Not available in Signature
 
         // Payment information
         encrypted_data: blockchain_output.encrypted_data.as_bytes().to_vec(),

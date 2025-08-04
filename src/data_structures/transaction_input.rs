@@ -3,7 +3,7 @@ use crate::errors::DataStructureError;
 use borsh::{BorshDeserialize, BorshSerialize};
 use zeroize::Zeroize;
 
-/// Lightweight transaction input structure
+/// Transaction input structure
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct TransactionInput {
     /// Input version
@@ -32,7 +32,7 @@ pub struct TransactionInput {
     pub value: MicroMinotari,
 }
 
-/// Lightweight execution stack for script execution
+/// Execution stack for script execution
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct ExecutionStack {
     /// Stack items

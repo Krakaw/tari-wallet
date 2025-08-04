@@ -1,4 +1,4 @@
-# Tari Lightweight Wallet Libraries - Enhanced Agent Instructions
+# Tari Wallet Libraries - Enhanced Agent Instructions
 
 ## Build/Test Commands
 
@@ -155,7 +155,7 @@ impl Zeroize for Wallet {
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum LightweightWalletError {
+pub enum WalletError {
     #[error("Validation error: {0}")]
     Validation(#[from] ValidationError),
     
@@ -443,4 +443,4 @@ mod integration_tests {
 - Prefer `&str` over `String` in function signatures
 - Use `Vec::with_capacity()` when size is known
 
-This enhanced AGENT.md provides comprehensive guidance for navigating the Tari Lightweight Wallet codebase efficiently while maintaining security and performance standards.
+This enhanced AGENT.md provides comprehensive guidance for navigating the Tari  Wallet codebase efficiently while maintaining security and performance standards.

@@ -61,7 +61,7 @@ use crate::{
         transaction_output::TransactionOutput,
         types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
         wallet_output::{Covenant, OutputFeatures, Script, Signature, WalletOutput},
-        LightweightRangeProofType, OutputType,
+        OutputType, RangeProofType,
     },
     errors::{WalletError, WalletResult},
     extraction::{extract_wallet_output, ExtractionConfig},
@@ -524,7 +524,7 @@ impl HttpBlockchainScanner {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
-    /// Convert HTTP output data to LightweightTransactionOutput
+    /// Convert HTTP output data to TransactionOutput
     fn convert_http_output_to_lightweight(
         http_output: &HttpOutputData,
     ) -> WalletResult<TransactionOutput> {
@@ -565,7 +565,7 @@ impl HttpBlockchainScanner {
         let features = OutputFeatures {
             output_type: OutputType::Payment, // Default assumption
             maturity: 0,                      // Default
-            range_proof_type: LightweightRangeProofType::BulletProofPlus,
+            range_proof_type: RangeProofType::BulletProofPlus,
         };
 
         // Convert range proof (not provided by this API endpoint)

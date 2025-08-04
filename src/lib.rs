@@ -1,6 +1,6 @@
-//! Lightweight wallet libraries for Tari
+//! Wallet libraries for Tari
 //!
-//! This crate provides lightweight wallet functionality for the Tari blockchain,
+//! This crate provides wallet functionality for the Tari blockchain,
 //! including UTXO management, transaction validation, and key management.
 
 pub mod common;

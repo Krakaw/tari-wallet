@@ -429,7 +429,7 @@ type SecretBytes = SafeArray<32>;
 
 ```rust
 // Validate all external input
-pub fn process_seed_phrase(phrase: &str) -> Result<Wallet, LightweightWalletError> {
+pub fn process_seed_phrase(phrase: &str) -> Result<Wallet, WalletError> {
     validate_seed_phrase(phrase)?;  // Always validate first
     let wallet = Wallet::new_from_seed_phrase(phrase, None)?;
     Ok(wallet)
@@ -481,7 +481,7 @@ use tokio;
 use wasm_bindgen_futures;
 
 // Handle async errors properly
-async fn scan_blockchain() -> Result<Vec<Output>, LightweightWalletError> {
+async fn scan_blockchain() -> Result<Vec<Output>, WalletError> {
     let scanner = create_scanner().await?;
     scanner.scan_blocks(config).await
 }
@@ -501,7 +501,7 @@ async fn scan_blockchain() -> Result<Vec<Output>, LightweightWalletError> {
 /// 
 /// # Returns
 /// 
-/// Returns a new `Wallet` instance or `LightweightWalletError` on failure
+/// Returns a new `Wallet` instance or `WalletError` on failure
 /// 
 /// # Examples
 /// 
@@ -619,4 +619,4 @@ Before submitting a pull request:
 - [ ] Security review completed for sensitive changes
 - [ ] Test coverage maintained: `cargo tarpaulin`
 
-This development guide ensures consistent, high-quality contributions to the Tari Lightweight Wallet Libraries project while maintaining security and performance standards.
+This development guide ensures consistent, high-quality contributions to the Tari Wallet Libraries project while maintaining security and performance standards.

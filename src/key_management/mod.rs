@@ -1,4 +1,4 @@
-//! Lightweight key management and derivation for Tari wallet
+//! Key management and derivation for Tari wallet
 //!
 //! This module provides simplified key management functionality for lightweight wallets,
 //! including deterministic key derivation from seed phrases and imported private keys.

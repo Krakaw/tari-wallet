@@ -259,7 +259,7 @@ let mut grpc_scanner = GrpcScannerBuilder::new()
 
 ## Error Handling Patterns  
 ```rust
-use lightweight_wallet_libs::{LightweightWalletError, ScanError};
+use lightweight_wallet_libs::{WalletError, ScanError};
 
 // Comprehensive error handling with specific error types
 match wallet_scanner.scan(&mut scanner, &context, &config, &mut storage, &mut cancel_rx).await {
@@ -276,15 +276,15 @@ match wallet_scanner.scan(&mut scanner, &context, &config, &mut storage, &mut ca
             }
         }
     }
-    Err(LightweightWalletError::Validation(validation_error)) => {
+    Err(WalletError::Validation(validation_error)) => {
         eprintln!("Validation error: {}", validation_error);
         // Handle validation failures
     }
-    Err(LightweightWalletError::StorageError(storage_error)) => {
+    Err(WalletError::StorageError(storage_error)) => {
         eprintln!("Storage error: {}", storage_error);
         // Handle database issues
     }
-    Err(LightweightWalletError::NetworkError(network_error)) => {
+    Err(WalletError::NetworkError(network_error)) => {
         eprintln!("Network error: {}", network_error);
         // Handle connection issues, retry logic
     }
@@ -513,7 +513,7 @@ let result = wallet_scanner.scan(...).await?; // All scanning operations are asy
 ### 2. Error Handling
 ✅ **Handle errors appropriately:**
 ```rust
-return Err(LightweightWalletError::ValidationError(...)); // Return errors for caller handling
+return Err(WalletError::ValidationError(...)); // Return errors for caller handling
 ```
 
 ### 3. Configuration Management

@@ -1,7 +1,7 @@
 //! Integration test module
 //!
 //! This module contains integration tests that test the interaction between
-//! multiple components of the Tari lightweight wallet system.
+//! multiple components of the Tari wallet system.
 
 pub mod wallet_workflow;
 pub mod scanning_workflow;

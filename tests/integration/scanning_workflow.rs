@@ -13,7 +13,7 @@ use lightweight_wallet_libs::data_structures::{
     encrypted_data::EncryptedData,
     transaction_output::TransactionOutput,
     types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
-    wallet_output::{LightweightRangeProofType, OutputFeatures, OutputType},
+    wallet_output::{OutputFeatures, OutputType, RangeProofType},
 };
 use lightweight_wallet_libs::errors::{ValidationError, WalletError};
 use lightweight_wallet_libs::extraction::ExtractionConfig;
@@ -148,7 +148,7 @@ fn create_test_output(
     let features = OutputFeatures {
         output_type: OutputType::Payment,
         maturity: 0,
-        range_proof_type: LightweightRangeProofType::BulletProofPlus,
+        range_proof_type: RangeProofType::BulletProofPlus,
     };
 
     // Create script

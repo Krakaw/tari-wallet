@@ -1,6 +1,6 @@
 # Event System Adoption Guide
 
-This guide helps developers integrate the new event-driven architecture into existing modules and new components within the Tari Lightweight Wallet Libraries.
+This guide helps developers integrate the new event-driven architecture into existing modules and new components within the Tari Wallet Libraries.
 
 ## Table of Contents
 

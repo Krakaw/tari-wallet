@@ -173,14 +173,14 @@ impl DatasetGenerator {
             transaction_output::TransactionOutput,
             types::{CompressedCommitment, CompressedPublicKey, MicroMinotari},
             wallet_output::{
-                Covenant, LightweightRangeProofType, OutputFeatures, OutputType, Script, Signature,
+                Covenant, OutputFeatures, OutputType, RangeProofType, Script, Signature,
             },
         };
 
         let features = OutputFeatures {
             output_type: OutputType::Payment,
             maturity: 0,
-            range_proof_type: LightweightRangeProofType::BulletProofPlus,
+            range_proof_type: RangeProofType::BulletProofPlus,
         };
 
         let commitment = CompressedCommitment::new([0x42; 32]);

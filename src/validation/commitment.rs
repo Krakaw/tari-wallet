@@ -8,11 +8,11 @@ use crate::{
     errors::ValidationError,
 };
 
-/// Lightweight commitment validator
+/// Commitment validator
 #[derive(Debug, Clone)]
-pub struct LightweightCommitmentValidator;
+pub struct CommitmentValidator;
 
-impl LightweightCommitmentValidator {
+impl CommitmentValidator {
     /// Validate the structure of a Pedersen commitment
     pub fn validate_structure(commitment: &CompressedCommitment) -> Result<(), ValidationError> {
         let bytes = commitment.as_bytes();
@@ -63,7 +63,7 @@ mod tests {
         let mut bytes = [0u8; 32];
         bytes[0] = 0x08;
         let commitment = CompressedCommitment::new(bytes);
-        assert!(LightweightCommitmentValidator::validate_structure(&commitment).is_ok());
+        assert!(CommitmentValidator::validate_structure(&commitment).is_ok());
     }
 
     #[test]
@@ -72,7 +72,7 @@ mod tests {
         let bytes = [0x08; 32];
         let commitment = CompressedCommitment::new(bytes);
         // Since we now use 32-byte arrays, this test validates that the structure check works
-        let result = LightweightCommitmentValidator::validate_structure(&commitment);
+        let result = CommitmentValidator::validate_structure(&commitment);
         assert!(result.is_ok()); // Should be valid since it's the correct length now
     }
 
@@ -81,7 +81,7 @@ mod tests {
         let mut bytes = [0u8; 32];
         bytes[0] = 0x01; // Invalid prefix
         let commitment = CompressedCommitment::new(bytes);
-        assert!(LightweightCommitmentValidator::validate_structure(&commitment).is_err());
+        assert!(CommitmentValidator::validate_structure(&commitment).is_err());
     }
 
     #[test]
@@ -89,8 +89,6 @@ mod tests {
         let mut bytes = [0u8; 32];
         bytes[0] = 0x08;
         let commitment = CompressedCommitment::new(bytes);
-        assert!(
-            LightweightCommitmentValidator::validate_correctness(&commitment, None, None).is_ok()
-        );
+        assert!(CommitmentValidator::validate_correctness(&commitment, None, None).is_ok());
     }
 }

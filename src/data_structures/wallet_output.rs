@@ -56,7 +56,7 @@ pub struct OutputFeatures {
     /// Maturity height (when the output can be spent)
     pub maturity: u64,
     /// Range proof type
-    pub range_proof_type: LightweightRangeProofType,
+    pub range_proof_type: RangeProofType,
 }
 
 impl OutputFeatures {
@@ -71,7 +71,7 @@ impl Default for OutputFeatures {
         Self {
             output_type: OutputType::Payment,
             maturity: 0,
-            range_proof_type: LightweightRangeProofType::BulletProofPlus,
+            range_proof_type: RangeProofType::BulletProofPlus,
         }
     }
 }
@@ -111,7 +111,7 @@ pub enum OutputType {
     BorshDeserialize,
     Default,
 )]
-pub enum LightweightRangeProofType {
+pub enum RangeProofType {
     #[default]
     BulletProofPlus,
     RevealedValue,
@@ -379,7 +379,7 @@ impl WalletOutput {
     }
 
     /// Get the range proof type
-    pub fn range_proof_type(&self) -> &LightweightRangeProofType {
+    pub fn range_proof_type(&self) -> &RangeProofType {
         &self.features.range_proof_type
     }
 
@@ -467,7 +467,7 @@ impl Ord for WalletOutput {
 
 impl Debug for WalletOutput {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LightweightWalletOutput")
+        f.debug_struct("WalletOutput")
             .field("version", &self.version)
             .field("value", &self.value)
             .field("spending_key_id", &self.spending_key_id)
@@ -629,7 +629,7 @@ mod test {
         let features = OutputFeatures {
             output_type: OutputType::Coinbase,
             maturity: 50,
-            range_proof_type: LightweightRangeProofType::RevealedValue,
+            range_proof_type: RangeProofType::RevealedValue,
         };
 
         let script = Script {
@@ -673,10 +673,7 @@ mod test {
         assert_eq!(output.output_type(), &OutputType::Coinbase);
         assert_eq!(output.maturity(), 50);
         assert_eq!(output.script_lock_height(), 75);
-        assert_eq!(
-            output.range_proof_type(),
-            &LightweightRangeProofType::RevealedValue
-        );
+        assert_eq!(output.range_proof_type(), &RangeProofType::RevealedValue);
         assert_eq!(output.script(), &script);
         assert_eq!(output.covenant(), &covenant);
         assert_eq!(output.input_data(), &input_data);
@@ -711,14 +708,11 @@ mod test {
         let mut features = OutputFeatures::default();
         assert_eq!(features.output_type, OutputType::Payment);
         assert_eq!(features.maturity, 0);
-        assert_eq!(
-            features.range_proof_type,
-            LightweightRangeProofType::BulletProofPlus
-        );
+        assert_eq!(features.range_proof_type, RangeProofType::BulletProofPlus);
 
         features.output_type = OutputType::ValidatorNodeRegistration;
         features.maturity = 1000;
-        features.range_proof_type = LightweightRangeProofType::RevealedValue;
+        features.range_proof_type = RangeProofType::RevealedValue;
 
         let bytes = features.bytes();
         assert!(!bytes.is_empty());
@@ -995,7 +989,7 @@ mod test {
         assert_eq!(default_features.maturity, 0);
         assert_eq!(
             default_features.range_proof_type,
-            LightweightRangeProofType::BulletProofPlus
+            RangeProofType::BulletProofPlus
         );
 
         let default_script = Script::default();
@@ -1018,7 +1012,7 @@ mod test {
     fn test_debug_formatting() {
         let output = WalletOutput::default();
         let debug_str = format!("{output:?}");
-        assert!(debug_str.contains("LightweightWalletOutput"));
+        assert!(debug_str.contains("WalletOutput"));
         assert!(debug_str.contains("version"));
         assert!(debug_str.contains("value"));
         assert!(debug_str.contains("spending_key_id"));

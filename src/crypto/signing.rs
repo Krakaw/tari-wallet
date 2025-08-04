@@ -45,7 +45,7 @@ pub type WalletSignature =
 ///
 /// # Returns
 /// * `Ok(WalletSignature)` - The domain-separated signature
-/// * `Err(LightweightWalletError)` - If signing fails
+/// * `Err(WalletError)` - If signing fails
 ///
 /// # Example
 /// ```
@@ -78,7 +78,7 @@ pub fn sign_message(
 ///
 /// # Returns
 /// * `Ok((signature_hex, nonce_hex))` - Tuple of hex-encoded signature scalar and public nonce
-/// * `Err(LightweightWalletError)` - If signing fails
+/// * `Err(WalletError)` - If signing fails
 ///
 /// # Example
 /// ```
@@ -147,7 +147,7 @@ pub fn verify_message(
 /// # Returns
 /// * `Ok(true)` if the signature is valid
 /// * `Ok(false)` if the signature is invalid but properly formatted
-/// * `Err(LightweightWalletError)` if the hex components are malformed
+/// * `Err(WalletError)` if the hex components are malformed
 ///
 /// # Example
 /// ```
@@ -197,7 +197,7 @@ pub fn verify_message_from_hex(
 ///
 /// # Returns
 /// * `Ok(RistrettoSecretKey)` - The communication key for message signing
-/// * `Err(LightweightWalletError)` - If seed phrase is invalid or key derivation fails
+/// * `Err(WalletError)` - If seed phrase is invalid or key derivation fails
 ///
 /// # Example
 /// ```no_run
@@ -252,7 +252,7 @@ pub fn derive_tari_signing_key(
 ///
 /// # Returns
 /// * `Ok((signature_hex, nonce_hex))` - Hex-encoded signature components
-/// * `Err(LightweightWalletError)` - If signing fails
+/// * `Err(WalletError)` - If signing fails
 ///
 /// # Example
 /// ```no_run

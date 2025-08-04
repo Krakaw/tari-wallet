@@ -26,7 +26,7 @@ use crate::{
         transaction_output::TransactionOutput,
         types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
         wallet_output::{Covenant, OutputFeatures, RangeProof, Script, Signature, WalletOutput},
-        LightweightRangeProofType, OutputType,
+        OutputType, RangeProofType,
     },
     errors::{DataStructureError, WalletError, WalletResult},
     extraction::{extract_wallet_output, ExtractionConfig},
@@ -140,9 +140,9 @@ impl GrpcBlockchainScanner {
                 },
                 maturity: f.maturity,
                 range_proof_type: match f.range_proof_type {
-                    0 => LightweightRangeProofType::BulletProofPlus,
-                    1 => LightweightRangeProofType::RevealedValue,
-                    _ => LightweightRangeProofType::BulletProofPlus,
+                    0 => RangeProofType::BulletProofPlus,
+                    1 => RangeProofType::RevealedValue,
+                    _ => RangeProofType::BulletProofPlus,
                 },
             })
             .unwrap_or_default();
@@ -1140,7 +1140,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            crate::errors::LightweightWalletError::OperationNotSupported(_)
+            crate::errors::WalletError::OperationNotSupported(_)
         ));
     }
 
@@ -1151,7 +1151,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            crate::errors::LightweightWalletError::OperationNotSupported(_)
+            crate::errors::WalletError::OperationNotSupported(_)
         ));
     }
 }

@@ -1,7 +1,7 @@
-//! Core data structures for lightweight wallets
+//! Core data structures for wallets
 //!
 //! This module contains the essential data structures needed for
-//! lightweight wallet operations, including UTXOs, transactions,
+//! wallet operations, including UTXOs, transactions,
 //! and cryptographic primitives.
 
 pub mod address;

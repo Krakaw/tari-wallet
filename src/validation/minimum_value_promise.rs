@@ -7,7 +7,7 @@
 use crate::{
     data_structures::{
         types::{CompressedCommitment, MicroMinotari, PrivateKey},
-        wallet_output::{LightweightRangeProofType, RangeProof},
+        wallet_output::{RangeProof, RangeProofType},
     },
     errors::ValidationError,
 };
@@ -39,14 +39,14 @@ impl Default for MinimumValuePromiseValidationOptions {
     }
 }
 
-/// Lightweight minimum value promise validator
+/// Minimum value promise validator
 #[derive(Debug, Clone)]
-pub struct LightweightMinimumValuePromiseValidator {
+pub struct MinimumValuePromiseValidator {
     /// Default range proof bit length (64 for Tari)
     default_bit_length: usize,
 }
 
-impl Default for LightweightMinimumValuePromiseValidator {
+impl Default for MinimumValuePromiseValidator {
     fn default() -> Self {
         Self {
             default_bit_length: 64, // Tari's default range proof bit length
@@ -54,7 +54,7 @@ impl Default for LightweightMinimumValuePromiseValidator {
     }
 }
 
-impl LightweightMinimumValuePromiseValidator {
+impl MinimumValuePromiseValidator {
     /// Create a new validator with the specified default bit length
     pub fn new(default_bit_length: usize) -> Self {
         Self { default_bit_length }
@@ -80,7 +80,7 @@ impl LightweightMinimumValuePromiseValidator {
         &self,
         minimum_value_promise: MicroMinotari,
         range_proof: Option<&RangeProof>,
-        range_proof_type: &LightweightRangeProofType,
+        range_proof_type: &RangeProofType,
         options: &MinimumValuePromiseValidationOptions,
     ) -> Result<(), ValidationError> {
         let value = minimum_value_promise.as_u64();
@@ -110,12 +110,12 @@ impl LightweightMinimumValuePromiseValidator {
 
         // Validate based on range proof type
         match range_proof_type {
-            LightweightRangeProofType::RevealedValue => {
+            RangeProofType::RevealedValue => {
                 if options.validate_revealed_value_consistency {
                     self.validate_revealed_value_consistency(minimum_value_promise, range_proof)?;
                 }
             }
-            LightweightRangeProofType::BulletProofPlus => {
+            RangeProofType::BulletProofPlus => {
                 if options.validate_bulletproof_consistency {
                     self.validate_bulletproof_consistency(minimum_value_promise, range_proof)?;
                 }
@@ -154,10 +154,7 @@ impl LightweightMinimumValuePromiseValidator {
         }
 
         // Validate range proof bounds
-        self.validate_range_proof_bounds(
-            minimum_value_promise,
-            &LightweightRangeProofType::RevealedValue,
-        )?;
+        self.validate_range_proof_bounds(minimum_value_promise, &RangeProofType::RevealedValue)?;
 
         // Verify the RevealedValue proof using the metadata signature
         // This is the same logic as in the RevealedValue validator
@@ -208,10 +205,7 @@ impl LightweightMinimumValuePromiseValidator {
         commitment: &CompressedCommitment,
     ) -> Result<(), ValidationError> {
         // Validate range proof bounds
-        self.validate_range_proof_bounds(
-            minimum_value_promise,
-            &LightweightRangeProofType::BulletProofPlus,
-        )?;
+        self.validate_range_proof_bounds(minimum_value_promise, &RangeProofType::BulletProofPlus)?;
 
         // Basic structure validation for BulletProofPlus
         if range_proof.bytes.is_empty() {
@@ -253,7 +247,7 @@ impl LightweightMinimumValuePromiseValidator {
     pub fn validate_range_proof_bounds(
         &self,
         minimum_value_promise: MicroMinotari,
-        range_proof_type: &LightweightRangeProofType,
+        range_proof_type: &RangeProofType,
     ) -> Result<(), ValidationError> {
         let value = minimum_value_promise.as_u64();
         let max_value = 1u64
@@ -354,20 +348,20 @@ mod tests {
 
     #[test]
     fn test_validator_creation() {
-        let validator = LightweightMinimumValuePromiseValidator::new(32);
+        let validator = MinimumValuePromiseValidator::new(32);
         assert_eq!(validator.default_bit_length(), 32);
         assert_eq!(validator.max_value(), (1u64 << 32) - 1);
     }
 
     #[test]
     fn test_validator_default() {
-        let validator = LightweightMinimumValuePromiseValidator::default();
+        let validator = MinimumValuePromiseValidator::default();
         assert_eq!(validator.default_bit_length(), 64);
     }
 
     #[test]
     fn test_value_range_checking() {
-        let validator = LightweightMinimumValuePromiseValidator::new(32);
+        let validator = MinimumValuePromiseValidator::new(32);
 
         assert!(validator.is_value_in_range(0));
         assert!(validator.is_value_in_range(1000));
@@ -377,27 +371,21 @@ mod tests {
 
     #[test]
     fn test_range_proof_bounds_validation() {
-        let validator = LightweightMinimumValuePromiseValidator::new(16);
+        let validator = MinimumValuePromiseValidator::new(16);
 
         // Valid values
         assert!(validator
-            .validate_range_proof_bounds(
-                MicroMinotari::new(0),
-                &LightweightRangeProofType::BulletProofPlus
-            )
+            .validate_range_proof_bounds(MicroMinotari::new(0), &RangeProofType::BulletProofPlus)
             .is_ok());
 
         assert!(validator
-            .validate_range_proof_bounds(
-                MicroMinotari::new(1000),
-                &LightweightRangeProofType::BulletProofPlus
-            )
+            .validate_range_proof_bounds(MicroMinotari::new(1000), &RangeProofType::BulletProofPlus)
             .is_ok());
 
         assert!(validator
             .validate_range_proof_bounds(
                 MicroMinotari::new(validator.max_value()),
-                &LightweightRangeProofType::BulletProofPlus
+                &RangeProofType::BulletProofPlus
             )
             .is_ok());
 
@@ -405,14 +393,14 @@ mod tests {
         assert!(validator
             .validate_range_proof_bounds(
                 MicroMinotari::new(validator.max_value() + 1),
-                &LightweightRangeProofType::BulletProofPlus
+                &RangeProofType::BulletProofPlus
             )
             .is_err());
     }
 
     #[test]
     fn test_revealed_value_consistency_validation() {
-        let validator = LightweightMinimumValuePromiseValidator::default();
+        let validator = MinimumValuePromiseValidator::default();
 
         // Valid: RevealedValue with no proof
         assert!(validator
@@ -432,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_bulletproof_consistency_validation() {
-        let validator = LightweightMinimumValuePromiseValidator::default();
+        let validator = MinimumValuePromiseValidator::default();
 
         // Valid: BulletProofPlus with proof
         assert!(validator
@@ -460,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_comprehensive_validation() {
-        let validator = LightweightMinimumValuePromiseValidator::default();
+        let validator = MinimumValuePromiseValidator::default();
         let options = MinimumValuePromiseValidationOptions::default();
 
         // Valid RevealedValue
@@ -468,7 +456,7 @@ mod tests {
             .validate_minimum_value_promise(
                 MicroMinotari::new(1000),
                 None,
-                &LightweightRangeProofType::RevealedValue,
+                &RangeProofType::RevealedValue,
                 &options
             )
             .is_ok());
@@ -480,7 +468,7 @@ mod tests {
                 Some(&RangeProof {
                     bytes: vec![1, 2, 3, 4]
                 }),
-                &LightweightRangeProofType::BulletProofPlus,
+                &RangeProofType::BulletProofPlus,
                 &options
             )
             .is_ok());
@@ -492,7 +480,7 @@ mod tests {
                 Some(&RangeProof {
                     bytes: vec![1, 2, 3, 4]
                 }),
-                &LightweightRangeProofType::RevealedValue,
+                &RangeProofType::RevealedValue,
                 &options
             )
             .is_err());
@@ -502,7 +490,7 @@ mod tests {
             .validate_minimum_value_promise(
                 MicroMinotari::new(1000),
                 None,
-                &LightweightRangeProofType::BulletProofPlus,
+                &RangeProofType::BulletProofPlus,
                 &options
             )
             .is_err());
@@ -510,7 +498,7 @@ mod tests {
 
     #[test]
     fn test_validation_options() {
-        let validator = LightweightMinimumValuePromiseValidator::default();
+        let validator = MinimumValuePromiseValidator::default();
 
         // Test with zero values disabled
         let options = MinimumValuePromiseValidationOptions {
@@ -522,7 +510,7 @@ mod tests {
             .validate_minimum_value_promise(
                 MicroMinotari::new(0),
                 None,
-                &LightweightRangeProofType::RevealedValue,
+                &RangeProofType::RevealedValue,
                 &options
             )
             .is_err());
@@ -537,7 +525,7 @@ mod tests {
             .validate_minimum_value_promise(
                 MicroMinotari::new(500),
                 None,
-                &LightweightRangeProofType::RevealedValue,
+                &RangeProofType::RevealedValue,
                 &options
             )
             .is_ok());
@@ -546,7 +534,7 @@ mod tests {
             .validate_minimum_value_promise(
                 MicroMinotari::new(1500),
                 None,
-                &LightweightRangeProofType::RevealedValue,
+                &RangeProofType::RevealedValue,
                 &options
             )
             .is_err());
@@ -554,7 +542,7 @@ mod tests {
 
     #[test]
     fn test_revealed_value_minimum_promise_validation() {
-        let validator = LightweightMinimumValuePromiseValidator::default();
+        let validator = MinimumValuePromiseValidator::default();
         let minimum_value = MicroMinotari::new(1000);
 
         // Create a valid challenge
@@ -582,7 +570,7 @@ mod tests {
 
     #[test]
     fn test_bulletproof_minimum_promise_validation() {
-        let validator = LightweightMinimumValuePromiseValidator::default();
+        let validator = MinimumValuePromiseValidator::default();
         let minimum_value = MicroMinotari::new(1000);
         let commitment = CompressedCommitment::new([0x08; 32]);
         let range_proof = RangeProof {

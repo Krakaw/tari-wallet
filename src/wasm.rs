@@ -467,7 +467,7 @@ impl WasmScanner {
         &mut self,
         http_block: &HttpBlockData,
     ) -> Result<(usize, usize), String> {
-        // Convert HTTP outputs to LightweightTransactionOutput (same as scanner.rs expects)
+        // Convert HTTP outputs to TransactionOutput (same as scanner.rs expects)
         let outputs = self.convert_http_outputs_to_lightweight(&http_block.outputs)?;
 
         // Handle simplified inputs structure - just convert the commitment hashes to TransactionInput objects
@@ -557,7 +557,7 @@ impl WasmScanner {
     // Spent output tracking is now handled by the simplified inputs which contain
     // just the 32-byte commitment hashes of outputs that have been spent.
 
-    /// Convert HTTP output data to LightweightTransactionOutput (minimal viable format)
+    /// Convert HTTP output data to TransactionOutput (minimal viable format)
     fn convert_http_outputs_to_lightweight(
         &self,
         http_outputs: &[HttpOutputData],
@@ -595,7 +595,7 @@ impl WasmScanner {
             let encrypted_data = EncryptedData::from_bytes(&http_output.encrypted_data)
                 .map_err(|e| format!("Invalid encrypted data: {}", e))?;
 
-            // Create LightweightTransactionOutput with minimal viable data
+            // Create TransactionOutput with minimal viable data
             // HTTP API provides limited data, so we use defaults for missing fields
             let output = TransactionOutput::new_current_version(
                 OutputFeatures::default(), // Default features (will be 0/Standard)
@@ -872,7 +872,7 @@ impl WasmScanner {
         }
     }
 
-    /// Convert legacy OutputData to LightweightTransactionOutput
+    /// Convert legacy OutputData to TransactionOutput
     fn convert_legacy_outputs(
         &self,
         block_data: &BlockData,
@@ -898,7 +898,7 @@ impl WasmScanner {
         Ok(inputs)
     }
 
-    /// Convert OutputData to LightweightTransactionOutput (LEGACY)
+    /// Convert OutputData to TransactionOutput (LEGACY)
     fn convert_legacy_output_data(
         &self,
         output_data: &OutputData,

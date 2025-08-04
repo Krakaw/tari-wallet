@@ -1,4 +1,4 @@
-# Tari Lightweight Wallet Libraries - API Reference
+# Tari Wallet Libraries - API Reference
 
 ---
 Last Updated: 2024-12-19
@@ -22,7 +22,7 @@ Implementation: src/wallet/mod.rs, src/key_management/mod.rs, src/scanning/mod.r
 
 ### Wallet Creation
 
-#### `Wallet::generate_new_with_seed_phrase(passphrase: Option<&str>) -> Result<Wallet, LightweightWalletError>`
+#### `Wallet::generate_new_with_seed_phrase(passphrase: Option<&str>) -> Result<Wallet, WalletError>`
 
 Creates a new wallet with a randomly generated 24-word seed phrase.
 
@@ -38,7 +38,7 @@ assert!(wallet.birthday() > 0);
 assert_eq!(wallet.current_key_index(), 0);
 ```
 
-#### `Wallet::new_from_seed_phrase(seed_phrase: &str, passphrase: Option<&str>) -> Result<Wallet, LightweightWalletError>`
+#### `Wallet::new_from_seed_phrase(seed_phrase: &str, passphrase: Option<&str>) -> Result<Wallet, WalletError>`
 
 Creates a wallet from an existing 24-word seed phrase.
 
@@ -59,7 +59,7 @@ assert_eq!(exported_seed, seed_phrase);
 
 ### Wallet Properties
 
-#### `Wallet::export_seed_phrase() -> Result<String, LightweightWalletError>`
+#### `Wallet::export_seed_phrase() -> Result<String, WalletError>`
 
 Exports the wallet's seed phrase as a 24-word string.
 
@@ -140,7 +140,7 @@ let features = TariAddressFeatures::create_one_sided_only();
 
 ### Dual Address Generation
 
-#### `Wallet::get_dual_address(features: TariAddressFeatures, payment_id: Option<Vec<u8>>) -> Result<TariAddress, LightweightWalletError>`
+#### `Wallet::get_dual_address(features: TariAddressFeatures, payment_id: Option<Vec<u8>>) -> Result<TariAddress, WalletError>`
 
 Generates a dual address with both view and spend keys.
 
@@ -162,7 +162,7 @@ assert_eq!(dual_address.network(), Network::MainNet);
 
 ### Single Address Generation
 
-#### `Wallet::get_single_address(features: TariAddressFeatures) -> Result<TariAddress, LightweightWalletError>`
+#### `Wallet::get_single_address(features: TariAddressFeatures) -> Result<TariAddress, WalletError>`
 
 Generates a single address with only a spend key.
 
@@ -211,7 +211,7 @@ let view_key = address.public_view_key(); // Some(key) for dual, None for single
 
 ### Seed Phrase Operations
 
-#### `generate_seed_phrase() -> Result<String, LightweightWalletError>`
+#### `generate_seed_phrase() -> Result<String, WalletError>`
 
 Generates a new 24-word seed phrase with cryptographically secure randomness.
 
@@ -223,7 +223,7 @@ let seed_phrase = generate_seed_phrase().expect("Failed to generate seed phrase"
 assert_eq!(seed_phrase.split_whitespace().count(), 24);
 ```
 
-#### `validate_seed_phrase(seed_phrase: &str) -> Result<(), LightweightWalletError>`
+#### `validate_seed_phrase(seed_phrase: &str) -> Result<(), WalletError>`
 
 Validates the format and checksum of a seed phrase.
 
@@ -282,7 +282,7 @@ let mut scanner = GrpcScannerBuilder::new()
 
 ### Scanner Operations
 
-#### `BlockchainScanner::get_tip_info() -> Result<TipInfo, LightweightWalletError>`
+#### `BlockchainScanner::get_tip_info() -> Result<TipInfo, WalletError>`
 
 Gets information about the blockchain tip.
 
@@ -299,7 +299,7 @@ let tip_info = scanner.get_tip_info().await
 // - timestamp: u64
 ```
 
-#### `BlockchainScanner::scan_blocks(config: ScanConfig) -> Result<Vec<BlockScanResult>, LightweightWalletError>`
+#### `BlockchainScanner::scan_blocks(config: ScanConfig) -> Result<Vec<BlockScanResult>, WalletError>`
 
 Scans blocks for wallet outputs.
 
@@ -332,7 +332,7 @@ let config = ScanConfig {
 
 ### Key Derivation for Signing
 
-#### `derive_tari_signing_key(seed_phrase: &str, passphrase: Option<&str>) -> Result<RistrettoSecretKey, LightweightWalletError>`
+#### `derive_tari_signing_key(seed_phrase: &str, passphrase: Option<&str>) -> Result<RistrettoSecretKey, WalletError>`
 
 Derives the Tari communication signing key from a seed phrase (exactly as Tari wallet does).
 
@@ -349,7 +349,7 @@ let tari_public_key = RistrettoPublicKey::from_secret_key(&tari_signing_key);
 
 ### Message Signing
 
-#### `sign_message_with_hex_output(secret_key: &RistrettoSecretKey, message: &str) -> Result<(String, String), LightweightWalletError>`
+#### `sign_message_with_hex_output(secret_key: &RistrettoSecretKey, message: &str) -> Result<(String, String), WalletError>`
 
 Signs a message and returns hex-encoded signature and nonce.
 
@@ -365,7 +365,7 @@ let (signature_hex, nonce_hex) = sign_message_with_hex_output(&secret_key, messa
     .expect("Failed to sign message");
 ```
 
-#### `sign_message_with_tari_wallet(seed_phrase: &str, message: &str, passphrase: Option<&str>) -> Result<(String, String), LightweightWalletError>`
+#### `sign_message_with_tari_wallet(seed_phrase: &str, message: &str, passphrase: Option<&str>) -> Result<(String, String), WalletError>`
 
 Signs a message using Tari wallet-compatible key derivation.
 
@@ -382,7 +382,7 @@ let (tari_sig_hex, tari_nonce_hex) = sign_message_with_tari_wallet(seed_phrase, 
 
 ### Message Verification
 
-#### `verify_message_from_hex(public_key: &RistrettoPublicKey, message: &str, signature_hex: &str, nonce_hex: &str) -> Result<bool, LightweightWalletError>`
+#### `verify_message_from_hex(public_key: &RistrettoPublicKey, message: &str, signature_hex: &str, nonce_hex: &str) -> Result<bool, WalletError>`
 
 Verifies a message signature from hex-encoded components.
 
@@ -426,19 +426,19 @@ stored_wallet.save_to_database(&db_connection).await
 The library uses a comprehensive error hierarchy:
 
 ```rust
-use lightweight_wallet_libs::errors::{LightweightWalletError, ValidationError};
-use lightweight_wallet_libs::LightweightWalletResult;
+use lightweight_wallet_libs::errors::{WalletError, ValidationError};
+use lightweight_wallet_libs::WalletResult;
 
 // Type alias for convenience
-type Result<T> = LightweightWalletResult<T>;
+type Result<T> = WalletResult<T>;
 
 // Main error types
 match wallet_operation() {
     Ok(result) => println!("Success: {:?}", result),
-    Err(LightweightWalletError::Validation(e)) => {
+    Err(WalletError::Validation(e)) => {
         eprintln!("Validation error: {}", e);
     },
-    Err(LightweightWalletError::DataStructure(e)) => {
+    Err(WalletError::DataStructure(e)) => {
         eprintln!("Data structure error: {}", e);
     },
     Err(e) => {

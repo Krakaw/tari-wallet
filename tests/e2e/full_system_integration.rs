@@ -10,9 +10,7 @@ use lightweight_wallet_libs::data_structures::{
     address::TariAddressFeatures,
     transaction_output::TransactionOutput,
     types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
-    wallet_output::{
-        Covenant, LightweightRangeProofType, OutputFeatures, OutputType, Script, Signature,
-    },
+    wallet_output::{Covenant, OutputFeatures, OutputType, RangeProofType, Script, Signature},
     Network,
 };
 use lightweight_wallet_libs::errors::*;
@@ -499,7 +497,7 @@ fn create_test_output(
     let features = OutputFeatures {
         output_type: OutputType::Payment,
         maturity: 0,
-        range_proof_type: LightweightRangeProofType::BulletProofPlus,
+        range_proof_type: RangeProofType::BulletProofPlus,
     };
 
     let metadata_signature = Signature {

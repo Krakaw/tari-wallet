@@ -157,7 +157,7 @@ impl EncryptedDataDecryptor {
     ///
     /// # Returns
     /// * `Ok(DecryptionResult)` with the decryption result
-    /// * `Err(LightweightWalletError)` if an error occurred
+    /// * `Err(WalletError)` if an error occurred
     pub fn decrypt_with_key(
         &self,
         encrypted_data: &EncryptedData,
@@ -196,7 +196,7 @@ impl EncryptedDataDecryptor {
     ///
     /// # Returns
     /// * `Ok(DecryptionResult)` with the decryption result
-    /// * `Err(LightweightWalletError)` if an error occurred
+    /// * `Err(WalletError)` if an error occurred
     pub fn decrypt_with_all_keys(
         &self,
         encrypted_data: &EncryptedData,
@@ -274,7 +274,7 @@ impl EncryptedDataDecryptor {
     ///
     /// # Returns
     /// * `Ok(DecryptionResult)` with the decryption result
-    /// * `Err(LightweightWalletError)` if an error occurred
+    /// * `Err(WalletError)` if an error occurred
     pub fn decrypt_transaction_output(
         &self,
         transaction_output: &TransactionOutput,
@@ -293,7 +293,7 @@ impl EncryptedDataDecryptor {
     ///
     /// # Returns
     /// * `Ok(PrivateKey)` if the key was successfully derived
-    /// * `Err(LightweightWalletError)` if key derivation failed
+    /// * `Err(WalletError)` if key derivation failed
     fn try_derive_key_at_index(&self, _key_index: u64) -> Result<PrivateKey, WalletError> {
         // This is a simplified implementation
         // In practice, you'd need the actual key derivation logic from the key manager
@@ -313,7 +313,7 @@ impl EncryptedDataDecryptor {
     ///
     /// # Returns
     /// * `Ok(())` if the data is valid
-    /// * `Err(LightweightWalletError)` if the data is invalid
+    /// * `Err(WalletError)` if the data is invalid
     fn validate_decrypted_data(
         &self,
         value: &MicroMinotari,
@@ -374,7 +374,7 @@ impl EncryptedDataDecryptor {
     ///
     /// # Returns
     /// * `Ok(())` if the key was added successfully
-    /// * `Err(LightweightWalletError)` if adding the key failed
+    /// * `Err(WalletError)` if adding the key failed
     pub fn add_imported_key(
         &mut self,
         imported_key: ImportedPrivateKey,
@@ -392,7 +392,7 @@ impl EncryptedDataDecryptor {
     ///
     /// # Returns
     /// * `Ok(())` if the key was imported successfully
-    /// * `Err(LightweightWalletError)` if importing the key failed
+    /// * `Err(WalletError)` if importing the key failed
     pub fn import_private_key_from_hex(
         &mut self,
         hex: &str,
@@ -411,7 +411,7 @@ impl EncryptedDataDecryptor {
     ///
     /// # Returns
     /// * `Ok(())` if the key was imported successfully
-    /// * `Err(LightweightWalletError)` if importing the key failed
+    /// * `Err(WalletError)` if importing the key failed
     pub fn import_private_key_from_bytes(
         &mut self,
         bytes: [u8; 32],
