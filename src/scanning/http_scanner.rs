@@ -1522,7 +1522,7 @@ mod tests {
         let mut total_wallet_outputs_found = 0;
         let mut wallet_output_hashes = std::collections::HashSet::new();
 
-        for (_i, sync_response) in all_blocks.iter().enumerate() {
+        for sync_response in all_blocks.iter() {
             for http_block in &sync_response.blocks {
                 // Convert HTTP block to BlockInfo
                 let block_info =
@@ -1560,7 +1560,7 @@ mod tests {
         // Now scan all blocks for spent inputs that match our wallet outputs
         let mut total_spent_wallet_inputs = 0;
 
-        for (_i, sync_response) in all_blocks.iter().enumerate() {
+        for sync_response in all_blocks.iter() {
             let http_block = &sync_response.blocks[0];
 
             // Convert HTTP block to BlockInfo
@@ -1655,7 +1655,7 @@ mod tests {
         // Second pass: check for spent wallet outputs by matching input hashes
         let mut spent_outputs_detected = 0;
 
-        for (_i, sync_response) in all_blocks.iter().enumerate() {
+        for sync_response in all_blocks.iter() {
             let http_block = &sync_response.blocks[0];
             let block_info = HttpBlockchainScanner::convert_http_block_to_block_info(http_block)
                 .expect("Block conversion should work");
@@ -1696,12 +1696,12 @@ mod tests {
 
         // Additional analysis: check if any inputs reference the actual output hashes from HTTP data
         let mut cross_referenced_inputs = 0;
-        for (_i, sync_response) in all_blocks.iter().enumerate() {
+        for sync_response in all_blocks.iter() {
             let http_block = &sync_response.blocks[0];
 
             for input_hash in &http_block.inputs {
                 // Check if this input hash matches any output hash from the same or other blocks
-                for (_j, other_sync_response) in all_blocks.iter().enumerate() {
+                for other_sync_response in all_blocks.iter() {
                     let other_http_block = &other_sync_response.blocks[0];
                     for output in &other_http_block.outputs {
                         if input_hash.as_slice() == output.output_hash.as_slice() {
