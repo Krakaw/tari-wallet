@@ -7,7 +7,7 @@
 //! in base_layer/common_types/src/tari_address/
 
 use crate::data_structures::types::CompressedPublicKey;
-use crate::errors::{DataStructureError, LightweightWalletError};
+use crate::errors::{DataStructureError, WalletError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -83,7 +83,7 @@ pub fn compute_checksum(data: &[u8]) -> u8 {
 }
 
 /// Validate that a byte slice has a valid DammSum checksum
-pub fn validate_checksum(data: &[u8]) -> Result<&[u8], LightweightWalletError> {
+pub fn validate_checksum(data: &[u8]) -> Result<&[u8], WalletError> {
     if data.is_empty() {
         return Err(DataStructureError::InvalidChecksum("Empty data".to_string()).into());
     }
@@ -133,7 +133,7 @@ impl Network {
 }
 
 impl TryFrom<u8> for Network {
-    type Error = LightweightWalletError;
+    type Error = WalletError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
@@ -152,7 +152,7 @@ impl TryFrom<u8> for Network {
 }
 
 impl std::str::FromStr for Network {
-    type Err = LightweightWalletError;
+    type Err = WalletError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
@@ -306,7 +306,7 @@ impl DualAddress {
         network: Network,
         features: TariAddressFeatures,
         payment_id_user_data: Option<Vec<u8>>,
-    ) -> Result<Self, LightweightWalletError> {
+    ) -> Result<Self, WalletError> {
         let mut features = features;
         let payment_id_user_data = match payment_id_user_data {
             Some(data) => {
@@ -335,7 +335,7 @@ impl DualAddress {
         view_key: CompressedPublicKey,
         spend_key: CompressedPublicKey,
         network: Network,
-    ) -> Result<Self, LightweightWalletError> {
+    ) -> Result<Self, WalletError> {
         Self::new(
             view_key,
             spend_key,
@@ -348,7 +348,7 @@ impl DualAddress {
     pub fn add_payment_id_user_data(
         &mut self,
         data: Vec<u8>,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         if data.len() > MAX_ENCRYPTED_DATA_SIZE {
             return Err(
                 DataStructureError::InvalidAddress("Payment ID too large".to_string()).into(),
@@ -360,7 +360,7 @@ impl DualAddress {
     }
 
     /// helper function to convert emojis to u8
-    pub fn emoji_to_bytes(emoji: &str) -> Result<Vec<u8>, LightweightWalletError> {
+    pub fn emoji_to_bytes(emoji: &str) -> Result<Vec<u8>, WalletError> {
         let length = emoji.chars().count();
         if !(TARI_ADDRESS_INTERNAL_DUAL_SIZE
             ..=TARI_ADDRESS_INTERNAL_DUAL_SIZE + MAX_ENCRYPTED_DATA_SIZE)
@@ -385,7 +385,7 @@ impl DualAddress {
     }
 
     /// Construct an TariAddress from an emoji string
-    pub fn from_emoji_string(emoji: &str) -> Result<Self, LightweightWalletError> {
+    pub fn from_emoji_string(emoji: &str) -> Result<Self, WalletError> {
         let bytes = Self::emoji_to_bytes(emoji)?;
         Self::from_bytes(&bytes)
     }
@@ -422,7 +422,7 @@ impl DualAddress {
     }
 
     /// Construct Tari Address from bytes
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, LightweightWalletError>
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, WalletError>
     where
         Self: Sized,
     {
@@ -485,7 +485,7 @@ impl DualAddress {
     }
 
     /// Construct Tari Address from Base58 (exact format from source of truth)
-    pub fn from_base58(base58_str: &str) -> Result<Self, LightweightWalletError> {
+    pub fn from_base58(base58_str: &str) -> Result<Self, WalletError> {
         if base58_str.len() < INTERNAL_DUAL_BASE58_MIN_SIZE
             || base58_str.len() > INTERNAL_DUAL_BASE58_MAX_SIZE
         {
@@ -529,7 +529,7 @@ impl DualAddress {
     }
 
     /// Construct Tari Address from emoji format (using correct EMOJI array)
-    pub fn from_emoji(emoji_str: &str) -> Result<Self, LightweightWalletError> {
+    pub fn from_emoji(emoji_str: &str) -> Result<Self, WalletError> {
         let mut bytes = Vec::new();
 
         for emoji_char in emoji_str.chars() {
@@ -553,7 +553,7 @@ impl DualAddress {
     }
 
     /// Creates Tari dual Address from hex
-    pub fn from_hex(hex_str: &str) -> Result<Self, LightweightWalletError> {
+    pub fn from_hex(hex_str: &str) -> Result<Self, WalletError> {
         let buf = hex::decode(hex_str).map_err(|_| {
             DataStructureError::InvalidAddress("Cannot recover public key".to_string())
         })?;
@@ -585,7 +585,7 @@ impl SingleAddress {
         spend_key: CompressedPublicKey,
         network: Network,
         features: TariAddressFeatures,
-    ) -> Result<Self, LightweightWalletError> {
+    ) -> Result<Self, WalletError> {
         Ok(Self {
             network,
             features,
@@ -597,7 +597,7 @@ impl SingleAddress {
     pub fn new_with_interactive_only(
         spend_key: CompressedPublicKey,
         network: Network,
-    ) -> Result<Self, LightweightWalletError> {
+    ) -> Result<Self, WalletError> {
         Self::new(
             spend_key,
             network,
@@ -606,7 +606,7 @@ impl SingleAddress {
     }
 
     /// helper function to convert emojis to u8
-    pub fn emoji_to_bytes(emoji: &str) -> Result<Vec<u8>, LightweightWalletError> {
+    pub fn emoji_to_bytes(emoji: &str) -> Result<Vec<u8>, WalletError> {
         // The string must be the correct size, including the checksum
         let length = emoji.chars().count();
         if length != TARI_ADDRESS_INTERNAL_SINGLE_SIZE {
@@ -631,7 +631,7 @@ impl SingleAddress {
     }
 
     /// Construct an TariAddress from an emoji string
-    pub fn from_emoji_string(emoji: &str) -> Result<Self, LightweightWalletError> {
+    pub fn from_emoji_string(emoji: &str) -> Result<Self, WalletError> {
         let bytes = Self::emoji_to_bytes(emoji)?;
         Self::from_bytes(&bytes)
     }
@@ -659,7 +659,7 @@ impl SingleAddress {
     }
 
     /// Construct Tari Address from bytes
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, LightweightWalletError>
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, WalletError>
     where
         Self: Sized,
     {
@@ -708,7 +708,7 @@ impl SingleAddress {
     }
 
     /// Construct Tari Address from Base58 (exact format from source of truth)  
-    pub fn from_base58(base58_str: &str) -> Result<Self, LightweightWalletError> {
+    pub fn from_base58(base58_str: &str) -> Result<Self, WalletError> {
         if base58_str.len() < INTERNAL_SINGLE_MIN_BASE58_SIZE
             || base58_str.len() > INTERNAL_SINGLE_MAX_BASE58_SIZE
         {
@@ -752,7 +752,7 @@ impl SingleAddress {
     }
 
     /// Construct Tari Address from emoji format (using correct EMOJI array)
-    pub fn from_emoji(emoji_str: &str) -> Result<Self, LightweightWalletError> {
+    pub fn from_emoji(emoji_str: &str) -> Result<Self, WalletError> {
         let mut bytes = Vec::new();
 
         for emoji_char in emoji_str.chars() {
@@ -776,7 +776,7 @@ impl SingleAddress {
     }
 
     /// Creates Tari single Address from hex
-    pub fn from_hex(hex_str: &str) -> Result<Self, LightweightWalletError> {
+    pub fn from_hex(hex_str: &str) -> Result<Self, WalletError> {
         let buf = hex::decode(hex_str).map_err(|_| {
             DataStructureError::InvalidAddress("Cannot recover public key".to_string())
         })?;
@@ -799,7 +799,7 @@ impl TariAddress {
         network: Network,
         features: TariAddressFeatures,
         payment_id_user_data: Option<Vec<u8>>,
-    ) -> Result<Self, LightweightWalletError> {
+    ) -> Result<Self, WalletError> {
         Ok(TariAddress::Dual(DualAddress::new(
             view_key,
             spend_key,
@@ -814,7 +814,7 @@ impl TariAddress {
         spend_key: CompressedPublicKey,
         network: Network,
         features: TariAddressFeatures,
-    ) -> Result<Self, LightweightWalletError> {
+    ) -> Result<Self, WalletError> {
         Ok(TariAddress::Single(SingleAddress::new(
             spend_key, network, features,
         )?))
@@ -825,7 +825,7 @@ impl TariAddress {
         view_key: CompressedPublicKey,
         spend_key: CompressedPublicKey,
         network: Network,
-    ) -> Result<Self, LightweightWalletError> {
+    ) -> Result<Self, WalletError> {
         Ok(TariAddress::Dual(DualAddress::new_with_default_features(
             view_key, spend_key, network,
         )?))
@@ -835,14 +835,14 @@ impl TariAddress {
     pub fn new_single_address_with_interactive_only(
         spend_key: CompressedPublicKey,
         network: Network,
-    ) -> Result<Self, LightweightWalletError> {
+    ) -> Result<Self, WalletError> {
         Ok(TariAddress::Single(
             SingleAddress::new_with_interactive_only(spend_key, network)?,
         ))
     }
 
     /// Construct Tari Address from an emoji string
-    pub fn from_emoji_string(emoji: &str) -> Result<Self, LightweightWalletError> {
+    pub fn from_emoji_string(emoji: &str) -> Result<Self, WalletError> {
         let length = emoji.chars().count();
         if length == TARI_ADDRESS_INTERNAL_SINGLE_SIZE {
             Ok(TariAddress::Single(SingleAddress::from_emoji_string(
@@ -859,7 +859,7 @@ impl TariAddress {
     }
 
     /// Construct Tari Address from Base58
-    pub fn from_base58(base58_str: &str) -> Result<Self, LightweightWalletError> {
+    pub fn from_base58(base58_str: &str) -> Result<Self, WalletError> {
         if base58_str.len() < INTERNAL_SINGLE_MIN_BASE58_SIZE {
             return Err(
                 DataStructureError::InvalidAddress("Invalid base58 size".to_string()).into(),
@@ -888,14 +888,14 @@ impl TariAddress {
     }
 
     /// Construct Tari Address from hex
-    pub fn from_hex(hex_str: &str) -> Result<Self, LightweightWalletError> {
+    pub fn from_hex(hex_str: &str) -> Result<Self, WalletError> {
         let bytes = hex::decode(hex_str)
             .map_err(|_| DataStructureError::InvalidAddress("Invalid hex".to_string()))?;
         Self::from_bytes(&bytes)
     }
 
     /// Construct Tari Address from bytes
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, LightweightWalletError>
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, WalletError>
     where
         Self: Sized,
     {
@@ -982,7 +982,7 @@ impl TariAddress {
     }
 
     /// Try to parse a string as a Tari address (auto-detects format)
-    pub fn from_string(input: &str) -> Result<Self, LightweightWalletError> {
+    pub fn from_string(input: &str) -> Result<Self, WalletError> {
         // Try emoji first (most common)
         if let Ok(address) = Self::from_emoji_string(input) {
             return Ok(address);

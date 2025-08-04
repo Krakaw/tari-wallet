@@ -671,13 +671,13 @@ impl DatabaseStorageListener {
                         response_tx,
                     })
                     .map_err(|_| {
-                        crate::LightweightWalletError::StorageError(
+                        crate::WalletError::StorageError(
                             "Background writer channel closed".to_string(),
                         )
                     })?;
 
                 return response_rx.await.map_err(|_| {
-                    crate::LightweightWalletError::StorageError(
+                    crate::WalletError::StorageError(
                         "Background writer response lost".to_string(),
                     )
                 })?;
@@ -706,13 +706,13 @@ impl DatabaseStorageListener {
                         response_tx,
                     })
                     .map_err(|_| {
-                        crate::LightweightWalletError::StorageError(
+                        crate::WalletError::StorageError(
                             "Background writer channel closed".to_string(),
                         )
                     })?;
 
                 return response_rx.await.map_err(|_| {
-                    crate::LightweightWalletError::StorageError(
+                    crate::WalletError::StorageError(
                         "Background writer response lost".to_string(),
                     )
                 })?;

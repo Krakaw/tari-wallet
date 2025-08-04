@@ -18,7 +18,7 @@ use lightweight_wallet_libs::{
         seed_phrase::{mnemonic_to_bytes, CipherSeed},
     },
     storage::{SqliteStorage, StoredWallet, WalletStorage},
-    LightweightWalletError,
+    WalletError,
 };
 
 /// Tari Wallet CLI
@@ -937,7 +937,7 @@ async fn handle_create_wallet(
         let entropy = cipher_seed.entropy();
 
         let entropy_array: [u8; 16] = entropy.try_into().map_err(|_| {
-            LightweightWalletError::KeyManagementError(
+            WalletError::KeyManagementError(
                 lightweight_wallet_libs::KeyManagementError::key_derivation_failed(
                     "Invalid entropy length",
                 ),
@@ -950,7 +950,7 @@ async fn handle_create_wallet(
         let view_key = PrivateKey::new({
             use tari_utilities::ByteArray;
             view_key_raw.as_bytes().try_into().map_err(|_| {
-                LightweightWalletError::KeyManagementError(
+                WalletError::KeyManagementError(
                     lightweight_wallet_libs::KeyManagementError::key_derivation_failed(
                         "Failed to convert view key",
                     ),

@@ -256,7 +256,7 @@ mod tests {
     impl WalletStorage for MockStorage {
         async fn initialize(&self) -> WalletResult<()> {
             if *self.should_fail.lock().unwrap() {
-                Err(crate::errors::LightweightWalletError::StorageError(
+                Err(crate::errors::WalletError::StorageError(
                     "Mock failure".to_string(),
                 ))
             } else {
@@ -266,7 +266,7 @@ mod tests {
 
         async fn save_wallet(&self, _wallet: &StoredWallet) -> WalletResult<u32> {
             if *self.should_fail.lock().unwrap() {
-                Err(crate::errors::LightweightWalletError::StorageError(
+                Err(crate::errors::WalletError::StorageError(
                     "Mock failure".to_string(),
                 ))
             } else {
@@ -276,7 +276,7 @@ mod tests {
 
         async fn get_wallet_by_id(&self, _id: u32) -> WalletResult<Option<StoredWallet>> {
             if *self.should_fail.lock().unwrap() {
-                Err(crate::errors::LightweightWalletError::StorageError(
+                Err(crate::errors::WalletError::StorageError(
                     "Mock failure".to_string(),
                 ))
             } else {
@@ -286,7 +286,7 @@ mod tests {
 
         async fn get_wallet_by_name(&self, _name: &str) -> WalletResult<Option<StoredWallet>> {
             if *self.should_fail.lock().unwrap() {
-                Err(crate::errors::LightweightWalletError::StorageError(
+                Err(crate::errors::WalletError::StorageError(
                     "Mock failure".to_string(),
                 ))
             } else {
@@ -296,7 +296,7 @@ mod tests {
 
         async fn list_wallets(&self) -> WalletResult<Vec<StoredWallet>> {
             if *self.should_fail.lock().unwrap() {
-                Err(crate::errors::LightweightWalletError::StorageError(
+                Err(crate::errors::WalletError::StorageError(
                     "Mock failure".to_string(),
                 ))
             } else {
@@ -310,7 +310,7 @@ mod tests {
             transactions: &[WalletTransaction],
         ) -> WalletResult<()> {
             if *self.should_fail.lock().unwrap() {
-                Err(crate::errors::LightweightWalletError::StorageError(
+                Err(crate::errors::WalletError::StorageError(
                     "Mock failure".to_string(),
                 ))
             } else {
@@ -324,7 +324,7 @@ mod tests {
 
         async fn save_outputs(&self, outputs: &[StoredOutput]) -> WalletResult<Vec<u32>> {
             if *self.should_fail.lock().unwrap() {
-                Err(crate::errors::LightweightWalletError::StorageError(
+                Err(crate::errors::WalletError::StorageError(
                     "Mock failure".to_string(),
                 ))
             } else {
@@ -335,7 +335,7 @@ mod tests {
 
         async fn get_unspent_outputs(&self, _wallet_id: u32) -> WalletResult<Vec<StoredOutput>> {
             if *self.should_fail.lock().unwrap() {
-                Err(crate::errors::LightweightWalletError::StorageError(
+                Err(crate::errors::WalletError::StorageError(
                     "Mock failure".to_string(),
                 ))
             } else {
@@ -349,7 +349,7 @@ mod tests {
             block_height: u64,
         ) -> WalletResult<()> {
             if *self.should_fail.lock().unwrap() {
-                Err(crate::errors::LightweightWalletError::StorageError(
+                Err(crate::errors::WalletError::StorageError(
                     "Mock failure".to_string(),
                 ))
             } else {
@@ -368,7 +368,7 @@ mod tests {
             input_index: usize,
         ) -> WalletResult<bool> {
             if *self.should_fail.lock().unwrap() {
-                Err(crate::errors::LightweightWalletError::StorageError(
+                Err(crate::errors::WalletError::StorageError(
                     "Mock failure".to_string(),
                 ))
             } else {
@@ -386,7 +386,7 @@ mod tests {
             commitments: &[(CompressedCommitment, u64, usize)],
         ) -> WalletResult<usize> {
             if *self.should_fail.lock().unwrap() {
-                Err(crate::errors::LightweightWalletError::StorageError(
+                Err(crate::errors::WalletError::StorageError(
                     "Mock failure".to_string(),
                 ))
             } else {
@@ -400,7 +400,7 @@ mod tests {
             _wallet_id: Option<u32>,
         ) -> WalletResult<StorageStats> {
             if *self.should_fail.lock().unwrap() {
-                Err(crate::errors::LightweightWalletError::StorageError(
+                Err(crate::errors::WalletError::StorageError(
                     "Mock failure".to_string(),
                 ))
             } else {

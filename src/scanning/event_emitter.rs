@@ -46,10 +46,10 @@ use js_sys;
 
 use crate::data_structures::{
     block::Block,
-    transaction_output::LightweightTransactionOutput,
+    transaction_output::TransactionOutput,
     wallet_transaction::{WalletState, WalletTransaction},
 };
-use crate::errors::LightweightWalletError;
+use crate::errors::WalletError;
 use crate::events::{
     types::{
         AddressInfo, BlockInfo, EventMetadata, OutputData, ScanConfig, SpentOutputData,
@@ -142,7 +142,7 @@ impl ScanEventEmitter {
         context: &ScanContext,
         block_range: (u64, u64),
         wallet_context: HashMap<String, String>,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         self.scan_start_time = Some(SystemTime::now());
         self.current_config = Some(config.clone());
         self.current_context = Some(context.clone());
@@ -176,7 +176,7 @@ impl ScanEventEmitter {
         processing_duration: Duration,
         outputs_found: usize,
         spent_outputs_count: usize,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         let metadata = self.create_metadata();
         let event = WalletScanEvent::BlockProcessed {
             metadata,
@@ -197,11 +197,11 @@ impl ScanEventEmitter {
     /// This should be called when a wallet output is discovered during scanning.
     pub async fn emit_output_found(
         &mut self,
-        output: &LightweightTransactionOutput,
+        output: &TransactionOutput,
         block_info: &BlockInfo,
         address_info: &AddressInfo,
         transaction: &WalletTransaction,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         let metadata = self.create_metadata();
         let output_data = OutputData {
             commitment: hex::encode(output.commitment.as_bytes()),
@@ -253,7 +253,7 @@ impl ScanEventEmitter {
         input_index: usize,
         match_method: &str,
         original_block_info: &BlockInfo,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         let metadata = self.create_metadata();
 
         // Create spent output data
@@ -324,7 +324,7 @@ impl ScanEventEmitter {
         _outputs_found: usize,
         processing_rate: Option<f64>,
         estimated_completion: Option<SystemTime>,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         let metadata = self.create_metadata();
         let percentage = if total_blocks > 0 {
             (blocks_processed as f64 / total_blocks as f64 * 100.0).min(100.0)
@@ -360,7 +360,7 @@ impl ScanEventEmitter {
         final_stats: &ScanMetadata,
         wallet_state: &WalletState,
         success: bool,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         let metadata = self.create_metadata();
         let mut final_statistics = HashMap::new();
         final_statistics.insert(
@@ -391,11 +391,11 @@ impl ScanEventEmitter {
     /// This should be called when an error occurs during scanning.
     pub async fn emit_scan_error(
         &mut self,
-        error: &LightweightWalletError,
+        error: &WalletError,
         current_block: Option<u64>,
         can_retry: bool,
         retry_count: u32,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         let metadata = self.create_metadata();
         let retry_info = if can_retry {
             if let Some(block) = current_block {
@@ -431,7 +431,7 @@ impl ScanEventEmitter {
         reason: String,
         current_block: u64,
         partial_stats: Option<&ScanMetadata>,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         let metadata = self.create_metadata();
         let mut final_statistics = HashMap::new();
         if let Some(stats) = partial_stats {
@@ -512,7 +512,7 @@ impl ScanEventEmitter {
         &self,
         database_path: &str,
         wallet_id: Option<u32>,
-    ) -> Result<Option<WalletState>, LightweightWalletError> {
+    ) -> Result<Option<WalletState>, WalletError> {
         use crate::storage::{SqliteStorage, WalletStorage};
 
         if let Some(wallet_id) = wallet_id {
@@ -568,7 +568,7 @@ pub fn create_block_info_from_block(block: &Block) -> BlockInfo {
 pub fn create_default_event_emitter(
     source: String,
     correlation_id: Option<String>,
-) -> Result<ScanEventEmitter, LightweightWalletError> {
+) -> Result<ScanEventEmitter, WalletError> {
     use crate::events::listeners::{ConsoleLoggingListener, ProgressTrackingListener};
 
     let mut dispatcher = EventDispatcher::new();
@@ -578,7 +578,7 @@ pub fn create_default_event_emitter(
     dispatcher
         .register(Box::new(progress_listener))
         .map_err(|e| {
-            LightweightWalletError::from(format!("Failed to register progress listener: {e}"))
+            WalletError::from(format!("Failed to register progress listener: {e}"))
         })?;
 
     // Add default console logging listener
@@ -586,7 +586,7 @@ pub fn create_default_event_emitter(
     dispatcher
         .register(Box::new(console_listener))
         .map_err(|e| {
-            LightweightWalletError::from(format!("Failed to register console listener: {e}"))
+            WalletError::from(format!("Failed to register console listener: {e}"))
         })?;
 
     let mut emitter = ScanEventEmitter::new(dispatcher, source).with_fire_and_forget(true); // Enable fire-and-forget by default for scanning performance
@@ -607,7 +607,7 @@ pub async fn create_database_event_emitter(
     source: String,
     correlation_id: Option<String>,
     database_path: Option<String>,
-) -> Result<ScanEventEmitter, LightweightWalletError> {
+) -> Result<ScanEventEmitter, WalletError> {
     use crate::events::listeners::{DatabaseStorageListener, ProgressTrackingListener};
 
     let mut dispatcher = EventDispatcher::new();
@@ -616,7 +616,7 @@ pub async fn create_database_event_emitter(
     if let Some(path) = database_path {
         let db_listener = DatabaseStorageListener::new(&path).await?;
         dispatcher.register(Box::new(db_listener)).map_err(|e| {
-            LightweightWalletError::from(format!("Failed to register database listener: {e}"))
+            WalletError::from(format!("Failed to register database listener: {e}"))
         })?;
     }
 
@@ -625,7 +625,7 @@ pub async fn create_database_event_emitter(
     dispatcher
         .register(Box::new(progress_listener))
         .map_err(|e| {
-            LightweightWalletError::from(format!("Failed to register progress listener: {e}"))
+            WalletError::from(format!("Failed to register progress listener: {e}"))
         })?;
 
     let mut emitter = ScanEventEmitter::new(dispatcher, source);

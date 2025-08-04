@@ -9,10 +9,10 @@ use crate::{
         payment_id::PaymentId,
         transaction::TransactionDirection,
         transaction_input::TransactionInput,
-        transaction_output::LightweightTransactionOutput,
+        transaction_output::TransactionOutput,
         types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
         wallet_output::{
-            LightweightCovenant, LightweightOutputFeatures, LightweightScript, LightweightSignature,
+            Covenant, OutputFeatures, Script, Signature,
         },
         wallet_transaction::WalletState,
     },
@@ -563,7 +563,7 @@ impl WasmScanner {
     fn convert_http_outputs_to_lightweight(
         &self,
         http_outputs: &[HttpOutputData],
-    ) -> Result<Vec<LightweightTransactionOutput>, String> {
+    ) -> Result<Vec<TransactionOutput>, String> {
         let mut outputs = Vec::new();
 
         for http_output in http_outputs {
@@ -599,14 +599,14 @@ impl WasmScanner {
 
             // Create LightweightTransactionOutput with minimal viable data
             // HTTP API provides limited data, so we use defaults for missing fields
-            let output = LightweightTransactionOutput::new_current_version(
-                LightweightOutputFeatures::default(), // Default features (will be 0/Standard)
+            let output = TransactionOutput::new_current_version(
+                OutputFeatures::default(), // Default features (will be 0/Standard)
                 commitment,
                 None,                         // Range proof not provided in HTTP API
-                LightweightScript::default(), // Script not provided, use empty/default
+                Script::default(), // Script not provided, use empty/default
                 sender_offset_public_key,
-                LightweightSignature::default(), // Metadata signature not provided, use default
-                LightweightCovenant::default(),  // Covenant not provided, use default
+                Signature::default(), // Metadata signature not provided, use default
+                Covenant::default(),  // Covenant not provided, use default
                 encrypted_data,
                 MicroMinotari::from(0u64), // Minimum value promise not provided, use 0
             );
@@ -878,7 +878,7 @@ impl WasmScanner {
     fn convert_legacy_outputs(
         &self,
         block_data: &BlockData,
-    ) -> Result<Vec<LightweightTransactionOutput>, String> {
+    ) -> Result<Vec<TransactionOutput>, String> {
         let mut outputs = Vec::new();
         for output_data in &block_data.outputs {
             let output = self.convert_legacy_output_data(output_data)?;
@@ -904,7 +904,7 @@ impl WasmScanner {
     fn convert_legacy_output_data(
         &self,
         output_data: &OutputData,
-    ) -> Result<LightweightTransactionOutput, String> {
+    ) -> Result<TransactionOutput, String> {
         // Parse commitment
         let commitment = CompressedCommitment::from_hex(&output_data.commitment)
             .map_err(|e| format!("Invalid commitment hex: {}", e))?;
@@ -919,14 +919,14 @@ impl WasmScanner {
             .map_err(|e| format!("Invalid encrypted data hex: {}", e))?;
 
         // Create output with available data
-        Ok(LightweightTransactionOutput::new_current_version(
-            LightweightOutputFeatures::default(), // Use default features
+        Ok(TransactionOutput::new_current_version(
+            OutputFeatures::default(), // Use default features
             commitment,
             None,                         // Range proof not provided in UTXO sync
-            LightweightScript::default(), // Script not provided or use default
+            Script::default(), // Script not provided or use default
             sender_offset_public_key,
-            LightweightSignature::default(), // Metadata signature not provided or use default
-            LightweightCovenant::default(),  // Covenant not provided or use default
+            Signature::default(), // Metadata signature not provided or use default
+            Covenant::default(),  // Covenant not provided or use default
             encrypted_data,
             MicroMinotari::from(output_data.minimum_value_promise),
         ))
@@ -937,7 +937,7 @@ impl WasmScanner {
         &self,
         input_data: &InputData,
     ) -> Result<TransactionInput, String> {
-        use crate::data_structures::transaction_input::LightweightExecutionStack;
+        use crate::data_structures::transaction_input::ExecutionStack;
 
         // Parse commitment
         let commitment_bytes = hex::decode(&input_data.commitment)
@@ -967,7 +967,7 @@ impl WasmScanner {
             script_signature: [0u8; 64], // Not provided in UTXO sync
             sender_offset_public_key,
             covenant: Vec::new(),                         // Not provided
-            input_data: LightweightExecutionStack::new(), // Not provided
+            input_data: ExecutionStack::new(), // Not provided
             output_hash: [0u8; 32],                       // Not provided in UTXO sync
             output_features: 0,                           // Not provided
             output_metadata_signature: [0u8; 64],         // Not provided
@@ -986,7 +986,7 @@ impl WasmScanner {
         inputs: &Option<Vec<Vec<u8>>>,
     ) -> Result<Vec<TransactionInput>, String> {
         use crate::data_structures::{
-            transaction_input::{LightweightExecutionStack, TransactionInput},
+            transaction_input::{ExecutionStack, TransactionInput},
             types::{CompressedPublicKey, MicroMinotari},
         };
 
@@ -1015,7 +1015,7 @@ impl WasmScanner {
                     [0u8; 64], // script_signature (not available)
                     CompressedPublicKey::default(), // sender_offset_public_key (not available)
                     Vec::new(), // covenant (not available)
-                    LightweightExecutionStack::new(), // input_data (not available)
+                    ExecutionStack::new(), // input_data (not available)
                     output_hash, // output_hash (CRITICAL: this is the actual data from HTTP API)
                     0,         // output_features (not available)
                     [0u8; 64], // output_metadata_signature (not available)

@@ -2,7 +2,7 @@ use thiserror::Error;
 
 /// Main error type for the lightweight wallet library
 #[derive(Debug, Error)]
-pub enum LightweightWalletError {
+pub enum WalletError {
     #[error("Data structure error: {0}")]
     DataStructureError(#[from] DataStructureError),
 
@@ -600,27 +600,27 @@ impl From<std::io::Error> for SerializationError {
     }
 }
 
-impl From<String> for LightweightWalletError {
+impl From<String> for WalletError {
     fn from(err: String) -> Self {
-        LightweightWalletError::InternalError(err)
+        WalletError::InternalError(err)
     }
 }
 
-impl From<&str> for LightweightWalletError {
+impl From<&str> for WalletError {
     fn from(err: &str) -> Self {
-        LightweightWalletError::InternalError(err.to_string())
+        WalletError::InternalError(err.to_string())
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-impl From<wasm_bindgen::JsValue> for LightweightWalletError {
+impl From<wasm_bindgen::JsValue> for WalletError {
     fn from(err: wasm_bindgen::JsValue) -> Self {
         let message = if let Some(string) = err.as_string() {
             string
         } else {
             format!("{:?}", err)
         };
-        LightweightWalletError::NetworkError(format!("WASM error: {}", message))
+        WalletError::NetworkError(format!("WASM error: {}", message))
     }
 }
 
@@ -1115,7 +1115,7 @@ impl EncryptionError {
 }
 
 /// Result type for lightweight wallet operations
-pub type WalletResult<T> = Result<T, LightweightWalletError>;
+pub type WalletResult<T> = Result<T, WalletError>;
 
 #[cfg(test)]
 mod tests {
@@ -1123,19 +1123,19 @@ mod tests {
 
     #[test]
     fn test_lightweight_wallet_error_display() {
-        let error = LightweightWalletError::ConversionError("test error".to_string());
+        let error = WalletError::ConversionError("test error".to_string());
         assert_eq!(error.to_string(), "Conversion error: test error");
     }
 
     #[test]
     fn test_lightweight_wallet_error_from_string() {
-        let error = LightweightWalletError::from("test error");
+        let error = WalletError::from("test error");
         assert_eq!(error.to_string(), "Internal error: test error");
     }
 
     #[test]
     fn test_lightweight_wallet_error_from_str() {
-        let error = LightweightWalletError::from("test error");
+        let error = WalletError::from("test error");
         assert_eq!(error.to_string(), "Internal error: test error");
     }
 
@@ -1459,7 +1459,7 @@ mod tests {
             use wasm_bindgen::JsValue;
 
             let js_error = JsValue::from_str("JavaScript error");
-            let wallet_error = LightweightWalletError::from(js_error);
+            let wallet_error = WalletError::from(js_error);
             assert!(wallet_error.to_string().contains("WASM error"));
         }
     }
@@ -1468,15 +1468,15 @@ mod tests {
     fn test_error_hierarchy() {
         // Test that sub-errors convert to main error
         let data_error = DataStructureError::InvalidAddress("test".to_string());
-        let wallet_error = LightweightWalletError::from(data_error);
+        let wallet_error = WalletError::from(data_error);
         assert!(wallet_error.to_string().contains("Data structure error"));
 
         let validation_error = ValidationError::RangeProofValidationFailed("test".to_string());
-        let wallet_error = LightweightWalletError::from(validation_error);
+        let wallet_error = WalletError::from(validation_error);
         assert!(wallet_error.to_string().contains("Validation error"));
 
         let key_error = KeyManagementError::KeyNotFound("test".to_string());
-        let wallet_error = LightweightWalletError::from(key_error);
+        let wallet_error = WalletError::from(key_error);
         assert!(wallet_error.to_string().contains("Key management error"));
     }
 }

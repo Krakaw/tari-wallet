@@ -24,7 +24,7 @@ use crate::{
             CompressedCommitment, CompressedPublicKey, EncryptedDataKey, MicroMinotari, PrivateKey,
         },
     },
-    errors::{DataStructureError, EncryptionError, LightweightWalletError},
+    errors::{DataStructureError, EncryptionError, WalletError},
     hex_utils::{HexEncodable, HexError, HexValidatable},
 };
 
@@ -97,7 +97,7 @@ impl EncryptedData {
         value: MicroMinotari,
         mask: &PrivateKey,
         payment_id: PaymentId,
-    ) -> Result<EncryptedData, LightweightWalletError> {
+    ) -> Result<EncryptedData, WalletError> {
         // Encode the value and mask
         let mut bytes = Zeroizing::new(vec![0; SIZE_VALUE + SIZE_MASK + payment_id.get_size()]);
         bytes[..SIZE_VALUE].clone_from_slice(value.as_u64().to_le_bytes().as_ref());
@@ -186,7 +186,7 @@ impl EncryptedData {
     }
 
     /// Parse encrypted data from a byte slice
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, LightweightWalletError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
         if bytes.len() < STATIC_ENCRYPTED_DATA_SIZE_TOTAL {
             return Err(DataStructureError::data_too_small(
                 STATIC_ENCRYPTED_DATA_SIZE_TOTAL,

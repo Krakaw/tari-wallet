@@ -12,7 +12,7 @@ use tokio::time::timeout;
 
 use lightweight_wallet_libs::data_structures::{
     address::{TariAddress, TariAddressFeatures},
-    transaction_output::LightweightTransactionOutput,
+    transaction_output::TransactionOutput,
     types::PrivateKey,
 };
 use lightweight_wallet_libs::extraction::ExtractionConfig;
@@ -167,19 +167,19 @@ impl DatasetGenerator {
         blocks
     }
 
-    fn create_mock_output(&self, value: u64) -> LightweightTransactionOutput {
+    fn create_mock_output(&self, value: u64) -> TransactionOutput {
         use lightweight_wallet_libs::data_structures::{
             encrypted_data::EncryptedData,
-            transaction_output::LightweightTransactionOutput,
+            transaction_output::TransactionOutput,
             types::{CompressedCommitment, CompressedPublicKey, MicroMinotari},
             wallet_output::{
-                LightweightCovenant, LightweightOutputFeatures, LightweightOutputType,
-                LightweightRangeProofType, LightweightScript, LightweightSignature,
+                Covenant, OutputFeatures, OutputType,
+                LightweightRangeProofType, Script, Signature,
             },
         };
 
-        let features = LightweightOutputFeatures {
-            output_type: LightweightOutputType::Payment,
+        let features = OutputFeatures {
+            output_type: OutputType::Payment,
             maturity: 0,
             range_proof_type: LightweightRangeProofType::BulletProofPlus,
         };
@@ -187,20 +187,20 @@ impl DatasetGenerator {
         let commitment = CompressedCommitment::new([0x42; 32]);
         let sender_offset_public_key =
             CompressedPublicKey::from_private_key(&PrivateKey::new([0x42; 32]));
-        let metadata_signature = LightweightSignature::default();
+        let metadata_signature = Signature::default();
 
         let micro_value = MicroMinotari::from(value);
         let encrypted_data = EncryptedData::default(); // Mock encrypted data
 
-        LightweightTransactionOutput::new(
+        TransactionOutput::new(
             1, // version
             features,
             commitment,
             None, // proof
-            LightweightScript::default(),
+            Script::default(),
             sender_offset_public_key,
             metadata_signature,
-            LightweightCovenant::default(),
+            Covenant::default(),
             encrypted_data,
             micro_value, // minimum_value_promise
         )

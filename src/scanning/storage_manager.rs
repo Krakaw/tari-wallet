@@ -10,7 +10,7 @@
 #[cfg(feature = "storage")]
 use crate::{
     data_structures::{types::CompressedCommitment, wallet_transaction::WalletTransaction},
-    errors::{LightweightWalletError, WalletResult},
+    errors::{WalletError, WalletResult},
     storage::{SqliteStorage, StoredOutput, StoredWallet, WalletStorage},
 };
 
@@ -182,10 +182,10 @@ impl ScannerStorage {
         quiet: bool,
     ) -> WalletResult<Option<ScanContext>> {
         let storage = self.database.as_ref().ok_or_else(|| {
-            LightweightWalletError::StorageError("No database available".to_string())
+            WalletError::StorageError("No database available".to_string())
         })?;
         let wallet_id = self.wallet_id.ok_or_else(|| {
-            LightweightWalletError::StorageError("No wallet selected".to_string())
+            WalletError::StorageError("No wallet selected".to_string())
         })?;
 
         if let Some(wallet) = storage.get_wallet_by_id(wallet_id).await? {
@@ -196,7 +196,7 @@ impl ScannerStorage {
             }
 
             let view_key = wallet.get_view_key().map_err(|e| {
-                LightweightWalletError::StorageError(format!("Failed to get view key: {e}"))
+                WalletError::StorageError(format!("Failed to get view key: {e}"))
             })?;
 
             // Create entropy array - derive from seed phrase if available
@@ -222,7 +222,7 @@ impl ScannerStorage {
 
             Ok(Some(ScanContext { view_key, entropy }))
         } else {
-            Err(LightweightWalletError::ResourceNotFound(format!(
+            Err(WalletError::ResourceNotFound(format!(
                 "Wallet with ID {wallet_id} not found"
             )))
         }
@@ -267,7 +267,7 @@ impl ScannerStorage {
         scan_context: Option<&ScanContext>,
     ) -> WalletResult<Option<u32>> {
         let storage = self.database.as_ref().ok_or_else(|| {
-            LightweightWalletError::StorageError("No database available".to_string())
+            WalletError::StorageError("No database available".to_string())
         })?;
 
         // Handle wallet selection by name
@@ -277,7 +277,7 @@ impl ScannerStorage {
                 // The caller can decide what to log
                 return Ok(wallet.id);
             } else {
-                return Err(LightweightWalletError::ResourceNotFound(format!(
+                return Err(WalletError::ResourceNotFound(format!(
                     "Wallet '{wallet_name}' not found"
                 )));
             }
@@ -294,7 +294,7 @@ impl ScannerStorage {
                 // Note: In library mode, success information should be logged by caller
                 Ok(Some(wallet_id))
             } else {
-                Err(LightweightWalletError::InvalidArgument {
+                Err(WalletError::InvalidArgument {
                     argument: "wallets".to_string(),
                     value: "empty".to_string(),
                     message: "No wallets found and no keys provided to create one. Provide --seed-phrase or --view-key, or use an existing wallet.".to_string(),
@@ -308,7 +308,7 @@ impl ScannerStorage {
             // Multiple wallets available - this requires user interaction
             // In library mode, we return an error that the binary can handle
             // The binary will call a separate method to handle the interactive selection
-            Err(LightweightWalletError::InvalidArgument {
+            Err(WalletError::InvalidArgument {
                 argument: "wallet_selection".to_string(),
                 value: "multiple_wallets".to_string(),
                 message: format!(
@@ -376,13 +376,13 @@ impl ScannerStorage {
                     response_tx,
                 })
                 .map_err(|_| {
-                    LightweightWalletError::StorageError(
+                    WalletError::StorageError(
                         "Background writer channel closed".to_string(),
                     )
                 })?;
 
             response_rx.await.map_err(|_| {
-                LightweightWalletError::StorageError("Background writer response lost".to_string())
+                WalletError::StorageError("Background writer response lost".to_string())
             })?
         } else if let Some(storage) = &self.database {
             // Fallback to direct storage if background writer not available
@@ -437,13 +437,13 @@ impl ScannerStorage {
                     response_tx,
                 })
                 .map_err(|_| {
-                    LightweightWalletError::StorageError(
+                    WalletError::StorageError(
                         "Background writer channel closed".to_string(),
                     )
                 })?;
 
             response_rx.await.map_err(|_| {
-                LightweightWalletError::StorageError("Background writer response lost".to_string())
+                WalletError::StorageError("Background writer response lost".to_string())
             })?
         } else if let Some(storage) = &self.database {
             // Fallback to direct storage if background writer not available
@@ -494,13 +494,13 @@ impl ScannerStorage {
                     response_tx,
                 })
                 .map_err(|_| {
-                    LightweightWalletError::StorageError(
+                    WalletError::StorageError(
                         "Background writer channel closed".to_string(),
                     )
                 })?;
 
             response_rx.await.map_err(|_| {
-                LightweightWalletError::StorageError("Background writer response lost".to_string())
+                WalletError::StorageError("Background writer response lost".to_string())
             })?
         } else if let Some(storage) = &self.database {
             // Fallback to direct storage if background writer not available
@@ -565,13 +565,13 @@ impl ScannerStorage {
                     response_tx,
                 })
                 .map_err(|_| {
-                    LightweightWalletError::StorageError(
+                    WalletError::StorageError(
                         "Background writer channel closed".to_string(),
                     )
                 })?;
 
             response_rx.await.map_err(|_| {
-                LightweightWalletError::StorageError("Background writer response lost".to_string())
+                WalletError::StorageError("Background writer response lost".to_string())
             })?
         } else if let Some(storage) = &self.database {
             // Fallback to direct storage if background writer not available
@@ -617,13 +617,13 @@ impl ScannerStorage {
                     response_tx,
                 })
                 .map_err(|_| {
-                    LightweightWalletError::StorageError(
+                    WalletError::StorageError(
                         "Background writer channel closed".to_string(),
                     )
                 })?;
 
             response_rx.await.map_err(|_| {
-                LightweightWalletError::StorageError("Background writer response lost".to_string())
+                WalletError::StorageError("Background writer response lost".to_string())
             })?
         } else if let Some(storage) = &self.database {
             // Fallback to direct storage if background writer not available

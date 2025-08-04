@@ -7,7 +7,7 @@
 use crate::{
     data_structures::{
         types::{CompressedCommitment, MicroMinotari, PrivateKey},
-        wallet_output::{LightweightRangeProof, LightweightRangeProofType},
+        wallet_output::{RangeProof, LightweightRangeProofType},
     },
     errors::ValidationError,
 };
@@ -79,7 +79,7 @@ impl LightweightMinimumValuePromiseValidator {
     pub fn validate_minimum_value_promise(
         &self,
         minimum_value_promise: MicroMinotari,
-        range_proof: Option<&LightweightRangeProof>,
+        range_proof: Option<&RangeProof>,
         range_proof_type: &LightweightRangeProofType,
         options: &MinimumValuePromiseValidationOptions,
     ) -> Result<(), ValidationError> {
@@ -142,7 +142,7 @@ impl LightweightMinimumValuePromiseValidator {
     pub fn validate_revealed_value_minimum_promise(
         &self,
         minimum_value_promise: MicroMinotari,
-        range_proof: Option<&LightweightRangeProof>,
+        range_proof: Option<&RangeProof>,
         metadata_signature_u_a: &PrivateKey,
         metadata_signature_challenge: &[u8],
     ) -> Result<(), ValidationError> {
@@ -204,7 +204,7 @@ impl LightweightMinimumValuePromiseValidator {
     pub fn validate_bulletproof_minimum_promise(
         &self,
         minimum_value_promise: MicroMinotari,
-        range_proof: &LightweightRangeProof,
+        range_proof: &RangeProof,
         commitment: &CompressedCommitment,
     ) -> Result<(), ValidationError> {
         // Validate range proof bounds
@@ -286,7 +286,7 @@ impl LightweightMinimumValuePromiseValidator {
     fn validate_revealed_value_consistency(
         &self,
         _minimum_value_promise: MicroMinotari,
-        range_proof: Option<&LightweightRangeProof>,
+        range_proof: Option<&RangeProof>,
     ) -> Result<(), ValidationError> {
         // For RevealedValue, the range proof should be None
         if range_proof.is_some() {
@@ -302,7 +302,7 @@ impl LightweightMinimumValuePromiseValidator {
     fn validate_bulletproof_consistency(
         &self,
         _minimum_value_promise: MicroMinotari,
-        range_proof: Option<&LightweightRangeProof>,
+        range_proof: Option<&RangeProof>,
     ) -> Result<(), ValidationError> {
         // For BulletProofPlus, the range proof should be Some
         if range_proof.is_none() {
@@ -423,7 +423,7 @@ mod tests {
         assert!(validator
             .validate_revealed_value_consistency(
                 MicroMinotari::new(1000),
-                Some(&LightweightRangeProof {
+                Some(&RangeProof {
                     bytes: vec![1, 2, 3, 4]
                 })
             )
@@ -438,7 +438,7 @@ mod tests {
         assert!(validator
             .validate_bulletproof_consistency(
                 MicroMinotari::new(1000),
-                Some(&LightweightRangeProof {
+                Some(&RangeProof {
                     bytes: vec![1, 2, 3, 4]
                 })
             )
@@ -453,7 +453,7 @@ mod tests {
         assert!(validator
             .validate_bulletproof_consistency(
                 MicroMinotari::new(1000),
-                Some(&LightweightRangeProof { bytes: vec![] })
+                Some(&RangeProof { bytes: vec![] })
             )
             .is_err());
     }
@@ -477,7 +477,7 @@ mod tests {
         assert!(validator
             .validate_minimum_value_promise(
                 MicroMinotari::new(1000),
-                Some(&LightweightRangeProof {
+                Some(&RangeProof {
                     bytes: vec![1, 2, 3, 4]
                 }),
                 &LightweightRangeProofType::BulletProofPlus,
@@ -489,7 +489,7 @@ mod tests {
         assert!(validator
             .validate_minimum_value_promise(
                 MicroMinotari::new(1000),
-                Some(&LightweightRangeProof {
+                Some(&RangeProof {
                     bytes: vec![1, 2, 3, 4]
                 }),
                 &LightweightRangeProofType::RevealedValue,
@@ -585,7 +585,7 @@ mod tests {
         let validator = LightweightMinimumValuePromiseValidator::default();
         let minimum_value = MicroMinotari::new(1000);
         let commitment = CompressedCommitment::new([0x08; 32]);
-        let range_proof = LightweightRangeProof {
+        let range_proof = RangeProof {
             bytes: vec![1, 2, 3, 4, 5],
         };
 

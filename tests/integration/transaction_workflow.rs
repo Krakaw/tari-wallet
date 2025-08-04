@@ -13,7 +13,7 @@ use lightweight_wallet_libs::data_structures::{
     address::{TariAddress, TariAddressFeatures},
     types::{CompressedPublicKey, MicroMinotari, PrivateKey},
 };
-use lightweight_wallet_libs::errors::{LightweightWalletError, ValidationError};
+use lightweight_wallet_libs::errors::{WalletError, ValidationError};
 
 use lightweight_wallet_libs::wallet::*;
 
@@ -120,14 +120,14 @@ impl MockTransactionBuilder {
         self
     }
 
-    fn build(self) -> Result<MockTransaction, LightweightWalletError> {
+    fn build(self) -> Result<MockTransaction, WalletError> {
         // Validate transaction
         let total_input: u64 = self.inputs.iter().map(|i| i.value.as_u64()).sum();
         let total_output: u64 = self.outputs.iter().map(|o| o.value.as_u64()).sum();
         let total_with_fee = total_output + self.fee.as_u64();
 
         if total_input < total_with_fee {
-            return Err(LightweightWalletError::ValidationError(
+            return Err(WalletError::ValidationError(
                 ValidationError::TransactionValidationFailed(format!(
                     "Insufficient funds: input {total_input} < output {total_output} + fee {}",
                     self.fee.as_u64()
@@ -144,7 +144,7 @@ impl MockTransactionBuilder {
         })
     }
 
-    fn build_and_sign(self) -> Result<MockTransaction, LightweightWalletError> {
+    fn build_and_sign(self) -> Result<MockTransaction, WalletError> {
         let wallet = self.wallet.clone();
         let mut transaction = self.build()?;
 
@@ -160,10 +160,10 @@ impl MockTransactionBuilder {
     fn sign_transaction(
         transaction: &MockTransaction,
         wallet: &Wallet,
-    ) -> Result<MockTransactionSignature, LightweightWalletError> {
+    ) -> Result<MockTransactionSignature, WalletError> {
         // Get wallet's signing key
         let seed_phrase = wallet.export_seed_phrase().map_err(|_| {
-            LightweightWalletError::ValidationError(ValidationError::TransactionValidationFailed(
+            WalletError::ValidationError(ValidationError::TransactionValidationFailed(
                 "Cannot sign transaction without seed phrase".to_string(),
             ))
         })?;
@@ -242,7 +242,7 @@ impl MockTransactionPool {
     async fn broadcast_transaction(
         &mut self,
         transaction: MockTransaction,
-    ) -> Result<String, LightweightWalletError> {
+    ) -> Result<String, WalletError> {
         // Simulate network latency
         if self.network_latency_ms > 0 {
             tokio::time::sleep(Duration::from_millis(self.network_latency_ms)).await;
@@ -250,7 +250,7 @@ impl MockTransactionPool {
 
         // Simulate random failures
         if self.failure_rate > 0.0 && rand::random::<f32>() < self.failure_rate {
-            return Err(LightweightWalletError::NetworkError(
+            return Err(WalletError::NetworkError(
                 "Transaction broadcast failed".to_string(),
             ));
         }
@@ -270,10 +270,10 @@ impl MockTransactionPool {
     fn validate_transaction(
         &self,
         transaction: &MockTransaction,
-    ) -> Result<(), LightweightWalletError> {
+    ) -> Result<(), WalletError> {
         // Check signature is present
         if transaction.signature.is_none() {
-            return Err(LightweightWalletError::ValidationError(
+            return Err(WalletError::ValidationError(
                 ValidationError::TransactionValidationFailed(
                     "Transaction must be signed".to_string(),
                 ),
@@ -286,14 +286,14 @@ impl MockTransactionPool {
         let total_with_fee = total_output + transaction.fee.as_u64();
 
         if total_input < total_with_fee {
-            return Err(LightweightWalletError::ValidationError(
+            return Err(WalletError::ValidationError(
                 ValidationError::TransactionValidationFailed("Insufficient funds".to_string()),
             ));
         }
 
         // Check minimum fee
         if transaction.fee.as_u64() < 100 {
-            return Err(LightweightWalletError::ValidationError(
+            return Err(WalletError::ValidationError(
                 ValidationError::TransactionValidationFailed("Fee too low".to_string()),
             ));
         }

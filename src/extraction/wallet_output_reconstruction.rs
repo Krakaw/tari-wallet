@@ -1,21 +1,21 @@
 use crate::data_structures::{
     payment_id::PaymentId,
     types::MicroMinotari,
-    wallet_output::{LightweightKeyId, LightweightWalletOutput},
+    wallet_output::{KeyId, WalletOutput},
 };
-use crate::errors::LightweightWalletError;
+use crate::errors::WalletError;
 
 /// Result of wallet output reconstruction
 #[derive(Debug, Clone)]
 pub struct WalletOutputReconstructionResult {
     /// The reconstructed wallet output
-    pub wallet_output: LightweightWalletOutput,
+    pub wallet_output: WalletOutput,
     /// The extracted value
     pub value: MicroMinotari,
     /// The extracted payment ID
     pub payment_id: PaymentId,
     /// The key used for decryption
-    pub decryption_key_id: LightweightKeyId,
+    pub decryption_key_id: KeyId,
 }
 
 /// Options for wallet output reconstruction
@@ -49,7 +49,7 @@ impl Default for WalletOutputReconstructionOptions {
 #[derive(Debug, thiserror::Error)]
 pub enum WalletOutputReconstructionError {
     #[error("Failed to decrypt encrypted data: {0}")]
-    DecryptionFailed(#[from] LightweightWalletError),
+    DecryptionFailed(#[from] WalletError),
 
     #[error("Failed to extract payment ID: {0}")]
     PaymentIdExtractionFailed(String),

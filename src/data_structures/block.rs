@@ -13,9 +13,9 @@ use crate::{
         payment_id::PaymentId,
         transaction::{TransactionDirection, TransactionStatus},
         transaction_input::TransactionInput,
-        transaction_output::LightweightTransactionOutput,
+        transaction_output::TransactionOutput,
         types::PrivateKey,
-        wallet_output::LightweightOutputType,
+        wallet_output::OutputType,
         wallet_transaction::WalletState,
     },
     errors::WalletResult,
@@ -40,7 +40,7 @@ pub struct Block {
     /// Block timestamp
     pub timestamp: u64,
     /// Transaction outputs in this block
-    pub outputs: Vec<LightweightTransactionOutput>,
+    pub outputs: Vec<TransactionOutput>,
     /// Transaction inputs in this block  
     pub inputs: Vec<TransactionInput>,
 }
@@ -82,7 +82,7 @@ impl Block {
         height: u64,
         hash: Vec<u8>,
         timestamp: u64,
-        outputs: Vec<LightweightTransactionOutput>,
+        outputs: Vec<TransactionOutput>,
         inputs: Vec<TransactionInput>,
     ) -> Self {
         Self {
@@ -152,12 +152,12 @@ impl Block {
     fn process_single_output_parallel(
         &self,
         output_index: usize,
-        output: &LightweightTransactionOutput,
+        output: &TransactionOutput,
         view_key: &PrivateKey,
     ) -> Option<OutputProcessingResult> {
         // Early exit for outputs with no encrypted data (except coinbase)
         let has_encrypted_data = !output.encrypted_data.as_bytes().is_empty();
-        let is_coinbase = matches!(output.features.output_type, LightweightOutputType::Coinbase);
+        let is_coinbase = matches!(output.features.output_type, OutputType::Coinbase);
 
         if !has_encrypted_data && !is_coinbase {
             return None;
@@ -198,7 +198,7 @@ impl Block {
     fn try_coinbase_output_optimized(
         &self,
         output_index: usize,
-        output: &LightweightTransactionOutput,
+        output: &TransactionOutput,
         view_key: &PrivateKey,
     ) -> Option<OutputProcessingResult> {
         let coinbase_value = output.minimum_value_promise.as_u64();
@@ -247,7 +247,7 @@ impl Block {
     fn try_regular_decryption_optimized(
         &self,
         output_index: usize,
-        output: &LightweightTransactionOutput,
+        output: &TransactionOutput,
         view_key: &PrivateKey,
     ) -> Option<OutputProcessingResult> {
         if let Ok((value, _mask, payment_id)) =
@@ -268,7 +268,7 @@ impl Block {
     fn try_one_sided_decryption_optimized(
         &self,
         output_index: usize,
-        output: &LightweightTransactionOutput,
+        output: &TransactionOutput,
         view_key: &PrivateKey,
     ) -> Option<OutputProcessingResult> {
         if let Ok((value, _mask, payment_id)) = EncryptedData::decrypt_one_sided_data(
@@ -476,9 +476,9 @@ mod tests {
         payment_id::PaymentId,
         transaction::{TransactionDirection, TransactionStatus},
         transaction_input::TransactionInput,
-        transaction_output::LightweightTransactionOutput,
+        transaction_output::TransactionOutput,
         types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
-        wallet_output::{LightweightOutputFeatures, LightweightOutputType},
+        wallet_output::{OutputFeatures, OutputType},
         wallet_transaction::WalletState,
     };
 
@@ -491,17 +491,17 @@ mod tests {
     }
 
     fn create_test_output_with_features(
-        output_type: LightweightOutputType,
+        output_type: OutputType,
         maturity: u64,
         value: u64,
-    ) -> LightweightTransactionOutput {
-        let features = LightweightOutputFeatures {
+    ) -> TransactionOutput {
+        let features = OutputFeatures {
             output_type,
             maturity,
             ..Default::default()
         };
 
-        LightweightTransactionOutput::new(
+        TransactionOutput::new(
             1,
             features,
             CompressedCommitment::new([1u8; 32]),
@@ -523,7 +523,7 @@ mod tests {
             [0u8; 64],
             CompressedPublicKey::default(),
             Vec::new(),
-            crate::data_structures::transaction_input::LightweightExecutionStack::new(),
+            crate::data_structures::transaction_input::ExecutionStack::new(),
             output_hash,
             0,
             [0u8; 64],
@@ -544,7 +544,7 @@ mod tests {
 
     #[test]
     fn test_block_with_outputs_and_inputs() {
-        let output = create_test_output_with_features(LightweightOutputType::Payment, 0, 1000);
+        let output = create_test_output_with_features(OutputType::Payment, 0, 1000);
         let input = create_test_input([1u8; 32], [2u8; 32]);
 
         let block = Block::new(
@@ -561,8 +561,8 @@ mod tests {
 
     #[test]
     fn test_block_summary() {
-        let output1 = create_test_output_with_features(LightweightOutputType::Payment, 0, 1000);
-        let output2 = create_test_output_with_features(LightweightOutputType::Coinbase, 100, 5000);
+        let output1 = create_test_output_with_features(OutputType::Payment, 0, 1000);
+        let output2 = create_test_output_with_features(OutputType::Coinbase, 100, 5000);
         let input = create_test_input([1u8; 32], [2u8; 32]);
 
         let block = Block::new(
@@ -619,7 +619,7 @@ mod tests {
 
     #[test]
     fn test_process_outputs_no_encrypted_data() {
-        let output = create_test_output_with_features(LightweightOutputType::Payment, 0, 1000);
+        let output = create_test_output_with_features(OutputType::Payment, 0, 1000);
         let block = Block::new(1000, vec![1, 2, 3, 4], 1234567890, vec![output], vec![]);
 
         let view_key = create_test_private_key();
@@ -635,7 +635,7 @@ mod tests {
 
     #[test]
     fn test_process_outputs_coinbase_without_encrypted_data() {
-        let output = create_test_output_with_features(LightweightOutputType::Coinbase, 100, 5000);
+        let output = create_test_output_with_features(OutputType::Coinbase, 100, 5000);
         let block = Block::new(1100, vec![1, 2, 3, 4], 1234567890, vec![output], vec![]);
 
         let view_key = create_test_private_key();
@@ -652,7 +652,7 @@ mod tests {
     #[test]
     fn test_process_outputs_coinbase_maturity() {
         let mut output =
-            create_test_output_with_features(LightweightOutputType::Coinbase, 100, 5000);
+            create_test_output_with_features(OutputType::Coinbase, 100, 5000);
         // Add some encrypted data to simulate ownership verification
         output.encrypted_data = EncryptedData::from_bytes(&[1, 2, 3, 4]).unwrap_or_default();
 
@@ -804,7 +804,7 @@ mod tests {
 
     #[test]
     fn test_scan_for_wallet_activity() {
-        let output = create_test_output_with_features(LightweightOutputType::Payment, 0, 1000);
+        let output = create_test_output_with_features(OutputType::Payment, 0, 1000);
         let input = create_test_input([1u8; 32], [2u8; 32]);
 
         let block = Block::new(
@@ -841,7 +841,7 @@ mod tests {
 
         // Test with large numbers of outputs and inputs
         let outputs =
-            vec![create_test_output_with_features(LightweightOutputType::Payment, 0, 1000); 100];
+            vec![create_test_output_with_features(OutputType::Payment, 0, 1000); 100];
         let inputs = vec![create_test_input([1u8; 32], [2u8; 32]); 50];
 
         let large_block = Block::new(1000, vec![1, 2, 3, 4], 1234567890, outputs, inputs);
@@ -853,7 +853,7 @@ mod tests {
     fn test_output_processing_result() {
         // Test the internal OutputProcessingResult structure indirectly
         let mut output =
-            create_test_output_with_features(LightweightOutputType::Coinbase, 100, 5000);
+            create_test_output_with_features(OutputType::Coinbase, 100, 5000);
         output.encrypted_data = EncryptedData::from_bytes(&[1, 2, 3, 4]).unwrap_or_default();
 
         let block = Block::new(150, vec![1, 2, 3, 4], 1234567890, vec![output], vec![]);
@@ -872,9 +872,9 @@ mod tests {
     fn test_parallel_vs_sequential_processing() {
         // This test ensures both parallel and sequential code paths work
         let outputs = vec![
-            create_test_output_with_features(LightweightOutputType::Payment, 0, 1000),
-            create_test_output_with_features(LightweightOutputType::Coinbase, 50, 2000),
-            create_test_output_with_features(LightweightOutputType::Payment, 0, 3000),
+            create_test_output_with_features(OutputType::Payment, 0, 1000),
+            create_test_output_with_features(OutputType::Coinbase, 50, 2000),
+            create_test_output_with_features(OutputType::Payment, 0, 3000),
         ];
 
         let block = Block::new(1000, vec![1, 2, 3, 4], 1234567890, outputs, vec![]);
@@ -1047,7 +1047,7 @@ mod tests {
         );
 
         // Create a block with both outputs and inputs
-        let output = create_test_output_with_features(LightweightOutputType::Payment, 0, 2000);
+        let output = create_test_output_with_features(OutputType::Payment, 0, 2000);
         let input = create_test_input(*commitment.as_bytes(), [0u8; 32]);
 
         let block = Block::new(200, vec![1, 2, 3, 4], 1234567890, vec![output], vec![input]);

@@ -8,11 +8,11 @@ use std::time::{Duration, Instant};
 
 use lightweight_wallet_libs::data_structures::{
     address::TariAddressFeatures,
-    transaction_output::LightweightTransactionOutput,
+    transaction_output::TransactionOutput,
     types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
     wallet_output::{
-        LightweightCovenant, LightweightOutputFeatures, LightweightOutputType,
-        LightweightRangeProofType, LightweightScript, LightweightSignature,
+        Covenant, OutputFeatures, OutputType,
+        LightweightRangeProofType, Script, Signature,
     },
     Network,
 };
@@ -475,7 +475,7 @@ fn create_test_output(
     value: u64,
     view_key: &PrivateKey,
     spend_key: &PrivateKey,
-) -> Result<LightweightTransactionOutput, LightweightWalletError> {
+) -> Result<TransactionOutput, WalletError> {
     use lightweight_wallet_libs::data_structures::{
         encrypted_data::EncryptedData, payment_id::PaymentId,
     };
@@ -490,32 +490,32 @@ fn create_test_output(
     let encrypted_data =
         EncryptedData::encrypt_data(view_key, &commitment, micro_value, &mask, payment_id)
             .map_err(|e| {
-                LightweightWalletError::EncryptionError(
+                WalletError::EncryptionError(
                     lightweight_wallet_libs::errors::EncryptionError::EncryptionFailed(format!(
                         "Failed to encrypt data: {e}"
                     )),
                 )
             })?;
 
-    let features = LightweightOutputFeatures {
-        output_type: LightweightOutputType::Payment,
+    let features = OutputFeatures {
+        output_type: OutputType::Payment,
         maturity: 0,
         range_proof_type: LightweightRangeProofType::BulletProofPlus,
     };
 
-    let metadata_signature = LightweightSignature {
+    let metadata_signature = Signature {
         bytes: vec![0x06; 64],
     };
 
-    Ok(LightweightTransactionOutput::new(
+    Ok(TransactionOutput::new(
         1, // version
         features,
         commitment,
         None, // proof
-        LightweightScript::default(),
+        Script::default(),
         sender_offset_public_key,
         metadata_signature,
-        LightweightCovenant::default(),
+        Covenant::default(),
         encrypted_data,
         micro_value,
     ))

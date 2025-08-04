@@ -124,7 +124,7 @@ use lightweight_wallet_libs::{
         WalletScannerStruct,
     },
     KeyManagementError,
-    LightweightWalletError,
+    WalletError,
 };
 
 // Add conditional imports for storage feature
@@ -378,7 +378,7 @@ async fn handle_interactive_wallet_selection(
     let wallets = storage_backend.get_wallet_selection_info().await?;
 
     if wallets.is_empty() {
-        return Err(LightweightWalletError::ResourceNotFound(
+        return Err(WalletError::ResourceNotFound(
             "No wallets found in database".to_string(),
         ));
     }
@@ -417,21 +417,21 @@ async fn handle_interactive_wallet_selection(
         // Read user input
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).map_err(|e| {
-            LightweightWalletError::StorageError(format!("Failed to read user input: {e}"))
+            WalletError::StorageError(format!("Failed to read user input: {e}"))
         })?;
 
         let choice: usize =
             input
                 .trim()
                 .parse()
-                .map_err(|_| LightweightWalletError::InvalidArgument {
+                .map_err(|_| WalletError::InvalidArgument {
                     argument: "wallet_selection".to_string(),
                     value: input.trim().to_string(),
                     message: "Invalid wallet number".to_string(),
                 })?;
 
         if choice == 0 || choice > wallets.len() {
-            return Err(LightweightWalletError::InvalidArgument {
+            return Err(WalletError::InvalidArgument {
                 argument: "wallet_selection".to_string(),
                 value: choice.to_string(),
                 message: format!("Wallet number must be between 1 and {}", wallets.len()),
@@ -588,7 +588,7 @@ async fn main_unified() -> WalletResult<()> {
             .await
         {
             Ok(context) => context,
-            Err(LightweightWalletError::InvalidArgument {
+            Err(WalletError::InvalidArgument {
                 argument, value, ..
             }) if argument == "wallet_selection" && value == "multiple_wallets" => {
                 // Handle interactive wallet selection
@@ -630,7 +630,7 @@ async fn main_unified() -> WalletResult<()> {
     } else if let Some(context) = scan_context {
         context
     } else {
-        return Err(LightweightWalletError::InvalidArgument {
+        return Err(WalletError::InvalidArgument {
             argument: "scan_context".to_string(),
             value: "None".to_string(),
             message: "No scan context available - provide keys or use existing wallet".to_string(),
@@ -647,7 +647,7 @@ async fn main_unified() -> WalletResult<()> {
 
     // Validate block range
     if from_block > to_block {
-        return Err(LightweightWalletError::InvalidArgument {
+        return Err(WalletError::InvalidArgument {
             argument: "block_range".to_string(),
             value: format!("{from_block}-{to_block}"),
             message: format!(

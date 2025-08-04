@@ -260,8 +260,8 @@ mod tests {
     use super::*;
 
     use crate::data_structures::{
-        CompressedCommitment, CompressedPublicKey, EncryptedData, LightweightTransactionOutput,
-        LightweightWalletOutput, PaymentId, PrivateKey, SafeArray,
+        CompressedCommitment, CompressedPublicKey, EncryptedData, TransactionOutput,
+        WalletOutput, PaymentId, PrivateKey, SafeArray,
     };
     use primitive_types::U256;
 
@@ -493,35 +493,35 @@ mod tests {
     #[test]
     fn test_wallet_output_hex() {
         // Create a simple wallet output using default values
-        let wallet_output = LightweightWalletOutput::default();
+        let wallet_output = WalletOutput::default();
 
         // Test to_hex
         let hex = wallet_output.to_hex();
         assert!(!hex.is_empty());
 
         // Test from_hex
-        let parsed = LightweightWalletOutput::from_hex(&hex).unwrap();
+        let parsed = WalletOutput::from_hex(&hex).unwrap();
         assert_eq!(parsed, wallet_output);
 
         // Test validation
-        assert!(LightweightWalletOutput::is_valid_hex(&hex));
+        assert!(WalletOutput::is_valid_hex(&hex));
     }
 
     #[test]
     fn test_transaction_output_hex() {
         // Create a simple transaction output using default values
-        let tx_output = LightweightTransactionOutput::default();
+        let tx_output = TransactionOutput::default();
 
         // Test to_hex
         let hex = tx_output.to_hex();
         assert!(!hex.is_empty());
 
         // Test from_hex
-        let parsed = LightweightTransactionOutput::from_hex(&hex).unwrap();
+        let parsed = TransactionOutput::from_hex(&hex).unwrap();
         assert_eq!(parsed, tx_output);
 
         // Test validation
-        assert!(LightweightTransactionOutput::is_valid_hex(&hex));
+        assert!(TransactionOutput::is_valid_hex(&hex));
     }
 
     #[test]

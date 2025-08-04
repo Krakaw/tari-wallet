@@ -4,7 +4,7 @@
 //! and integrate with the UTXO extraction process.
 
 use crate::{
-    data_structures::types::PrivateKey, errors::LightweightWalletError,
+    data_structures::types::PrivateKey, errors::WalletError,
     key_management::StealthAddress,
 };
 
@@ -66,7 +66,7 @@ pub enum StealthKeyRecoveryError {
     KeyValidationFailed(String),
 
     #[error("Decryption failed: {0}")]
-    DecryptionFailed(#[from] LightweightWalletError),
+    DecryptionFailed(#[from] WalletError),
 }
 
 /// Stealth address key recovery manager

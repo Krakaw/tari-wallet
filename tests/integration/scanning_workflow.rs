@@ -11,11 +11,11 @@ use async_trait::async_trait;
 
 use lightweight_wallet_libs::data_structures::{
     encrypted_data::EncryptedData,
-    transaction_output::LightweightTransactionOutput,
+    transaction_output::TransactionOutput,
     types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
-    wallet_output::{LightweightOutputFeatures, LightweightOutputType, LightweightRangeProofType},
+    wallet_output::{OutputFeatures, OutputType, LightweightRangeProofType},
 };
-use lightweight_wallet_libs::errors::{LightweightWalletError, ValidationError};
+use lightweight_wallet_libs::errors::{WalletError, ValidationError};
 use lightweight_wallet_libs::extraction::ExtractionConfig;
 use lightweight_wallet_libs::WalletResult;
 
@@ -38,7 +38,7 @@ impl TestBlockchainScanner {
         }
     }
 
-    fn add_test_block(&mut self, height: u64, outputs: Vec<LightweightTransactionOutput>) {
+    fn add_test_block(&mut self, height: u64, outputs: Vec<TransactionOutput>) {
         let block = BlockInfo {
             height,
             hash: vec![height as u8; 32],
@@ -87,7 +87,7 @@ impl BlockchainScanner for TestBlockchainScanner {
     async fn fetch_utxos(
         &mut self,
         _hashes: Vec<Vec<u8>>,
-    ) -> WalletResult<Vec<LightweightTransactionOutput>> {
+    ) -> WalletResult<Vec<TransactionOutput>> {
         Ok(vec![])
     }
 
@@ -121,10 +121,10 @@ fn create_test_output(
     value: u64,
     view_key: &PrivateKey,
     spend_key: &PrivateKey,
-) -> Result<LightweightTransactionOutput, LightweightWalletError> {
+) -> Result<TransactionOutput, WalletError> {
     use lightweight_wallet_libs::data_structures::{
         payment_id::PaymentId,
-        wallet_output::{LightweightCovenant, LightweightScript, LightweightSignature},
+        wallet_output::{Covenant, Script, Signature},
     };
 
     // Create a basic commitment (mock)
@@ -142,34 +142,34 @@ fn create_test_output(
     let encrypted_data =
         EncryptedData::encrypt_data(&encryption_key, &commitment, micro_value, &mask, payment_id)
             .map_err(|e| {
-            LightweightWalletError::ValidationError(ValidationError::ValueValidationFailed(
+            WalletError::ValidationError(ValidationError::ValueValidationFailed(
                 format!("Failed to encrypt data: {e}"),
             ))
         })?;
 
     // Create features
-    let features = LightweightOutputFeatures {
-        output_type: LightweightOutputType::Payment,
+    let features = OutputFeatures {
+        output_type: OutputType::Payment,
         maturity: 0,
         range_proof_type: LightweightRangeProofType::BulletProofPlus,
     };
 
     // Create script
-    let script = LightweightScript {
+    let script = Script {
         bytes: vec![0x01, 0x02, 0x03],
     };
 
     // Create metadata signature (mock)
-    let metadata_signature = LightweightSignature {
+    let metadata_signature = Signature {
         bytes: vec![0x06; 64],
     };
 
     // Create covenant
-    let covenant = LightweightCovenant {
+    let covenant = Covenant {
         bytes: vec![0x07, 0x08, 0x09],
     };
 
-    Ok(LightweightTransactionOutput::new(
+    Ok(TransactionOutput::new(
         0, // version
         features,
         commitment,
