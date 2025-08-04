@@ -1265,7 +1265,7 @@ mod tests {
                     &http_output.encrypted_data[..]
                 );
             }
-            Err(e) => panic!("Failed to convert HTTP output: {}", e),
+            Err(e) => panic!("Failed to convert HTTP output: {e}"),
         }
     }
 
@@ -1283,7 +1283,7 @@ mod tests {
                 let output_hash = &tx_input.output_hash;
                 assert_eq!(output_hash.as_slice(), input_hash.as_slice());
             }
-            Err(e) => panic!("Failed to convert HTTP input: {}", e),
+            Err(e) => panic!("Failed to convert HTTP input: {e}"),
         }
     }
 
@@ -1301,7 +1301,7 @@ mod tests {
                 assert_eq!(block_info.outputs.len(), http_block.outputs.len());
                 assert_eq!(block_info.inputs.len(), http_block.inputs.len());
             }
-            Err(e) => panic!("Failed to convert HTTP block: {}", e),
+            Err(e) => panic!("Failed to convert HTTP block: {e}"),
         }
     }
 
@@ -1483,7 +1483,7 @@ mod tests {
             {
                 println!("✅ Direct change output decryption succeeded!");
                 println!("🔍 Value: {} µT", value.as_u64());
-                println!("🔍 Payment ID: {:?}", payment_id);
+                println!("🔍 Payment ID: {payment_id:?}");
             } else {
                 println!("❌ Direct change output decryption failed");
             }
@@ -1499,7 +1499,7 @@ mod tests {
             {
                 println!("✅ Direct one-sided payment decryption succeeded!");
                 println!("🔍 Value: {} µT", value.as_u64());
-                println!("🔍 Payment ID: {:?}", payment_id);
+                println!("🔍 Payment ID: {payment_id:?}");
             } else {
                 println!("❌ Direct one-sided payment decryption failed");
             }
@@ -1511,7 +1511,7 @@ mod tests {
                     println!("  Payment ID: {:?}", wallet_output.payment_id());
                 }
                 Err(e) => {
-                    println!("❌ Extraction failed: {:?}", e);
+                    println!("❌ Extraction failed: {e:?}");
                 }
             }
 
@@ -1526,7 +1526,7 @@ mod tests {
                     println!("❌ scan_for_recoverable_output returned None (not a wallet output)");
                 }
                 Err(e) => {
-                    println!("❌ scan_for_recoverable_output failed: {:?}", e);
+                    println!("❌ scan_for_recoverable_output failed: {e:?}");
                 }
             }
         }
@@ -1668,7 +1668,7 @@ mod tests {
 
             // Collect all input hashes to see what's being spent
             for input in &block_info.inputs {
-                all_input_hashes.insert(input.output_hash.clone());
+                all_input_hashes.insert(input.output_hash);
             }
 
             // Scan for wallet outputs and store their identifiers
@@ -1711,7 +1711,7 @@ mod tests {
 
             for input in &block_info.inputs {
                 // Check if this input hash matches any of our wallet output hashes
-                for (_output_key, (origin_height, output_hash)) in &wallet_output_identifiers {
+                for (origin_height, output_hash) in wallet_output_identifiers.values() {
                     // Check if the input references one of our wallet outputs by hash
                     if input.output_hash.as_slice() == output_hash.as_slice() {
                         spent_outputs_detected += 1;
@@ -1733,15 +1733,12 @@ mod tests {
             "  - Total wallet outputs found: {}",
             wallet_output_identifiers.len()
         );
-        println!(
-            "  - Total spent wallet outputs detected: {}",
-            spent_outputs_detected
-        );
+        println!("  - Total spent wallet outputs detected: {spent_outputs_detected}");
         println!("  - Total unique input hashes: {}", all_input_hashes.len());
 
         // Verify that we can detect both creation and spending of wallet outputs
         assert!(
-            wallet_output_identifiers.len() > 0,
+            !wallet_output_identifiers.is_empty(),
             "Should find wallet outputs"
         );
 
@@ -1766,10 +1763,7 @@ mod tests {
             }
         }
 
-        println!(
-            "Cross-reference analysis: {} inputs reference outputs within our test blocks",
-            cross_referenced_inputs
-        );
+        println!("Cross-reference analysis: {cross_referenced_inputs} inputs reference outputs within our test blocks");
     }
 
     #[test]
@@ -1856,7 +1850,7 @@ mod tests {
 
             let mut wallet_outputs = Vec::new();
 
-            for (_output_index, output) in block_info.outputs.iter().enumerate() {
+            for output in block_info.outputs.iter() {
                 let mut found_output = false;
 
                 // Strategy 1: Regular recoverable outputs
@@ -1912,7 +1906,7 @@ mod tests {
         let result = &results[0];
         assert_eq!(result.height, 0); // Block height not available in sync_utxos_by_block response
         assert_eq!(result.mined_timestamp, 1750340139);
-        assert!(result.outputs.len() > 0, "Block should have outputs");
+        assert!(!result.outputs.is_empty(), "Block should have outputs");
 
         println!(
             "Scanning workflow completed successfully with {} wallet outputs found",

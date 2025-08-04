@@ -186,7 +186,7 @@ impl EncryptedDataDecryptor {
             }
         }
 
-        let error_msg = format!("Decryption error: No valid decryption mechanism found");
+        let error_msg = "Decryption error: No valid decryption mechanism found".to_string();
         Ok(DecryptionResult::failure(error_msg, 1))
     }
 
@@ -260,7 +260,7 @@ impl EncryptedDataDecryptor {
             }
         }
 
-        let error_msg = format!("Decryption error: No valid decryption mechanism found");
+        let error_msg = "Decryption error: No valid decryption mechanism found".to_string();
         Ok(DecryptionResult::failure(error_msg, 1))
     }
 
