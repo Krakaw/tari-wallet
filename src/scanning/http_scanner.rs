@@ -567,7 +567,7 @@ impl HttpBlockchainScanner {
         // Convert range proof (not provided by this API endpoint)
         let proof = None;
 
-        // Convert Script - match GRPC approach exactly  
+        // Convert Script - match GRPC approach exactly
         let script = Script { bytes: Vec::new() };
 
         // Convert Metadata Signature - match GRPC approach exactly
@@ -576,7 +576,7 @@ impl HttpBlockchainScanner {
         // Convert Covenant - match GRPC approach exactly
         let covenant = Covenant { bytes: Vec::new() };
 
-        // Convert Minimum Value Promise - match GRPC approach exactly  
+        // Convert Minimum Value Promise - match GRPC approach exactly
         let minimum_value_promise = MicroMinotari::new(0);
 
         // Use direct construction exactly like GRPC scanner
@@ -1449,18 +1449,67 @@ mod tests {
             let output_5 = &block_info.outputs[92];
             println!("=== DEBUG OUTPUT 92 (commitment 080e9955...) ===");
             println!("Output type: {:?}", output_5.features().output_type);
-            println!("Commitment: {}", hex::encode(output_5.commitment().as_bytes()));
-            println!("Encrypted data length: {}", output_5.encrypted_data().as_bytes().len());
-            println!("Sender offset public key: {}", hex::encode(output_5.sender_offset_public_key().as_bytes()));
-            
+            println!(
+                "Commitment: {}",
+                hex::encode(output_5.commitment().as_bytes())
+            );
+            println!(
+                "Encrypted data length: {}",
+                output_5.encrypted_data().as_bytes().len()
+            );
+            println!(
+                "Encrypted data hex: {}",
+                hex::encode(output_5.encrypted_data().as_bytes())
+            );
+            println!(
+                "Sender offset public key: {}",
+                hex::encode(output_5.sender_offset_public_key().as_bytes())
+            );
+
             // Try to decrypt with extraction config
             println!("Attempting extraction...");
+
+            // Debug: Also try direct decryption to see if the data can be decrypted at all
+            println!("🔍 Testing direct decryption mechanisms...");
+
+            // Test direct change output decryption
+            let test_private_key = create_test_private_key();
+            if let Ok((value, _mask, payment_id)) =
+                crate::data_structures::encrypted_data::EncryptedData::decrypt_data(
+                    &test_private_key,
+                    output_5.commitment(),
+                    output_5.encrypted_data(),
+                )
+            {
+                println!("✅ Direct change output decryption succeeded!");
+                println!("🔍 Value: {} µT", value.as_u64());
+                println!("🔍 Payment ID: {:?}", payment_id);
+            } else {
+                println!("❌ Direct change output decryption failed");
+            }
+
+            // Test direct one-sided payment decryption
+            if let Ok((value, _mask, payment_id)) =
+                crate::data_structures::encrypted_data::EncryptedData::decrypt_one_sided_data(
+                    &test_private_key,
+                    output_5.commitment(),
+                    output_5.sender_offset_public_key(),
+                    output_5.encrypted_data(),
+                )
+            {
+                println!("✅ Direct one-sided payment decryption succeeded!");
+                println!("🔍 Value: {} µT", value.as_u64());
+                println!("🔍 Payment ID: {:?}", payment_id);
+            } else {
+                println!("❌ Direct one-sided payment decryption failed");
+            }
+
             match crate::extraction::extract_wallet_output(output_5, &extraction_config) {
                 Ok(wallet_output) => {
                     println!("✅ Successfully extracted wallet output!");
                     println!("  Value: {} µT", wallet_output.value().as_u64());
                     println!("  Payment ID: {:?}", wallet_output.payment_id());
-                },
+                }
                 Err(e) => {
                     println!("❌ Extraction failed: {:?}", e);
                 }
@@ -1472,10 +1521,10 @@ mod tests {
                 Ok(Some(wallet_output)) => {
                     println!("✅ scan_for_recoverable_output succeeded!");
                     println!("  Value: {} µT", wallet_output.value().as_u64());
-                },
+                }
                 Ok(None) => {
                     println!("❌ scan_for_recoverable_output returned None (not a wallet output)");
-                },
+                }
                 Err(e) => {
                     println!("❌ scan_for_recoverable_output failed: {:?}", e);
                 }
@@ -1509,77 +1558,7 @@ mod tests {
                 // Scan outputs for wallet ownership
                 for (output_index, output) in block_info.outputs.iter().enumerate() {
                     total_outputs_scanned += 1;
-                    
-                    // Debug logging for the specific commitment we're looking for
-                    let commitment_hex = hex::encode(output.commitment().as_bytes());
-                    if commitment_hex == "080e9955f7b1cfaf04b879b98126269c92a7ee3a3387e1a1bdd92e6b1db54604" {
-                        println!("🔍 Block {} - Found target commitment at output index {}: {}", header.height, output_index, commitment_hex);
-                        println!("🔍 Details: encrypted_data_len={}, sender_offset={}", 
-                               output.encrypted_data().as_bytes().len(),
-                               hex::encode(output.sender_offset_public_key().as_bytes()));
-                        
-                        // Compare with raw JSON data
-                        let http_output = &http_block.outputs[output_index];
-                        println!("🔍 Raw HTTP JSON data:");
-                        println!("  - commitment: {}", hex::encode(&http_output.commitment));
-                        println!("  - sender_offset: {}", hex::encode(&http_output.sender_offset_public_key));
-                        println!("  - encrypted_data: {}", hex::encode(&http_output.encrypted_data));
-                        println!("  - output_hash: {}", hex::encode(&http_output.output_hash));
-                    }
-                    
-                    let mut found_output = false;
 
-                    // Test recoverable output scanning
-                    if commitment_hex == "080e9955f7b1cfaf04b879b98126269c92a7ee3a3387e1a1bdd92e6b1db54604" {
-                        println!("🔍 Trying scan_for_recoverable_output...");
-                        println!("🔍 HTTP Output data being passed to extraction:");
-                        println!("  - version: {}", output.version());
-                        println!("  - commitment: {}", hex::encode(output.commitment().as_bytes()));
-                        println!("  - sender_offset: {}", hex::encode(output.sender_offset_public_key().as_bytes()));
-                        println!("  - encrypted_data: {}", hex::encode(output.encrypted_data().as_bytes()));
-                        println!("  - output_type: {:?}", output.features().output_type);
-                        println!("  - maturity: {}", output.features().maturity);
-                        println!("  - range_proof_type: {:?}", output.features().range_proof_type);
-                        println!("  - minimum_value_promise: {}", output.minimum_value_promise().as_u64());
-                        println!("  - script length: {}", output.script().bytes.len());
-                        println!("  - metadata_signature length: {}", output.metadata_signature().bytes.len());
-                        println!("  - covenant length: {}", output.covenant().bytes.len());
-                        println!("  - proof: {:?}", output.proof().map(|p| p.bytes.len()));
-                        
-                        // Test extraction directly with detailed error info
-                        match crate::extraction::extract_wallet_output(output, &extraction_config) {
-                            Ok(wallet_output) => {
-                                println!("🔍 ✅ Direct extraction SUCCESS! Value: {} µT", wallet_output.value().as_u64());
-                            },
-                            Err(e) => {
-                                println!("🔍 ❌ Direct extraction FAILED: {:?}", e);
-                            }
-                        }
-                        
-                        // Test raw decryption with EncryptedData::decrypt_data
-                        let view_key_bytes = hex::decode("ab5ab1fdc94094ca1fc0ee46dc86ad5098b8ebf8e54c2a77eeb5b26334b8fa0d").unwrap();
-                        let mut view_key_array = [0u8; 32];
-                        view_key_array.copy_from_slice(&view_key_bytes);
-                        let view_key = crate::data_structures::types::PrivateKey::new(view_key_array);
-                        
-                        println!("🔍 Testing raw EncryptedData::decrypt_data...");
-                        println!("🔍 Encrypted data size: {} bytes", output.encrypted_data().as_bytes().len());
-                        
-                        match crate::data_structures::encrypted_data::EncryptedData::decrypt_data(
-                            &view_key,
-                            output.commitment(),
-                            output.encrypted_data()
-                        ) {
-                            Ok((value, _mask, payment_id)) => {
-                                println!("🔍 ✅ RAW decryption SUCCESS! Value: {} µT", value.as_u64());
-                                println!("🔍 Payment ID: {:?}", payment_id);
-                            },
-                            Err(e) => {
-                                println!("🔍 ❌ RAW decryption FAILED: {:?}", e);
-                                println!("🔍 This suggests the old payment ID format needs special handling");
-                            }
-                        }
-                    }
                     if let Some(wallet_output) = HttpBlockchainScanner::scan_for_recoverable_output(
                         output,
                         &extraction_config,
@@ -1587,56 +1566,21 @@ mod tests {
                     .expect("Scan should not error")
                     {
                         // Debug successful outputs to compare with failing ones
-                        println!("✅ HTTP: Successfully decrypted output at block {}, index {}", header.height, output_index);
-                        println!("  - commitment: {}", hex::encode(output.commitment().as_bytes()));
+                        println!(
+                            "✅ HTTP: Successfully decrypted output at block {}, index {}",
+                            header.height, output_index
+                        );
+                        println!(
+                            "  - commitment: {}",
+                            hex::encode(output.commitment().as_bytes())
+                        );
                         println!("  - value: {} µT", wallet_output.value().as_u64());
-                        
+
                         // Store the output hash for later input matching (this is what inputs reference)
                         let http_output = &http_block.outputs[output_index];
                         let output_hash = http_output.output_hash.clone();
                         wallet_output_hashes.insert(output_hash);
                         wallet_outputs.push(wallet_output);
-                        found_output = true;
-                    }
-
-                    // Test one-sided payment scanning (only if not already found)
-                    if !found_output {
-                        if commitment_hex == "080e9955f7b1cfaf04b879b98126269c92a7ee3a3387e1a1bdd92e6b1db54604" {
-                            println!("🔍 Trying scan_for_one_sided_payment...");
-                        }
-                        if let Some(wallet_output) =
-                            HttpBlockchainScanner::scan_for_one_sided_payment(
-                                output,
-                                &extraction_config,
-                            )
-                            .expect("Scan should not error")
-                        {
-                            let http_output = &http_block.outputs[output_index];
-                            let output_hash = http_output.output_hash.clone();
-                            wallet_output_hashes.insert(output_hash);
-                            wallet_outputs.push(wallet_output);
-                            found_output = true;
-                        }
-                    }
-
-                    // Test coinbase output scanning (only if not already found)
-                    if !found_output {
-                        if commitment_hex == "080e9955f7b1cfaf04b879b98126269c92a7ee3a3387e1a1bdd92e6b1db54604" {
-                            println!("🔍 Trying scan_for_coinbase_output...");
-                        }
-                        if let Some(wallet_output) =
-                            HttpBlockchainScanner::scan_for_coinbase_output(output)
-                                .expect("Scan should not error")
-                        {
-                            let http_output = &http_block.outputs[block_info
-                                .outputs
-                                .iter()
-                                .position(|o| std::ptr::eq(o, output))
-                                .unwrap()];
-                            let output_hash = http_output.output_hash.clone();
-                            wallet_output_hashes.insert(output_hash);
-                            wallet_outputs.push(wallet_output);
-                        }
                     }
                 }
 
@@ -1912,12 +1856,7 @@ mod tests {
 
             let mut wallet_outputs = Vec::new();
 
-            for (output_index, output) in block_info.outputs.iter().enumerate() {
-                // Debug logging for the specific commitment we're looking for
-                let commitment_hex = hex::encode(output.commitment().as_bytes());
-                if commitment_hex == "080e9955f7b1cfaf04b879b98126269c92a7ee3a3387e1a1bdd92e6b1db54604" {
-                    println!("🔍 Found target commitment at output index {}: {}", output_index, commitment_hex);
-                }
+            for (_output_index, output) in block_info.outputs.iter().enumerate() {
                 let mut found_output = false;
 
                 // Strategy 1: Regular recoverable outputs

@@ -149,23 +149,6 @@ impl GrpcBlockchainScanner {
 
         // Convert Commitment - Tari GRPC returns 32-byte commitments, need to add compression prefix
         let commitment_bytes = if grpc_output.commitment.len() == 32 {
-            // Debug logging for the specific commitment we're looking for
-            let commitment_hex = hex::encode(&grpc_output.commitment);
-            if commitment_hex == "080e9955f7b1cfaf04b879b98126269c92a7ee3a3387e1a1bdd92e6b1db54604" {
-                println!("🔍 GRPC: Found target commitment: {}", commitment_hex);
-                println!("🔍 GRPC Raw data:");
-                println!("  - commitment: {}", hex::encode(&grpc_output.commitment));
-                println!("  - sender_offset: {}", hex::encode(&grpc_output.sender_offset_public_key));
-                println!("  - encrypted_data: {}", hex::encode(&grpc_output.encrypted_data));
-                println!("  - version: {}", grpc_output.version);
-                println!("  - minimum_value_promise: {}", grpc_output.minimum_value_promise);
-                if let Some(features) = &grpc_output.features {
-                    println!("  - maturity: {}", features.maturity);
-                    println!("  - output_type: {}", features.output_type);
-                    println!("  - range_proof_type: {}", features.range_proof_type);
-                }
-            }
-            
             match grpc_output.commitment.as_bytes()[..32].try_into() {
                 Ok(bytes) => CompressedCommitment::new(bytes),
                 Err(_) => {
@@ -245,28 +228,7 @@ impl GrpcBlockchainScanner {
             encrypted_data,
             minimum_value_promise,
         };
-        
-        // Debug logging for the target commitment
-        let commitment_hex = hex::encode(output.commitment().as_bytes());
-        if commitment_hex == "080e9955f7b1cfaf04b879b98126269c92a7ee3a3387e1a1bdd92e6b1db54604" {
-            println!("🔍 GRPC TransactionOutput object:");
-            println!("  - version: {}", output.version());
-            println!("  - commitment: {}", hex::encode(output.commitment().as_bytes()));
-            println!("  - sender_offset: {}", hex::encode(output.sender_offset_public_key().as_bytes()));
-            println!("  - encrypted_data: {}", hex::encode(output.encrypted_data().as_bytes()));
-            println!("  - output_type: {:?}", output.features().output_type);
-            println!("  - maturity: {}", output.features().maturity);
-            println!("  - range_proof_type: {:?}", output.features().range_proof_type);
-            println!("  - minimum_value_promise: {}", output.minimum_value_promise().as_u64());
-            println!("  - script length: {}", output.script().bytes.len());
-            println!("  - script data: {}", hex::encode(&output.script().bytes));
-            println!("  - metadata_signature length: {}", output.metadata_signature().bytes.len());
-            println!("  - metadata_signature data: {}", hex::encode(&output.metadata_signature().bytes));
-            println!("  - covenant length: {}", output.covenant().bytes.len());
-            println!("  - covenant data: {}", hex::encode(&output.covenant().bytes));
-            println!("  - proof: {:?}", output.proof().map(|p| p.bytes.len()));
-        }
-        
+
         Ok(output)
     }
 
