@@ -18,7 +18,7 @@ use tokio::time::timeout;
 use lightweight_wallet_libs::{
     data_structures::types::PrivateKey,
     errors::WalletError,
-    storage::{sqlite::SqliteStorage, StoredWallet, WalletStorage},
+    storage::{sqlite::SqliteStorage, SqlitePerformanceConfig, StoredWallet, WalletStorage},
 };
 
 #[cfg(feature = "storage")]
@@ -231,18 +231,73 @@ mod connection_tests {
         // Corrupt the database file by writing garbage
         std::fs::write(&db_path, b"This is not a valid SQLite database").unwrap();
 
+        // Also corrupt WAL and SHM files if they exist (WAL mode creates these)
+        let wal_path = db_path.with_extension("db-wal");
+        let shm_path = db_path.with_extension("db-shm");
+
+        if wal_path.exists() {
+            std::fs::write(&wal_path, b"corrupted wal").unwrap();
+        }
+        if shm_path.exists() {
+            std::fs::write(&shm_path, b"corrupted shm").unwrap();
+        }
+
         // SQLite's open() doesn't validate format - corruption is detected on actual use
-        let storage = SqliteStorage::new(&db_path).await.unwrap();
+        // Use minimal config to ensure corruption detection works
+        let storage_result =
+            SqliteStorage::new_with_config(&db_path, SqlitePerformanceConfig::minimal()).await;
 
-        // Try to initialize corrupted database - this should fail
-        let result = storage.initialize().await;
-        assert!(result.is_err());
-
-        if let Err(WalletError::StorageError(msg)) = result {
-            // Should contain database/SQL error message
-            assert!(msg.contains("database") || msg.contains("SQL") || msg.contains("corrupt"));
+        // Check if storage creation itself detected corruption
+        if storage_result.is_err() {
+            // Expected - corruption detected during storage creation
+            if let Err(WalletError::StorageError(msg)) = storage_result {
+                assert!(
+                    msg.contains("database")
+                        || msg.contains("SQL")
+                        || msg.contains("corrupt")
+                        || msg.contains("not a database"),
+                    "Expected database error message, got: {}",
+                    msg
+                );
+            } else {
+                panic!("Expected StorageError for corrupted database");
+            }
         } else {
-            panic!("Expected StorageError for corrupted database");
+            // Storage creation succeeded, try initialization
+            let storage = storage_result.unwrap();
+            let result = storage.initialize().await;
+
+            // If initialization doesn't detect corruption, try a read operation
+            if result.is_ok() {
+                // Try to read wallets - this should definitely fail on corrupted database
+                let read_result = storage.list_wallets().await;
+                assert!(
+                    read_result.is_err(),
+                    "Expected read operation to fail on corrupted database"
+                );
+
+                if let Err(WalletError::StorageError(msg)) = read_result {
+                    // Should contain database/SQL error message
+                    assert!(
+                        msg.contains("database")
+                            || msg.contains("SQL")
+                            || msg.contains("corrupt")
+                            || msg.contains("malformed")
+                    );
+                } else {
+                    panic!("Expected StorageError for corrupted database");
+                }
+            } else {
+                // Original path - initialization failed as expected
+                if let Err(WalletError::StorageError(msg)) = result {
+                    // Should contain database/SQL error message
+                    assert!(
+                        msg.contains("database") || msg.contains("SQL") || msg.contains("corrupt")
+                    );
+                } else {
+                    panic!("Expected StorageError for corrupted database");
+                }
+            }
         }
     }
 

@@ -40,6 +40,22 @@ impl Default for SqlitePerformanceConfig {
 
 #[cfg(feature = "storage")]
 impl SqlitePerformanceConfig {
+    /// Minimal settings for corruption detection and basic functionality
+    /// No performance optimizations - safe for corruption detection tests
+    pub fn minimal() -> Self {
+        Self {
+            enable_wal_mode: false,               // Standard journaling
+            synchronous_mode: 2,                  // FULL - maximum safety
+            cache_size_kb: 2048,                  // 2MB default
+            page_size: 4096,                      // Default page size
+            temp_store: 1,                        // Default (FILE)
+            journal_size_limit: 32 * 1024 * 1024, // 32MB
+            mmap_size: 0,                         // Disable memory mapping
+            busy_timeout_ms: 1000,                // Short timeout
+            enable_automatic_index: false,
+        }
+    }
+
     /// Conservative performance settings for general use
     pub fn conservative() -> Self {
         Self {
