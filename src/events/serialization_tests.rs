@@ -3,7 +3,6 @@
 
 use crate::events::types::*;
 use serde_json;
-use std::time::SystemTime;
 
 #[cfg(test)]
 mod tests {

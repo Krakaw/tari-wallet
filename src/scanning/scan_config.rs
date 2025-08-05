@@ -466,6 +466,7 @@ mod tests {
 
         // Context with entropy
         let context_with_entropy = ScanContext {
+            wallet_id: "test_wallet".to_string(),
             view_key: PrivateKey::new([1u8; 32]),
             entropy: [1u8; 16],
         };

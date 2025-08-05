@@ -1083,6 +1083,7 @@ mod tests {
         let listener = ProgressTrackingListener::new();
 
         let event = Arc::new(WalletScanEvent::scan_started(
+            "test_wallet",
             ScanConfig::default(),
             (1000, 2000),
             "test_wallet".to_string(),
@@ -1105,6 +1106,7 @@ mod tests {
 
         // Start scan first
         let start_event = Arc::new(WalletScanEvent::scan_started(
+            "test_wallet",
             ScanConfig::default(),
             (1000, 1100),
             "test_wallet".to_string(),
@@ -1115,6 +1117,7 @@ mod tests {
 
         // Process a block
         let block_event = Arc::new(WalletScanEvent::block_processed(
+            "test_wallet",
             1001,
             "block_hash".to_string(),
             1697123456,
@@ -1137,6 +1140,7 @@ mod tests {
 
         // Start scan first
         let start_event = Arc::new(WalletScanEvent::scan_started(
+            "test_wallet",
             ScanConfig::default(),
             (1000, 1100),
             "test_wallet".to_string(),
@@ -1170,6 +1174,7 @@ mod tests {
         );
 
         let output_event = Arc::new(WalletScanEvent::output_found(
+            "test_wallet",
             output_data,
             block_info,
             address_info,
@@ -1189,6 +1194,7 @@ mod tests {
 
         // Start scan first
         let start_event = Arc::new(WalletScanEvent::scan_started(
+            "test_wallet",
             ScanConfig::default(),
             (1000, 1100),
             "test_wallet".to_string(),
@@ -1199,6 +1205,7 @@ mod tests {
 
         // Send progress event
         let progress_event = Arc::new(WalletScanEvent::scan_progress(
+            "test_wallet",
             1050,
             101,
             2050,
@@ -1222,6 +1229,7 @@ mod tests {
 
         // Start scan first
         let start_event = Arc::new(WalletScanEvent::scan_started(
+            "test_wallet",
             ScanConfig::default(),
             (1000, 1100),
             "test_wallet".to_string(),
@@ -1236,6 +1244,7 @@ mod tests {
         final_stats.insert("outputs_found".to_string(), 25);
 
         let completed_event = Arc::new(WalletScanEvent::scan_completed(
+            "test_wallet",
             final_stats,
             true,
             Duration::from_secs(60),
@@ -1257,6 +1266,7 @@ mod tests {
 
         // Start scan first
         let start_event = Arc::new(WalletScanEvent::scan_started(
+            "test_wallet",
             ScanConfig::default(),
             (1000, 1100),
             "test_wallet".to_string(),
@@ -1271,6 +1281,7 @@ mod tests {
         final_stats.insert("outputs_found".to_string(), 10);
 
         let cancelled_event = Arc::new(WalletScanEvent::scan_cancelled(
+            "test_wallet",
             "User cancelled".to_string(),
             final_stats,
             Some(0.5),
@@ -1297,6 +1308,7 @@ mod tests {
             });
 
         let error_event = Arc::new(WalletScanEvent::scan_error(
+            "test_wallet",
             "Test error".to_string(),
             Some("ERR001".to_string()),
             Some(1050),
@@ -1325,6 +1337,7 @@ mod tests {
 
         // Start scan
         let start_event = Arc::new(WalletScanEvent::scan_started(
+            "test_wallet",
             ScanConfig::default(),
             (1000, 1010),
             "test_wallet".to_string(),
@@ -1336,6 +1349,7 @@ mod tests {
         // Process 5 blocks - should trigger callback twice (at blocks 3 and 6)
         for i in 1..=5 {
             let block_event = Arc::new(WalletScanEvent::block_processed(
+                "test_wallet",
                 1000 + i,
                 format!("block_hash_{i}"),
                 1697123456,
@@ -1354,6 +1368,7 @@ mod tests {
 
         // All relevant events should be wanted
         let scan_started = Arc::new(WalletScanEvent::scan_started(
+            "test_wallet",
             ScanConfig::default(),
             (0, 100),
             "test_wallet".to_string(),
@@ -1361,6 +1376,7 @@ mod tests {
         assert!(listener.wants_event(&scan_started));
 
         let block_processed = Arc::new(WalletScanEvent::block_processed(
+            "test_wallet",
             100,
             "block_hash".to_string(),
             1234567890,
@@ -1403,6 +1419,7 @@ mod tests {
 
         // Start scan and process some blocks
         let start_event = Arc::new(WalletScanEvent::scan_started(
+            "test_wallet",
             ScanConfig::default(),
             (1000, 1100),
             "test_wallet".to_string(),

@@ -28,7 +28,7 @@
 //! dispatcher.register(Box::new(mock))?;
 //!
 //! // Dispatch some events
-//! let event = WalletScanEvent::scan_started(
+//! let event = WalletScanEvent::scan_started("test_wallet",
 //!     ScanConfig::default(),
 //!     (0, 100),
 //!     "test_wallet".to_string()
@@ -921,11 +921,13 @@ mod tests {
 
         // Create test events
         let event1 = WalletScanEvent::scan_started(
+            "test_wallet",
             ScanConfig::default(),
             (0, 100),
             "test_wallet".to_string(),
         );
         let event2 = WalletScanEvent::block_processed(
+            "test_wallet",
             1,
             "0x123".to_string(),
             1697123456,
@@ -954,11 +956,13 @@ mod tests {
             .build();
 
         let event1 = WalletScanEvent::scan_started(
+            "test_wallet",
             ScanConfig::default(),
             (0, 100),
             "test_wallet".to_string(),
         );
         let event2 = WalletScanEvent::block_processed(
+            "test_wallet",
             1,
             "0x123".to_string(),
             1697123456,
@@ -985,8 +989,14 @@ mod tests {
             .failure_message("Test failure".to_string())
             .build();
 
-        let error_event =
-            WalletScanEvent::scan_error("Test error".to_string(), None, None, None, true);
+        let error_event = WalletScanEvent::scan_error(
+            "test_wallet",
+            "Test error".to_string(),
+            None,
+            None,
+            None,
+            true,
+        );
         let shared_event = crate::events::SharedEvent::new(error_event);
 
         // Should fail on ScanError events

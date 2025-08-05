@@ -700,6 +700,10 @@ mod tests {
         let entropy = [0u8; 16]; // Fixed to match expected size
         let view_key = PrivateKey::new([1u8; 32]);
 
-        ScanContext { view_key, entropy }
+        ScanContext {
+            wallet_id: "test_wallet".to_string(),
+            view_key,
+            entropy,
+        }
     }
 }

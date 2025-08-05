@@ -1085,6 +1085,7 @@ mod tests {
                     tokio::time::sleep(Duration::from_millis(100)).await;
 
                     let event = WalletScanEvent::block_processed(
+                        "test_wallet",
                         i + 1,
                         format!("0x{i:x}"),
                         1697123456 + i,
@@ -1137,6 +1138,7 @@ mod tests {
         // Add events directly to demonstrate yield-based capturing
         for i in 0..5 {
             let event = WalletScanEvent::block_processed(
+                "test_wallet",
                 i + 1,
                 format!("0x{i:x}"),
                 1697123456 + i,
@@ -1170,6 +1172,7 @@ mod tests {
 
         // Add an event immediately
         let event = WalletScanEvent::scan_started(
+            "test_wallet",
             ScanConfig::default(),
             (0, 100),
             "test_wallet".to_string(),

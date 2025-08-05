@@ -1465,6 +1465,7 @@ mod tests {
 
             // All events should be wanted by database storage listener
             let scan_started = Arc::new(WalletScanEvent::scan_started(
+                "test_wallet",
                 ScanConfig::default(),
                 (0, 100),
                 "test_wallet".to_string(),
@@ -1472,6 +1473,7 @@ mod tests {
             assert!(listener.wants_event(&scan_started));
 
             let block_processed = Arc::new(WalletScanEvent::block_processed(
+                "test_wallet",
                 100,
                 "block_hash".to_string(),
                 1234567890,
@@ -1486,6 +1488,7 @@ mod tests {
             let mut listener = DatabaseStorageListener::new_in_memory().await.unwrap();
 
             let event = Arc::new(WalletScanEvent::scan_started(
+                "test_wallet",
                 ScanConfig::default(),
                 (0, 100),
                 "test_wallet".to_string(),
