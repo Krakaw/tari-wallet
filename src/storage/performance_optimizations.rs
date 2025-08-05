@@ -27,12 +27,14 @@ pub struct SqlitePerformanceConfig {
     pub mmap_size: u64,
     /// Busy timeout in milliseconds
     pub busy_timeout_ms: u32,
+    /// Enable automatic index creation (DANGEROUS for production - can create suboptimal indexes)
+    pub enable_automatic_index: bool,
 }
 
 #[cfg(feature = "storage")]
 impl Default for SqlitePerformanceConfig {
     fn default() -> Self {
-        Self::high_performance()
+        Self::production_optimized() // Safe default for production use
     }
 }
 
@@ -42,41 +44,48 @@ impl SqlitePerformanceConfig {
     pub fn conservative() -> Self {
         Self {
             enable_wal_mode: true,
-            synchronous_mode: 1,   // NORMAL
+            synchronous_mode: 2,   // FULL - maximum safety
             cache_size_kb: 32_000, // 32MB
             page_size: 4096,
             temp_store: 2,                        // Memory
             journal_size_limit: 64 * 1024 * 1024, // 64MB
             mmap_size: 128 * 1024 * 1024,         // 128MB
             busy_timeout_ms: 5000,
+            enable_automatic_index: false, // Disabled for predictable performance
         }
     }
 
     /// High-performance settings optimized for scanning operations
+    /// WARNING: Uses synchronous=OFF which can cause data corruption on system crashes
+    /// Only use when data can be regenerated or for non-critical operations
     pub fn high_performance() -> Self {
         Self {
             enable_wal_mode: true,
-            synchronous_mode: 0,                   // OFF - fastest, but less safe
+            synchronous_mode: 0,                   // OFF - fastest, but UNSAFE
             cache_size_kb: 128_000,                // 128MB cache
             page_size: 8192,                       // Larger pages for better I/O
             temp_store: 2,                         // Memory temp storage
             journal_size_limit: 256 * 1024 * 1024, // 256MB
             mmap_size: 512 * 1024 * 1024,          // 512MB memory mapping
             busy_timeout_ms: 10000,
+            enable_automatic_index: false, // Disabled for predictable performance
         }
     }
 
     /// Ultra-fast settings for development/testing (data safety compromised)
+    /// DANGER: This configuration sacrifices data integrity for maximum speed
+    /// Never use with important data - database corruption possible on crashes
     pub fn ultra_fast() -> Self {
         Self {
             enable_wal_mode: true,
-            synchronous_mode: 0,                   // OFF
+            synchronous_mode: 0,                   // OFF - EXTREMELY UNSAFE
             cache_size_kb: 256_000,                // 256MB cache
             page_size: 16384,                      // Large pages
             temp_store: 2,                         // Memory
             journal_size_limit: 512 * 1024 * 1024, // 512MB
             mmap_size: 1024 * 1024 * 1024,         // 1GB memory mapping
             busy_timeout_ms: 15000,
+            enable_automatic_index: true, // Enabled for development convenience
         }
     }
 
@@ -84,13 +93,14 @@ impl SqlitePerformanceConfig {
     pub fn production_optimized() -> Self {
         Self {
             enable_wal_mode: true,
-            synchronous_mode: 1,                   // NORMAL - good balance
-            cache_size_kb: 64_000,                 // 64MB cache
-            page_size: 8192,                       // Good for bulk operations
-            temp_store: 2,                         // Memory temp storage
+            synchronous_mode: 1,   // NORMAL - good balance of speed and safety
+            cache_size_kb: 64_000, // 64MB cache
+            page_size: 8192,       // Good for bulk operations
+            temp_store: 2,         // Memory temp storage
             journal_size_limit: 128 * 1024 * 1024, // 128MB
-            mmap_size: 256 * 1024 * 1024,          // 256MB memory mapping
+            mmap_size: 256 * 1024 * 1024, // 256MB memory mapping
             busy_timeout_ms: 8000,
+            enable_automatic_index: false, // Disabled for predictable performance
         }
     }
 
@@ -123,10 +133,10 @@ impl SqlitePerformanceConfig {
                 crate::WalletError::StorageError(format!("Failed to set synchronous mode: {e}"))
             })?;
 
-        // Set cache size (accepts values, use pragma_update)
+        // Set cache size (negative values = KB directly, positive = pages)
         connection
             .call({
-                let cache_size = -((self.cache_size_kb * 1024) / self.page_size as i32); // Negative = KB
+                let cache_size = -self.cache_size_kb; // Negative = KB directly
                 move |conn| {
                     conn.pragma_update(None, "cache_size", cache_size)?;
                     Ok(())
@@ -229,17 +239,21 @@ impl SqlitePerformanceConfig {
 
     /// Apply additional optimizations for scanning workloads
     pub async fn apply_scanning_optimizations(&self, connection: &Connection) -> WalletResult<()> {
+        let enable_auto_index = self.enable_automatic_index;
+
         // Optimize for write-heavy workloads
         connection
-            .call(|conn| {
+            .call(move |conn| {
                 // Reduce checkpoint frequency for better write performance (use pragma_update)
                 conn.pragma_update(None, "wal_autocheckpoint", 10000)?;
 
                 // Optimize query planner for large datasets (this one uses execute)
                 conn.execute("PRAGMA optimize", [])?;
 
-                // Enable automatic index creation (use pragma_update)
-                conn.pragma_update(None, "automatic_index", "ON")?;
+                // Enable automatic index creation if configured (DANGEROUS for production)
+                if enable_auto_index {
+                    conn.pragma_update(None, "automatic_index", "ON")?;
+                }
 
                 Ok(())
             })
@@ -277,9 +291,10 @@ impl BatchOperations {
     /// Recommend batch configuration for different workload types
     pub fn recommend_batch_config(workload_type: &str) -> (usize, SqlitePerformanceConfig) {
         match workload_type {
-            "scanning" => (150, SqlitePerformanceConfig::high_performance()),
+            "scanning" => (100, SqlitePerformanceConfig::production_optimized()), // Safe for production use
             "production" => (75, SqlitePerformanceConfig::production_optimized()),
             "development" => (200, SqlitePerformanceConfig::ultra_fast()),
+            "high_performance" => (150, SqlitePerformanceConfig::high_performance()), // Explicit unsafe mode
             "conservative" => (50, SqlitePerformanceConfig::conservative()),
             _ => (100, SqlitePerformanceConfig::default()),
         }
@@ -293,7 +308,7 @@ mod tests {
     #[test]
     fn test_performance_config_presets() {
         let conservative = SqlitePerformanceConfig::conservative();
-        assert_eq!(conservative.synchronous_mode, 1);
+        assert_eq!(conservative.synchronous_mode, 2); // FULL mode for maximum safety
         assert!(conservative.is_production_safe());
 
         let high_perf = SqlitePerformanceConfig::high_performance();
@@ -326,11 +341,17 @@ mod tests {
     #[test]
     fn test_workload_recommendations() {
         let (batch_size, config) = BatchOperations::recommend_batch_config("scanning");
-        assert_eq!(batch_size, 150);
-        assert_eq!(config.synchronous_mode, 0);
+        assert_eq!(batch_size, 100);
+        assert_eq!(config.synchronous_mode, 1); // Now uses production_optimized (safe)
+        assert!(config.is_production_safe());
 
         let (batch_size, config) = BatchOperations::recommend_batch_config("production");
         assert_eq!(batch_size, 75);
         assert!(config.is_production_safe());
+
+        let (batch_size, config) = BatchOperations::recommend_batch_config("high_performance");
+        assert_eq!(batch_size, 150);
+        assert_eq!(config.synchronous_mode, 0); // Explicit unsafe mode
+        assert!(!config.is_production_safe());
     }
 }
