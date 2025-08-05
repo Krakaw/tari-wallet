@@ -8,7 +8,7 @@ use crate::{
         encrypted_data::EncryptedData,
         payment_id::PaymentId,
         transaction_output::TransactionOutput,
-        types::{CompressedCommitment, MicroMinotari, PrivateKey},
+        types::{CompressedCommitment, CompressedPublicKey, MicroMinotari, PrivateKey},
     },
     errors::{EncryptionError, KeyManagementError, WalletError},
     key_management::{ImportedPrivateKey, KeyStore},
@@ -165,6 +165,7 @@ impl EncryptedDataDecryptor {
         key: &PrivateKey,
         options: &DecryptionOptions,
     ) -> Result<DecryptionResult, WalletError> {
+        // Try change output decryption first (mechanism 1)
         match EncryptedData::decrypt_data(key, commitment, encrypted_data) {
             Ok((value, mask, payment_id)) => {
                 // Validate decrypted data if requested
@@ -172,22 +173,185 @@ impl EncryptedDataDecryptor {
                     self.validate_decrypted_data(&value, &mask, &payment_id)?;
                 }
 
-                Ok(DecryptionResult::success(
+                return Ok(DecryptionResult::success(
                     value,
                     mask,
                     payment_id,
                     key.clone(),
                     1,
-                ))
+                ));
             }
-            Err(e) => {
-                let error_msg = format!("Decryption error: {e}");
-                Ok(DecryptionResult::failure(error_msg, 1))
+            Err(_) => {
+                // Change output decryption failed, continue to try one-sided payment decryption
             }
         }
+
+        let error_msg = "Decryption error: No valid decryption mechanism found".to_string();
+        Ok(DecryptionResult::failure(error_msg, 1))
     }
 
-    /// Decrypt encrypted data using all available keys
+    /// Decrypt encrypted data using a specific key with both mechanisms
+    ///
+    /// # Arguments
+    /// * `encrypted_data` - The encrypted data to decrypt
+    /// * `commitment` - The commitment associated with the encrypted data
+    /// * `sender_offset_public_key` - The sender offset public key for one-sided payments
+    /// * `key` - The private key to use for decryption
+    /// * `options` - Decryption options
+    ///
+    /// # Returns
+    /// * `Ok(DecryptionResult)` with the decryption result
+    /// * `Err(WalletError)` if an error occurred
+    pub fn decrypt_with_key_enhanced(
+        &self,
+        encrypted_data: &EncryptedData,
+        commitment: &CompressedCommitment,
+        sender_offset_public_key: &CompressedPublicKey,
+        key: &PrivateKey,
+        options: &DecryptionOptions,
+    ) -> Result<DecryptionResult, WalletError> {
+        // Try change output decryption first (mechanism 1)
+        match EncryptedData::decrypt_data(key, commitment, encrypted_data) {
+            Ok((value, mask, payment_id)) => {
+                // Validate decrypted data if requested
+                if options.validate_decrypted_data {
+                    self.validate_decrypted_data(&value, &mask, &payment_id)?;
+                }
+
+                return Ok(DecryptionResult::success(
+                    value,
+                    mask,
+                    payment_id,
+                    key.clone(),
+                    1,
+                ));
+            }
+            Err(_) => {
+                // Change output decryption failed, continue to try one-sided payment decryption
+            }
+        }
+
+        // Try one-sided payment decryption (mechanism 2)
+        // Only try if sender_offset_public_key is not zero (indicating it's a one-sided payment)
+        if !sender_offset_public_key.as_bytes().iter().all(|&b| b == 0) {
+            match EncryptedData::decrypt_one_sided_data(
+                key,
+                commitment,
+                sender_offset_public_key,
+                encrypted_data,
+            ) {
+                Ok((value, mask, payment_id)) => {
+                    // Validate decrypted data if requested
+                    if options.validate_decrypted_data {
+                        self.validate_decrypted_data(&value, &mask, &payment_id)?;
+                    }
+
+                    return Ok(DecryptionResult::success(
+                        value,
+                        mask,
+                        payment_id,
+                        key.clone(),
+                        1,
+                    ));
+                }
+                Err(_) => {
+                    // One-sided payment decryption also failed
+                }
+            }
+        }
+
+        let error_msg = "Decryption error: No valid decryption mechanism found".to_string();
+        Ok(DecryptionResult::failure(error_msg, 1))
+    }
+
+    /// Decrypt encrypted data using all available keys with enhanced mechanisms
+    ///
+    /// # Arguments
+    /// * `encrypted_data` - The encrypted data to decrypt
+    /// * `commitment` - The commitment associated with the encrypted data
+    /// * `sender_offset_public_key` - The sender offset public key for one-sided payments
+    /// * `options` - Decryption options (if None, uses default options)
+    ///
+    /// # Returns
+    /// * `Ok(DecryptionResult)` with the decryption result
+    /// * `Err(WalletError)` if an error occurred
+    pub fn decrypt_with_all_keys_enhanced(
+        &self,
+        encrypted_data: &EncryptedData,
+        commitment: &CompressedCommitment,
+        sender_offset_public_key: &CompressedPublicKey,
+        options: Option<&DecryptionOptions>,
+    ) -> Result<DecryptionResult, WalletError> {
+        let options = options.unwrap_or(&self.default_options);
+        let mut keys_tried = 0;
+        let max_keys = if options.max_keys_to_try == 0 {
+            usize::MAX
+        } else {
+            options.max_keys_to_try
+        };
+
+        // Try imported keys first
+        for imported_key in self.key_store.get_imported_keys() {
+            if keys_tried >= max_keys {
+                break;
+            }
+
+            let result = self.decrypt_with_key_enhanced(
+                encrypted_data,
+                commitment,
+                sender_offset_public_key,
+                &imported_key.private_key,
+                options,
+            )?;
+
+            keys_tried += 1;
+
+            if result.success {
+                return Ok(result);
+            }
+        }
+
+        // Try derived keys if we haven't reached the limit
+        if keys_tried < max_keys {
+            // For now, we'll try a reasonable range of derived keys
+            // In a full implementation, this would be more sophisticated
+            let start_index = self.key_store.current_key_index().saturating_sub(10);
+            let end_index = self.key_store.current_key_index() + 10;
+
+            for key_index in start_index..=end_index {
+                if keys_tried >= max_keys {
+                    break;
+                }
+
+                // Try to derive a key at this index
+                // Note: This is a simplified approach - in practice, you'd need
+                // the actual key derivation logic from the key manager
+                if let Ok(derived_key) = self.try_derive_key_at_index(key_index) {
+                    let result = self.decrypt_with_key_enhanced(
+                        encrypted_data,
+                        commitment,
+                        sender_offset_public_key,
+                        &derived_key,
+                        options,
+                    )?;
+
+                    keys_tried += 1;
+
+                    if result.success {
+                        return Ok(result);
+                    }
+                }
+            }
+        }
+
+        // If no keys worked, return a failure result
+        Ok(DecryptionResult::failure(
+            "No valid key found for decryption".to_string(),
+            keys_tried,
+        ))
+    }
+
+    /// Decrypt encrypted data using all available keys (legacy method for backward compatibility)
     ///
     /// # Arguments
     /// * `encrypted_data` - The encrypted data to decrypt
@@ -282,8 +446,14 @@ impl EncryptedDataDecryptor {
     ) -> Result<DecryptionResult, WalletError> {
         let encrypted_data = transaction_output.encrypted_data();
         let commitment = transaction_output.commitment();
+        let sender_offset_public_key = transaction_output.sender_offset_public_key();
 
-        self.decrypt_with_all_keys(encrypted_data, commitment, options)
+        self.decrypt_with_all_keys_enhanced(
+            encrypted_data,
+            commitment,
+            sender_offset_public_key,
+            options,
+        )
     }
 
     /// Try to decrypt with a specific key index (for derived keys)
@@ -343,13 +513,9 @@ impl EncryptedDataDecryptor {
             PaymentId::Open { .. } => {
                 // Open payment ID is always valid
             }
-            PaymentId::AddressAndData { user_data, .. } => {
-                // Validate data is not empty
-                if user_data.is_empty() {
-                    return Err(
-                        EncryptionError::decryption_failed("Payment ID data is empty").into(),
-                    );
-                }
+            PaymentId::AddressAndData { .. } => {
+                // AddressAndData payment ID is always valid, even with empty user_data
+                // The address information itself provides the necessary payment metadata
             }
             PaymentId::TransactionInfo { .. } => {
                 // Transaction info payment ID is always valid

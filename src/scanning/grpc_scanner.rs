@@ -216,7 +216,7 @@ impl GrpcBlockchainScanner {
         // Convert Minimum Value Promise
         let minimum_value_promise = MicroMinotari::new(grpc_output.minimum_value_promise);
 
-        Ok(TransactionOutput {
+        let output = TransactionOutput {
             version: grpc_output.version as u8,
             features,
             commitment: commitment_bytes,
@@ -227,7 +227,9 @@ impl GrpcBlockchainScanner {
             covenant,
             encrypted_data,
             minimum_value_promise,
-        })
+        };
+
+        Ok(output)
     }
 
     /// Convert GRPC block to lightweight block info
