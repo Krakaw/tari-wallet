@@ -714,8 +714,216 @@ impl SerializableEvent for WalletScanEvent {
     }
 }
 
+/// Core wallet events for state changes and transactions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WalletEvent {
+    /// Emitted when a UTXO is received by the wallet
+    UtxoReceived {
+        metadata: EventMetadata,
+        output_data: OutputData,
+        block_info: BlockInfo,
+        transaction_data: TransactionData,
+        address_info: AddressInfo,
+    },
+    /// Emitted when a UTXO is spent from the wallet
+    UtxoSpent {
+        metadata: EventMetadata,
+        spent_output_data: SpentOutputData,
+        spending_block_info: BlockInfo,
+        original_output_info: OutputData,
+        spending_transaction_data: TransactionData,
+    },
+    /// Emitted when a blockchain reorganization affects wallet state
+    Reorg {
+        metadata: EventMetadata,
+        old_block_height: u64,
+        new_block_height: u64,
+        affected_transactions: Vec<String>, // Transaction hashes
+        rollback_depth: u64,
+        recovery_info: HashMap<String, String>,
+    },
+}
+
+impl EventType for WalletEvent {
+    fn event_type(&self) -> &'static str {
+        match self {
+            WalletEvent::UtxoReceived { .. } => "UtxoReceived",
+            WalletEvent::UtxoSpent { .. } => "UtxoSpent",
+            WalletEvent::Reorg { .. } => "Reorg",
+        }
+    }
+
+    fn metadata(&self) -> &EventMetadata {
+        match self {
+            WalletEvent::UtxoReceived { metadata, .. } => metadata,
+            WalletEvent::UtxoSpent { metadata, .. } => metadata,
+            WalletEvent::Reorg { metadata, .. } => metadata,
+        }
+    }
+
+    fn debug_data(&self) -> Option<String> {
+        match self {
+            WalletEvent::UtxoReceived {
+                output_data,
+                block_info,
+                ..
+            } => {
+                let amount_str = output_data
+                    .amount
+                    .map_or("unknown".to_string(), |a| a.to_string());
+                Some(format!(
+                    "block: {}, amount: {amount_str}, mine: {}",
+                    block_info.height, output_data.is_mine
+                ))
+            }
+            WalletEvent::UtxoSpent {
+                spending_block_info,
+                spent_output_data,
+                ..
+            } => {
+                let amount_str = spent_output_data
+                    .spent_amount
+                    .map_or("unknown".to_string(), |a| a.to_string());
+                Some(format!(
+                    "block: {}, amount: {amount_str}, method: {}",
+                    spending_block_info.height, spent_output_data.match_method
+                ))
+            }
+            WalletEvent::Reorg {
+                old_block_height,
+                new_block_height,
+                rollback_depth,
+                affected_transactions,
+                ..
+            } => Some(format!(
+                "rollback: {} -> {}, depth: {}, affected_txs: {}",
+                old_block_height,
+                new_block_height,
+                rollback_depth,
+                affected_transactions.len()
+            )),
+        }
+    }
+}
+
+impl SerializableEvent for WalletEvent {
+    fn to_debug_json(&self) -> Result<String, String> {
+        serde_json::to_string_pretty(self).map_err(|e| e.to_string())
+    }
+
+    fn to_compact_json(&self) -> Result<String, String> {
+        serde_json::to_string(self).map_err(|e| e.to_string())
+    }
+
+    fn summary(&self) -> String {
+        match self {
+            WalletEvent::UtxoReceived {
+                output_data,
+                block_info,
+                address_info,
+                ..
+            } => {
+                let amount_str = output_data
+                    .amount
+                    .map_or("unknown amount".to_string(), |a| format!("{a} units"));
+                format!(
+                    "UTXO received at block {} ({amount_str}, addr: {})",
+                    block_info.height, address_info.address
+                )
+            }
+            WalletEvent::UtxoSpent {
+                spending_block_info,
+                spent_output_data,
+                ..
+            } => {
+                let amount_str = spent_output_data
+                    .spent_amount
+                    .map_or("unknown amount".to_string(), |a| format!("{a} units"));
+                format!(
+                    "UTXO spent at block {} ({amount_str}, method: {})",
+                    spending_block_info.height, spent_output_data.match_method
+                )
+            }
+            WalletEvent::Reorg {
+                old_block_height,
+                new_block_height,
+                rollback_depth,
+                affected_transactions,
+                ..
+            } => format!(
+                "Blockchain reorg: {} -> {} (depth: {}, {} transactions affected)",
+                old_block_height,
+                new_block_height,
+                rollback_depth,
+                affected_transactions.len()
+            ),
+        }
+    }
+}
+
+/// Helper functions for creating wallet events
+impl WalletEvent {
+    /// Create a new UtxoReceived event
+    pub fn utxo_received(
+        output_data: OutputData,
+        block_info: BlockInfo,
+        transaction_data: TransactionData,
+        address_info: AddressInfo,
+    ) -> Self {
+        Self::UtxoReceived {
+            metadata: EventMetadata::new("wallet"),
+            output_data,
+            block_info,
+            transaction_data,
+            address_info,
+        }
+    }
+
+    /// Create a new UtxoSpent event
+    pub fn utxo_spent(
+        spent_output_data: SpentOutputData,
+        spending_block_info: BlockInfo,
+        original_output_info: OutputData,
+        spending_transaction_data: TransactionData,
+    ) -> Self {
+        Self::UtxoSpent {
+            metadata: EventMetadata::new("wallet"),
+            spent_output_data,
+            spending_block_info,
+            original_output_info,
+            spending_transaction_data,
+        }
+    }
+
+    /// Create a new Reorg event
+    pub fn reorg(
+        old_block_height: u64,
+        new_block_height: u64,
+        affected_transactions: Vec<String>,
+        rollback_depth: u64,
+        recovery_info: HashMap<String, String>,
+    ) -> Self {
+        Self::Reorg {
+            metadata: EventMetadata::new("wallet"),
+            old_block_height,
+            new_block_height,
+            affected_transactions,
+            rollback_depth,
+            recovery_info,
+        }
+    }
+
+    /// Deserialize a wallet event from JSON string
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        serde_json::from_str(json).map_err(|e| e.to_string())
+    }
+}
+
 /// Type alias for efficiently shared events
 pub type SharedEvent = Arc<WalletScanEvent>;
+
+/// Type alias for efficiently shared wallet events  
+pub type SharedWalletEvent = Arc<WalletEvent>;
 
 /// Helper functions for event serialization and deserialization
 impl WalletScanEvent {
