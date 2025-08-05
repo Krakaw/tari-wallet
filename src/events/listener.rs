@@ -32,7 +32,8 @@ use crate::events::types::{SharedWalletEvent, WalletEventError, WalletEventResul
 ///
 /// ```rust,no_run
 /// use async_trait::async_trait;
-/// use lightweight_wallet_libs::events::{EventListener, SharedWalletEvent};
+/// use lightweight_wallet_libs::events::listener::EventListener;
+/// use lightweight_wallet_libs::events::types::SharedWalletEvent;
 /// use std::error::Error;
 ///
 /// struct ConsoleLogger;
@@ -177,14 +178,15 @@ pub trait EventListener: Send + Sync {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use lightweight_wallet_libs::events::{EventRegistry, EventListener};
-/// use lightweight_wallet_libs::events::listeners::ConsoleLogger;
+/// use lightweight_wallet_libs::events::listener::EventRegistry;
+/// use lightweight_wallet_libs::events::listeners::event_logger::EventLogger;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut registry = EventRegistry::new();
 ///
-/// // Register a console logging listener
-/// registry.register(Box::new(ConsoleLogger::new())).await?;
+/// // Register an event logging listener
+/// let logger = EventLogger::console().unwrap();
+/// registry.register(Box::new(logger)).await?;
 ///
 /// // The registry can now dispatch events to all registered listeners
 /// # Ok(())

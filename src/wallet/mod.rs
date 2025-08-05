@@ -3,6 +3,11 @@
 //! This module provides the core wallet struct and operations for managing
 //! master keys, seed phrases, and wallet metadata.
 
+pub mod builder;
+
+// Re-export builder types for convenience
+pub use builder::{WalletBuildError, WalletBuilder, WalletWithEvents};
+
 use crate::common::string_to_network;
 use crate::data_structures::address::{
     DualAddress, SingleAddress, TariAddress, TariAddressFeatures,

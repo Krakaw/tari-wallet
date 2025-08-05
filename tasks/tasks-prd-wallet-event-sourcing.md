@@ -5,7 +5,8 @@
 - `src/events/listener.rs` - Event listener trait and registry implementation
 - `src/events/storage.rs` - Event storage implementation for SQLite database
 - `src/events/replay.rs` - Event replay functionality and state verification
-- `src/wallet/builder.rs` - Wallet builder modifications to support event listener registration
+- `src/wallet/builder.rs` - Wallet builder implementation with event listener registration support
+- `src/wallet/mod.rs` - Updated wallet module with builder exports
 - `src/storage/event_storage.rs` - Database schema and operations for event persistence
 - `tests/events/mod.rs` - Integration tests for event system
 - `tests/events/event_capture_tests.rs` - Tests for event capture functionality
@@ -40,7 +41,7 @@
   - [x] 2.7 Write unit tests for event listener interface and registry
 
 - [ ] 3.0 Integrate Event System with Wallet Builder
-  - [ ] 3.1 Modify wallet builder to accept event listeners via `with_event_listener()` method
+  - [x] 3.1 Modify wallet builder to accept event listeners via `with_event_listener()` method
   - [ ] 3.2 Add internal event registry to wallet structure
   - [ ] 3.3 Ensure event capture is opt-in (disabled by default)
   - [ ] 3.4 Wire up event emission from existing wallet operations (receive/spend UTXOs)
