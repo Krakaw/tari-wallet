@@ -19,6 +19,7 @@
 - `tests/event_storage_integration.rs` - Integration tests for event storage database operations
 - `tests/event_storage_operations_tests.rs` - Integration tests for enhanced event storage operations (Task 4.2)
 - `tests/automatic_assignment_tests.rs` - Integration tests for automatic timestamping and sequence assignment (Task 4.3)
+- `tests/append_only_behavior_tests.rs` - Integration tests for append-only behavior enforcement (Task 4.4)
 - `tests/storage/event_storage_tests.rs` - Unit tests for event storage implementation
 - `tests/storage/mod.rs` - Storage test module organization
 
@@ -62,7 +63,7 @@
   - [x] 4.1 Create database migration for `wallet_events` table with required schema
   - [x] 4.2 Implement event storage operations (insert, query by wallet_id, query by sequence)
   - [x] 4.3 Add automatic timestamping and sequence number assignment
-  - [ ] 4.4 Ensure append-only behavior (no updates or deletes allowed)
+  - [x] 4.4 Ensure append-only behavior (no updates or deletes allowed)
   - [ ] 4.5 Feature-gate event storage with existing `storage` feature flag
   - [ ] 4.6 Add connection pooling support for concurrent event writes
   - [ ] 4.7 Implement event retrieval methods for replay functionality

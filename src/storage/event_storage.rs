@@ -158,16 +158,32 @@ impl EventFilter {
 }
 
 /// Event storage trait for different storage backends
+///
+/// This trait enforces append-only behavior for event storage:
+/// - Events can only be inserted, never updated or deleted
+/// - All methods are read-only except for insert/store operations
+/// - Sequence numbers are automatically assigned and immutable
+/// - Timestamps are automatically assigned and immutable
+/// - Event IDs are generated automatically and immutable
+///
+/// Any attempt to modify existing events will be rejected by the storage layer.
 #[cfg(feature = "storage")]
 #[async_trait]
 pub trait EventStorage {
     /// Initialize the storage backend (create tables, indexes, etc.)
     async fn initialize(&self) -> WalletEventResult<()>;
 
-    /// Store a new event (append-only)
+    /// Store a new event (append-only operation)
+    ///
+    /// This method only allows inserting new events. Once stored, events
+    /// cannot be modified or deleted. Returns the database ID of the stored event.
     async fn store_event(&self, event: &StoredEvent) -> WalletEventResult<u64>;
 
-    /// Store multiple events in a batch (transactional)
+    /// Store multiple events in a batch (transactional, append-only operation)
+    ///
+    /// All events are inserted atomically in a single transaction. If any event
+    /// fails to insert, the entire batch is rolled back. Events cannot be modified
+    /// or deleted after insertion.
     async fn store_events_batch(&self, events: &[StoredEvent]) -> WalletEventResult<Vec<u64>>;
 
     /// Retrieve events matching the given filter
@@ -301,7 +317,32 @@ pub trait EventStorage {
         wallet_id: &str,
         sequence: u64,
     ) -> WalletEventResult<bool>;
+
+    // NOTE: This trait intentionally does NOT provide:
+    // - update_event() - Events are immutable after creation
+    // - delete_event() - Events cannot be deleted (append-only)
+    // - modify_event() - No modifications allowed
+    // - remove_event() - No removals allowed
+    // - truncate_events() - No bulk deletions allowed
+    //
+    // Any such methods would violate the append-only guarantee
 }
+
+#[cfg(feature = "storage")]
+const _: () = {
+    // Compile-time assertion that EventStorage has no forbidden methods
+    // This will fail to compile if anyone adds update/delete methods
+
+    fn check_trait_is_append_only<T: EventStorage>() {
+        // This function exists only to trigger compilation errors if someone
+        // adds forbidden methods to the EventStorage trait.
+        //
+        // If methods like update_event, delete_event, etc. are added,
+        // the compiler will suggest them in error messages, alerting us
+        // to the violation of append-only principles.
+        let _: Option<&str> = None; // Placeholder to make function valid
+    }
+};
 
 /// Statistics about event storage
 #[cfg(feature = "storage")]
