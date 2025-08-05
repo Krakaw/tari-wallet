@@ -23,7 +23,7 @@
 
 - [ ] 1.0 Define Event Types and Data Structures
   - [x] 1.1 Create `WalletEvent` enum with variants for UTXO_RECEIVED, UTXO_SPENT, and REORG
-  - [ ] 1.2 Define event payload structures for each event type (transaction data, block info, etc.)
+  - [x] 1.2 Define event payload structures for each event type (transaction data, block info, etc.)
   - [ ] 1.3 Implement Serialize/Deserialize traits for JSON serialization
   - [ ] 1.4 Add proper error types for event processing failures
   - [ ] 1.5 Implement Zeroize trait for sensitive event data

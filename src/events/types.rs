@@ -355,6 +355,257 @@ impl AddressInfo {
     }
 }
 
+/// Specific payload structures for wallet events
+
+/// Payload for UTXO received events - captures the essential data about a newly received UTXO
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UtxoReceivedPayload {
+    /// Unique identifier for the UTXO (commitment or output hash)
+    pub utxo_id: String,
+    /// The amount received in microTari
+    pub amount: u64,
+    /// Block height where the UTXO was confirmed
+    pub block_height: u64,
+    /// Block hash where the UTXO was confirmed
+    pub block_hash: String,
+    /// Block timestamp
+    pub block_timestamp: u64,
+    /// Transaction hash containing this output
+    pub transaction_hash: String,
+    /// Output index within the transaction
+    pub output_index: usize,
+    /// The wallet address that received this UTXO
+    pub receiving_address: String,
+    /// Key index used for this output (for deterministic wallets)
+    pub key_index: u64,
+    /// Commitment value
+    pub commitment: String,
+    /// Features flags for this output
+    pub features: u32,
+    /// Maturity height (if applicable for coinbase outputs)
+    pub maturity_height: Option<u64>,
+    /// Script associated with the output (if any)
+    pub script_hash: Option<String>,
+    /// Whether this output requires additional unlocking conditions
+    pub has_unlock_conditions: bool,
+    /// Network where this UTXO exists (mainnet, testnet, etc.)
+    pub network: String,
+}
+
+impl UtxoReceivedPayload {
+    /// Create a new UTXO received payload with required fields
+    pub fn new(
+        utxo_id: String,
+        amount: u64,
+        block_height: u64,
+        block_hash: String,
+        block_timestamp: u64,
+        transaction_hash: String,
+        output_index: usize,
+        receiving_address: String,
+        key_index: u64,
+        commitment: String,
+        features: u32,
+        network: String,
+    ) -> Self {
+        Self {
+            utxo_id,
+            amount,
+            block_height,
+            block_hash,
+            block_timestamp,
+            transaction_hash,
+            output_index,
+            receiving_address,
+            key_index,
+            commitment,
+            features,
+            maturity_height: None,
+            script_hash: None,
+            has_unlock_conditions: false,
+            network,
+        }
+    }
+
+    /// Set maturity height for coinbase outputs
+    pub fn with_maturity_height(mut self, height: u64) -> Self {
+        self.maturity_height = Some(height);
+        self
+    }
+
+    /// Set script hash if output has a script
+    pub fn with_script_hash(mut self, script_hash: String) -> Self {
+        self.script_hash = Some(script_hash);
+        self
+    }
+
+    /// Mark as having unlock conditions
+    pub fn with_unlock_conditions(mut self) -> Self {
+        self.has_unlock_conditions = true;
+        self
+    }
+}
+
+/// Payload for UTXO spent events - captures the essential data about a spent UTXO
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UtxoSpentPayload {
+    /// Unique identifier for the spent UTXO
+    pub utxo_id: String,
+    /// The amount that was spent in microTari
+    pub amount: u64,
+    /// Block height where the UTXO was originally received
+    pub original_block_height: u64,
+    /// Block height where the UTXO was spent
+    pub spending_block_height: u64,
+    /// Block hash where the spending occurred
+    pub spending_block_hash: String,
+    /// Block timestamp when spent
+    pub spending_block_timestamp: u64,
+    /// Transaction hash that spent this UTXO
+    pub spending_transaction_hash: String,
+    /// Input index within the spending transaction
+    pub input_index: usize,
+    /// The wallet address that owned this UTXO
+    pub spending_address: String,
+    /// Key index used for this output
+    pub key_index: u64,
+    /// Commitment value of the spent output
+    pub commitment: String,
+    /// How the spent output was matched (commitment, output_hash, etc.)
+    pub match_method: String,
+    /// Fee paid for the spending transaction (if this wallet initiated it)
+    pub transaction_fee: Option<u64>,
+    /// Whether this was an intentional spend by our wallet or external
+    pub is_self_spend: bool,
+    /// Network where this spend occurred
+    pub network: String,
+}
+
+impl UtxoSpentPayload {
+    /// Create a new UTXO spent payload with required fields
+    pub fn new(
+        utxo_id: String,
+        amount: u64,
+        original_block_height: u64,
+        spending_block_height: u64,
+        spending_block_hash: String,
+        spending_block_timestamp: u64,
+        spending_transaction_hash: String,
+        input_index: usize,
+        spending_address: String,
+        key_index: u64,
+        commitment: String,
+        match_method: String,
+        is_self_spend: bool,
+        network: String,
+    ) -> Self {
+        Self {
+            utxo_id,
+            amount,
+            original_block_height,
+            spending_block_height,
+            spending_block_hash,
+            spending_block_timestamp,
+            spending_transaction_hash,
+            input_index,
+            spending_address,
+            key_index,
+            commitment,
+            match_method,
+            transaction_fee: None,
+            is_self_spend,
+            network,
+        }
+    }
+
+    /// Set transaction fee if this was a self-spend
+    pub fn with_transaction_fee(mut self, fee: u64) -> Self {
+        self.transaction_fee = Some(fee);
+        self
+    }
+}
+
+/// Payload for blockchain reorganization events - captures reorg impact on wallet
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReorgPayload {
+    /// The block height where the reorg diverged from our chain
+    pub fork_height: u64,
+    /// The old block hash at the fork point
+    pub old_block_hash: String,
+    /// The new block hash at the fork point
+    pub new_block_hash: String,
+    /// How many blocks were rolled back
+    pub rollback_depth: u64,
+    /// How many new blocks were added in the reorg
+    pub new_blocks_count: u64,
+    /// List of transaction hashes that were affected (removed/added)
+    pub affected_transaction_hashes: Vec<String>,
+    /// List of UTXO IDs that were affected by the reorg
+    pub affected_utxo_ids: Vec<String>,
+    /// UTXOs that were invalidated (no longer exist after reorg)
+    pub invalidated_utxos: Vec<String>,
+    /// UTXOs that were restored (exist again after reorg)  
+    pub restored_utxos: Vec<String>,
+    /// Balance change due to the reorg (positive = gained, negative = lost)
+    pub balance_change: i64,
+    /// Network where this reorg occurred
+    pub network: String,
+    /// Timestamp when the reorg was detected
+    pub detection_timestamp: u64,
+    /// Additional recovery information for debugging
+    pub recovery_info: HashMap<String, String>,
+}
+
+impl ReorgPayload {
+    /// Create a new reorg payload with required fields
+    pub fn new(
+        fork_height: u64,
+        old_block_hash: String,
+        new_block_hash: String,
+        rollback_depth: u64,
+        new_blocks_count: u64,
+        affected_transaction_hashes: Vec<String>,
+        affected_utxo_ids: Vec<String>,
+        balance_change: i64,
+        network: String,
+        detection_timestamp: u64,
+    ) -> Self {
+        Self {
+            fork_height,
+            old_block_hash,
+            new_block_hash,
+            rollback_depth,
+            new_blocks_count,
+            affected_transaction_hashes,
+            affected_utxo_ids,
+            invalidated_utxos: Vec::new(),
+            restored_utxos: Vec::new(),
+            balance_change,
+            network,
+            detection_timestamp,
+            recovery_info: HashMap::new(),
+        }
+    }
+
+    /// Add invalidated UTXOs
+    pub fn with_invalidated_utxos(mut self, utxo_ids: Vec<String>) -> Self {
+        self.invalidated_utxos = utxo_ids;
+        self
+    }
+
+    /// Add restored UTXOs
+    pub fn with_restored_utxos(mut self, utxo_ids: Vec<String>) -> Self {
+        self.restored_utxos = utxo_ids;
+        self
+    }
+
+    /// Add recovery information
+    pub fn with_recovery_info(mut self, key: String, value: String) -> Self {
+        self.recovery_info.insert(key, value);
+        self
+    }
+}
+
 impl ScanConfig {
     /// Create a new scan configuration with default values
     pub fn new() -> Self {
@@ -720,27 +971,17 @@ pub enum WalletEvent {
     /// Emitted when a UTXO is received by the wallet
     UtxoReceived {
         metadata: EventMetadata,
-        output_data: OutputData,
-        block_info: BlockInfo,
-        transaction_data: TransactionData,
-        address_info: AddressInfo,
+        payload: UtxoReceivedPayload,
     },
     /// Emitted when a UTXO is spent from the wallet
     UtxoSpent {
         metadata: EventMetadata,
-        spent_output_data: SpentOutputData,
-        spending_block_info: BlockInfo,
-        original_output_info: OutputData,
-        spending_transaction_data: TransactionData,
+        payload: UtxoSpentPayload,
     },
     /// Emitted when a blockchain reorganization affects wallet state
     Reorg {
         metadata: EventMetadata,
-        old_block_height: u64,
-        new_block_height: u64,
-        affected_transactions: Vec<String>, // Transaction hashes
-        rollback_depth: u64,
-        recovery_info: HashMap<String, String>,
+        payload: ReorgPayload,
     },
 }
 
@@ -763,44 +1004,20 @@ impl EventType for WalletEvent {
 
     fn debug_data(&self) -> Option<String> {
         match self {
-            WalletEvent::UtxoReceived {
-                output_data,
-                block_info,
-                ..
-            } => {
-                let amount_str = output_data
-                    .amount
-                    .map_or("unknown".to_string(), |a| a.to_string());
-                Some(format!(
-                    "block: {}, amount: {amount_str}, mine: {}",
-                    block_info.height, output_data.is_mine
-                ))
-            }
-            WalletEvent::UtxoSpent {
-                spending_block_info,
-                spent_output_data,
-                ..
-            } => {
-                let amount_str = spent_output_data
-                    .spent_amount
-                    .map_or("unknown".to_string(), |a| a.to_string());
-                Some(format!(
-                    "block: {}, amount: {amount_str}, method: {}",
-                    spending_block_info.height, spent_output_data.match_method
-                ))
-            }
-            WalletEvent::Reorg {
-                old_block_height,
-                new_block_height,
-                rollback_depth,
-                affected_transactions,
-                ..
-            } => Some(format!(
+            WalletEvent::UtxoReceived { payload, .. } => Some(format!(
+                "block: {}, amount: {}, addr: {}",
+                payload.block_height, payload.amount, payload.receiving_address
+            )),
+            WalletEvent::UtxoSpent { payload, .. } => Some(format!(
+                "block: {}, amount: {}, method: {}",
+                payload.spending_block_height, payload.amount, payload.match_method
+            )),
+            WalletEvent::Reorg { payload, .. } => Some(format!(
                 "rollback: {} -> {}, depth: {}, affected_txs: {}",
-                old_block_height,
-                new_block_height,
-                rollback_depth,
-                affected_transactions.len()
+                payload.fork_height,
+                payload.fork_height + payload.new_blocks_count,
+                payload.rollback_depth,
+                payload.affected_transaction_hashes.len()
             )),
         }
     }
@@ -817,45 +1034,19 @@ impl SerializableEvent for WalletEvent {
 
     fn summary(&self) -> String {
         match self {
-            WalletEvent::UtxoReceived {
-                output_data,
-                block_info,
-                address_info,
-                ..
-            } => {
-                let amount_str = output_data
-                    .amount
-                    .map_or("unknown amount".to_string(), |a| format!("{a} units"));
-                format!(
-                    "UTXO received at block {} ({amount_str}, addr: {})",
-                    block_info.height, address_info.address
-                )
-            }
-            WalletEvent::UtxoSpent {
-                spending_block_info,
-                spent_output_data,
-                ..
-            } => {
-                let amount_str = spent_output_data
-                    .spent_amount
-                    .map_or("unknown amount".to_string(), |a| format!("{a} units"));
-                format!(
-                    "UTXO spent at block {} ({amount_str}, method: {})",
-                    spending_block_info.height, spent_output_data.match_method
-                )
-            }
-            WalletEvent::Reorg {
-                old_block_height,
-                new_block_height,
-                rollback_depth,
-                affected_transactions,
-                ..
-            } => format!(
-                "Blockchain reorg: {} -> {} (depth: {}, {} transactions affected)",
-                old_block_height,
-                new_block_height,
-                rollback_depth,
-                affected_transactions.len()
+            WalletEvent::UtxoReceived { payload, .. } => format!(
+                "UTXO received at block {} ({} units, addr: {})",
+                payload.block_height, payload.amount, payload.receiving_address
+            ),
+            WalletEvent::UtxoSpent { payload, .. } => format!(
+                "UTXO spent at block {} ({} units, method: {})",
+                payload.spending_block_height, payload.amount, payload.match_method
+            ),
+            WalletEvent::Reorg { payload, .. } => format!(
+                "Blockchain reorg: fork at {} (depth: {}, {} transactions affected)",
+                payload.fork_height,
+                payload.rollback_depth,
+                payload.affected_transaction_hashes.len()
             ),
         }
     }
@@ -864,52 +1055,26 @@ impl SerializableEvent for WalletEvent {
 /// Helper functions for creating wallet events
 impl WalletEvent {
     /// Create a new UtxoReceived event
-    pub fn utxo_received(
-        output_data: OutputData,
-        block_info: BlockInfo,
-        transaction_data: TransactionData,
-        address_info: AddressInfo,
-    ) -> Self {
+    pub fn utxo_received(payload: UtxoReceivedPayload) -> Self {
         Self::UtxoReceived {
             metadata: EventMetadata::new("wallet"),
-            output_data,
-            block_info,
-            transaction_data,
-            address_info,
+            payload,
         }
     }
 
     /// Create a new UtxoSpent event
-    pub fn utxo_spent(
-        spent_output_data: SpentOutputData,
-        spending_block_info: BlockInfo,
-        original_output_info: OutputData,
-        spending_transaction_data: TransactionData,
-    ) -> Self {
+    pub fn utxo_spent(payload: UtxoSpentPayload) -> Self {
         Self::UtxoSpent {
             metadata: EventMetadata::new("wallet"),
-            spent_output_data,
-            spending_block_info,
-            original_output_info,
-            spending_transaction_data,
+            payload,
         }
     }
 
     /// Create a new Reorg event
-    pub fn reorg(
-        old_block_height: u64,
-        new_block_height: u64,
-        affected_transactions: Vec<String>,
-        rollback_depth: u64,
-        recovery_info: HashMap<String, String>,
-    ) -> Self {
+    pub fn reorg(payload: ReorgPayload) -> Self {
         Self::Reorg {
             metadata: EventMetadata::new("wallet"),
-            old_block_height,
-            new_block_height,
-            affected_transactions,
-            rollback_depth,
-            recovery_info,
+            payload,
         }
     }
 
