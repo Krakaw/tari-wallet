@@ -2,6 +2,40 @@
 //!
 //! This module provides SQLite-based storage for wallet events, implementing
 //! an append-only event log with proper indexing and querying capabilities.
+//!
+//! ## Feature Requirements
+//!
+//! This module requires the `storage` feature to be enabled:
+//!
+//! ```toml
+//! [dependencies]
+//! lightweight_wallet_libs = { version = "0.2", features = ["storage"] }
+//! ```
+//!
+//! Without the `storage` feature, this module is not available and wallet
+//! operations will use memory-only event storage.
+//!
+//! ## Usage
+//!
+//! Event storage is automatically integrated with the wallet when using
+//! database-backed storage through the wallet builder:
+//!
+//! ```rust,no_run
+//! # #[cfg(feature = "storage")]
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! use lightweight_wallet_libs::wallet::WalletBuilder;
+//! use lightweight_wallet_libs::scanning::ScanConfig;
+//!
+//! let wallet = WalletBuilder::new()
+//!     .with_database("wallet.db")
+//!     .with_seed_phrase("your seed phrase here")
+//!     .build_async()
+//!     .await?;
+//!
+//! // Event storage is now automatically available for wallet operations
+//! # Ok(())
+//! # }
+//! ```
 
 #[cfg(feature = "storage")]
 use async_trait::async_trait;
