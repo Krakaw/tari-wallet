@@ -36,7 +36,7 @@
   - [x] 2.3 Implement async event dispatch to all registered listeners
   - [x] 2.4 Add error handling to prevent listener failures from breaking wallet operations
   - [x] 2.5 Create concrete listener implementations (EventLogger, AuditTrail)
-  - [ ] 2.6 Add listener registration/deregistration methods
+  - [x] 2.6 Add listener registration/deregistration methods
   - [ ] 2.7 Write unit tests for event listener interface and registry
 
 - [ ] 3.0 Integrate Event System with Wallet Builder
