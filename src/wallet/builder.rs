@@ -34,15 +34,15 @@ pub enum WalletBuildError {
 impl std::fmt::Display for WalletBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            WalletBuildError::WalletCreation(msg) => write!(f, "Wallet creation error: {}", msg),
+            WalletBuildError::WalletCreation(msg) => write!(f, "Wallet creation error: {msg}"),
             WalletBuildError::EventListenerError(msg) => {
-                write!(f, "Event listener error: {}", msg)
+                write!(f, "Event listener error: {msg}")
             }
             WalletBuildError::ConfigurationError(msg) => {
-                write!(f, "Configuration error: {}", msg)
+                write!(f, "Configuration error: {msg}")
             }
             WalletBuildError::MissingParameter(param) => {
-                write!(f, "Missing required parameter: {}", param)
+                write!(f, "Missing required parameter: {param}")
             }
         }
     }
@@ -657,7 +657,7 @@ impl WalletBuilder {
     /// * `MissingParameter` - If no creation method was specified
     /// * `WalletCreation` - If wallet creation fails
     /// * `EventListenerError` - If event listener registration fails
-    pub async fn build_async(mut self) -> Result<Wallet, WalletBuildError> {
+    pub async fn build_async(self) -> Result<Wallet, WalletBuildError> {
         let creation_method = self.creation_method.ok_or_else(|| {
             WalletBuildError::MissingParameter(
                 "creation method (call generate_new, from_seed_phrase, etc.)".to_string(),
@@ -685,7 +685,7 @@ impl WalletBuilder {
         // Set up event system if listeners are configured
         if !self.listeners_to_register.is_empty() || self.event_registry.is_some() {
             // Set up event registry
-            let mut event_registry = self.event_registry.unwrap_or_else(EventRegistry::new);
+            let mut event_registry = self.event_registry.unwrap_or_default();
 
             // Register any listeners that were added
             for listener in self.listeners_to_register {
@@ -717,79 +717,6 @@ impl Default for WalletBuilder {
 /// This struct wraps a regular wallet with an event registry to provide
 /// event-driven functionality. It maintains the same wallet interface while
 /// adding event emission capabilities.
-#[deprecated(
-    since = "0.3.0",
-    note = "Use Wallet directly with built-in event system"
-)]
-pub struct WalletWithEvents {
-    /// The underlying wallet
-    pub wallet: Wallet,
-    /// The event registry for handling listeners
-    pub event_registry: EventRegistry,
-}
-
-impl WalletWithEvents {
-    /// Get a reference to the underlying wallet
-    pub fn wallet(&self) -> &Wallet {
-        &self.wallet
-    }
-
-    /// Get a mutable reference to the underlying wallet
-    pub fn wallet_mut(&mut self) -> &mut Wallet {
-        &mut self.wallet
-    }
-
-    /// Get a reference to the event registry
-    pub fn event_registry(&self) -> &EventRegistry {
-        &self.event_registry
-    }
-
-    /// Get a mutable reference to the event registry
-    pub fn event_registry_mut(&mut self) -> &mut EventRegistry {
-        &mut self.event_registry
-    }
-
-    /// Add an event listener to the registry
-    ///
-    /// # Arguments
-    ///
-    /// * `listener` - The event listener to register
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on successful registration, or an error if registration fails
-    pub async fn add_event_listener(
-        &mut self,
-        listener: Box<dyn WalletEventListener>,
-    ) -> Result<(), crate::events::types::WalletEventError> {
-        self.event_registry.register(listener).await
-    }
-
-    /// Remove an event listener from the registry
-    ///
-    /// # Arguments
-    ///
-    /// * `listener_name` - Name of the listener to remove
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` if the listener was removed, or an error if not found
-    pub async fn remove_event_listener(
-        &mut self,
-        listener_name: &str,
-    ) -> Result<(), crate::events::types::WalletEventError> {
-        self.event_registry.remove(listener_name).await
-    }
-
-    /// Shutdown the event system
-    ///
-    /// This method cleanly shuts down all event listeners and should be called
-    /// when the wallet is no longer needed.
-    pub async fn shutdown_events(&mut self) {
-        self.event_registry.shutdown().await;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

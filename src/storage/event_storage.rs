@@ -79,6 +79,7 @@ pub struct StoredEvent {
 
 impl StoredEvent {
     /// Create a new stored event
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         event_id: String,
         wallet_id: String,
@@ -367,7 +368,7 @@ const _: () = {
     // Compile-time assertion that EventStorage has no forbidden methods
     // This will fail to compile if anyone adds update/delete methods
 
-    fn check_trait_is_append_only<T: EventStorage>() {
+    fn check_trait_is_append_only() {
         // This function exists only to trigger compilation errors if someone
         // adds forbidden methods to the EventStorage trait.
         //
@@ -909,8 +910,7 @@ impl EventStorage for SqliteEventStorage {
                     .collect::<Vec<_>>()
                     .join(", ");
                 let query = format!(
-                    "SELECT * FROM wallet_events WHERE wallet_id = ? AND sequence_number IN ({}) ORDER BY sequence_number ASC",
-                    placeholders
+                    "SELECT * FROM wallet_events WHERE wallet_id = ? AND sequence_number IN ({placeholders}) ORDER BY sequence_number ASC"
                 );
 
                 let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::new();
@@ -1956,8 +1956,7 @@ impl EventStorage for PooledSqliteEventStorage {
                         .collect::<Vec<_>>()
                         .join(", ");
                     let query = format!(
-                        "SELECT * FROM wallet_events WHERE wallet_id = ? AND sequence_number IN ({}) ORDER BY sequence_number ASC",
-                        placeholders
+                        "SELECT * FROM wallet_events WHERE wallet_id = ? AND sequence_number IN ({placeholders}) ORDER BY sequence_number ASC"
                     );
 
                     let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::new();

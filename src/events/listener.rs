@@ -295,7 +295,7 @@ impl EventRegistry {
             .await
             .map_err(|e| WalletEventError::ListenerError {
                 listener_name: listener_name.clone(),
-                error: format!("Initialization failed: {}", e),
+                error: format!("Initialization failed: {e}"),
             })?;
 
         // Add to registry
@@ -305,9 +305,9 @@ impl EventRegistry {
         self.stats.listeners_registered += 1;
 
         #[cfg(target_arch = "wasm32")]
-        web_sys::console::log_1(&format!("Registered event listener: {}", listener_name).into());
+        web_sys::console::log_1(&format!("Registered event listener: {listener_name}").into());
         #[cfg(not(target_arch = "wasm32"))]
-        println!("Registered event listener: {}", listener_name);
+        println!("Registered event listener: {listener_name}");
 
         Ok(())
     }
@@ -334,10 +334,10 @@ impl EventRegistry {
         if let Err(e) = self.listeners[index].cleanup().await {
             #[cfg(target_arch = "wasm32")]
             web_sys::console::warn_1(
-                &format!("Cleanup failed for listener '{}': {}", listener_name, e).into(),
+                &format!("Cleanup failed for listener '{listener_name}': {e}").into(),
             );
             #[cfg(not(target_arch = "wasm32"))]
-            eprintln!("Cleanup failed for listener '{}': {}", listener_name, e);
+            eprintln!("Cleanup failed for listener '{listener_name}': {e}");
         }
 
         // Remove from listeners vector
@@ -353,9 +353,9 @@ impl EventRegistry {
         self.stats.listeners_removed += 1;
 
         #[cfg(target_arch = "wasm32")]
-        web_sys::console::log_1(&format!("Removed event listener: {}", listener_name).into());
+        web_sys::console::log_1(&format!("Removed event listener: {listener_name}").into());
         #[cfg(not(target_arch = "wasm32"))]
-        println!("Removed event listener: {}", listener_name);
+        println!("Removed event listener: {listener_name}");
 
         Ok(())
     }
@@ -422,10 +422,7 @@ impl EventRegistry {
                     .into(),
                 );
                 #[cfg(not(target_arch = "wasm32"))]
-                eprintln!(
-                    "Event listener '{}' failed to handle {}: {}",
-                    listener_name, event_type, e
-                );
+                eprintln!("Event listener '{listener_name}' failed to handle {event_type}: {e}");
             }
         }
     }
@@ -487,10 +484,10 @@ impl EventRegistry {
             if let Err(e) = self.remove(&name).await {
                 #[cfg(target_arch = "wasm32")]
                 web_sys::console::error_1(
-                    &format!("Failed to remove unhealthy listener '{}': {}", name, e).into(),
+                    &format!("Failed to remove unhealthy listener '{name}': {e}").into(),
                 );
                 #[cfg(not(target_arch = "wasm32"))]
-                eprintln!("Failed to remove unhealthy listener '{}': {}", name, e);
+                eprintln!("Failed to remove unhealthy listener '{name}': {e}");
             } else {
                 removed_listeners.push(name);
             }
@@ -524,10 +521,10 @@ impl EventRegistry {
                 let listener_name = listener.name();
                 #[cfg(target_arch = "wasm32")]
                 web_sys::console::warn_1(
-                    &format!("Cleanup failed for listener '{}': {}", listener_name, e).into(),
+                    &format!("Cleanup failed for listener '{listener_name}': {e}").into(),
                 );
                 #[cfg(not(target_arch = "wasm32"))]
-                eprintln!("Cleanup failed for listener '{}': {}", listener_name, e);
+                eprintln!("Cleanup failed for listener '{listener_name}': {e}");
             }
         }
 

@@ -191,7 +191,7 @@ mod connection_pool_tests {
             let storage_clone = storage.clone();
 
             let handle = tokio::spawn(async move {
-                let wallet_id = format!("wallet{}", wallet_num);
+                let wallet_id = format!("wallet{wallet_num}");
                 let mut event_ids = Vec::new();
 
                 // Each wallet writes 10 events
@@ -295,7 +295,7 @@ mod connection_pool_tests {
                     "UTXO_RECEIVED"
                 };
 
-                let event = create_test_event(&format!("wallet{}", wallet_num), event_type, seq);
+                let event = create_test_event(&format!("wallet{wallet_num}"), event_type, seq);
                 all_events.push(event);
             }
         }
@@ -387,7 +387,7 @@ mod connection_pool_tests {
         assert_eq!(event.sequence_number, 1);
         assert_eq!(event.event_type, "UTXO_RECEIVED");
         assert_eq!(event.wallet_id, "wallet1");
-        assert!(event.event_id.len() > 0);
+        assert!(!event.event_id.is_empty());
 
         // Test event with correlation
         let correlated_event = storage

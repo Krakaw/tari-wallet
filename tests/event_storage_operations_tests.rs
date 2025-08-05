@@ -189,7 +189,7 @@ mod event_storage_operations_tests {
                 .insert_event(
                     "wallet-1",
                     "UTXO_RECEIVED",
-                    format!(r#"{{"event": {}}}"#, i),
+                    format!(r#"{{"event": {i}}}"#),
                     "{}".to_string(),
                     "scanner",
                     None,
@@ -235,7 +235,7 @@ mod event_storage_operations_tests {
                 .insert_event(
                     "wallet-1",
                     "UTXO_RECEIVED",
-                    format!(r#"{{"event": {}}}"#, i),
+                    format!(r#"{{"event": {i}}}"#),
                     "{}".to_string(),
                     "scanner",
                     None,
@@ -270,7 +270,7 @@ mod event_storage_operations_tests {
                 .insert_event(
                     "wallet-1",
                     "UTXO_RECEIVED",
-                    format!(r#"{{"event": {}}}"#, i),
+                    format!(r#"{{"event": {i}}}"#),
                     "{}".to_string(),
                     "scanner",
                     None,
@@ -594,7 +594,7 @@ mod event_storage_operations_tests {
                     .insert_event(
                         "wallet-1",
                         "UTXO_RECEIVED",
-                        format!(r#"{{"task": {}}}"#, i),
+                        format!(r#"{{"task": {i}}}"#),
                         "{}".to_string(),
                         "scanner",
                         None,

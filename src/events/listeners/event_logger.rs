@@ -234,7 +234,7 @@ impl EventLogger {
                     .create(true)
                     .append(true)
                     .open(path)
-                    .map_err(|e| format!("Failed to open log file {:?}: {}", path, e))?;
+                    .map_err(|e| format!("Failed to open log file {path:?}: {e}"))?;
                 Some(Arc::new(Mutex::new(file)))
             }
             _ => None,
@@ -304,7 +304,7 @@ impl EventLogger {
             .config
             .log_prefix
             .as_ref()
-            .map(|p| format!("{} ", p))
+            .map(|p| format!("{p} "))
             .unwrap_or_default();
 
         match self.config.format {
@@ -318,13 +318,13 @@ impl EventLogger {
 
                 if self.config.include_metadata {
                     if let Some(ref metadata) = entry.metadata {
-                        parts.push(format!(" | Metadata: {}", metadata));
+                        parts.push(format!(" | Metadata: {metadata}"));
                     }
                 }
 
                 if self.config.include_payloads {
                     if let Some(ref payload) = entry.payload {
-                        parts.push(format!(" | Payload: {}", payload));
+                        parts.push(format!(" | Payload: {payload}"));
                     }
                 }
 
@@ -412,17 +412,16 @@ impl EventLogger {
 
         // Write to console if configured
         if matches!(self.config.output, LogOutput::Console | LogOutput::Both(_)) {
-            println!("{}", formatted);
+            println!("{formatted}");
         }
 
         // Write to file if configured
         if let Some(ref file_handle) = self.file_handle {
             let mut file = file_handle
                 .lock()
-                .map_err(|e| format!("File lock error: {}", e))?;
-            writeln!(file, "{}", formatted).map_err(|e| format!("File write error: {}", e))?;
-            file.flush()
-                .map_err(|e| format!("File flush error: {}", e))?;
+                .map_err(|e| format!("File lock error: {e}"))?;
+            writeln!(file, "{formatted}").map_err(|e| format!("File write error: {e}"))?;
+            file.flush().map_err(|e| format!("File flush error: {e}"))?;
         }
 
         Ok(())
@@ -434,7 +433,7 @@ impl EventLogger {
             let entries_to_write = {
                 let mut buffer_guard = buffer
                     .lock()
-                    .map_err(|e| format!("Buffer lock error: {}", e))?;
+                    .map_err(|e| format!("Buffer lock error: {e}"))?;
                 buffer_guard.push(entry);
 
                 // Check if buffer is full and needs flushing
@@ -473,7 +472,7 @@ impl EventLogger {
             let entries_to_write = {
                 let mut buffer_guard = buffer
                     .lock()
-                    .map_err(|e| format!("Buffer lock error: {}", e))?;
+                    .map_err(|e| format!("Buffer lock error: {e}"))?;
                 buffer_guard.drain(..).collect::<Vec<_>>()
             }; // Release lock here
 
@@ -500,7 +499,7 @@ impl EventLogger {
                 file_rotations: stats.file_rotations,
                 buffer_flushes: stats.buffer_flushes,
             })
-            .map_err(|e| format!("Stats lock error: {}", e).into())
+            .map_err(|e| format!("Stats lock error: {e}").into())
     }
 
     /// Create a log entry from a wallet event

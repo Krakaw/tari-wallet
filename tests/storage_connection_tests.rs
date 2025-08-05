@@ -256,8 +256,7 @@ mod connection_tests {
                         || msg.contains("SQL")
                         || msg.contains("corrupt")
                         || msg.contains("not a database"),
-                    "Expected database error message, got: {}",
-                    msg
+                    "Expected database error message, got: {msg}"
                 );
             } else {
                 panic!("Expected StorageError for corrupted database");

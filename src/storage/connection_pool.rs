@@ -570,7 +570,7 @@ mod tests {
         for _ in 0..5 {
             let pool_clone = pool.clone();
             let handle = tokio::spawn(async move {
-                let conn = pool_clone.acquire().await.unwrap();
+                let _conn = pool_clone.acquire().await.unwrap();
                 // Simulate some work
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 // Connection is returned when dropped

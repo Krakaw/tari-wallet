@@ -600,9 +600,9 @@ impl AuditTrail {
         let mut file = self
             .file_handle
             .lock()
-            .map_err(|e| format!("File lock error: {}", e))?;
+            .map_err(|e| format!("File lock error: {e}"))?;
 
-        writeln!(file, "{}", json_record)?;
+        writeln!(file, "{json_record}")?;
         file.flush()?;
 
         Ok(())
@@ -617,7 +617,7 @@ impl AuditTrail {
             let mut buffer = self
                 .buffer
                 .lock()
-                .map_err(|e| format!("Buffer lock error: {}", e))?;
+                .map_err(|e| format!("Buffer lock error: {e}"))?;
 
             buffer.push(record);
 
@@ -648,7 +648,7 @@ impl AuditTrail {
             let mut buffer = self
                 .buffer
                 .lock()
-                .map_err(|e| format!("Buffer lock error: {}", e))?;
+                .map_err(|e| format!("Buffer lock error: {e}"))?;
 
             let records = buffer.drain(..).collect::<Vec<_>>();
             let count = records.len();
@@ -679,7 +679,7 @@ impl AuditTrail {
                 file_rotations: stats.file_rotations,
                 write_errors: stats.write_errors,
             })
-            .map_err(|e| format!("Stats lock error: {}", e).into())
+            .map_err(|e| format!("Stats lock error: {e}").into())
     }
 }
 

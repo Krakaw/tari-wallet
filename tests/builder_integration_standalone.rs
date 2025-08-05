@@ -51,7 +51,7 @@ async fn test_wallet_builder_single_listener_integration() {
         .expect("Failed to generate address");
 
     // Verify address is valid by checking its format
-    let address_str = format!("{:?}", address);
+    let address_str = format!("{address:?}");
     assert!(!address_str.is_empty());
 
     println!("✓ Single listener integration test passed");
@@ -86,7 +86,7 @@ async fn test_wallet_builder_memory_only_events_integration() {
     let features = TariAddressFeatures::create_interactive_and_one_sided();
     for _i in 0..3 {
         let _address = wallet
-            .get_dual_address(features.clone(), None)
+            .get_dual_address(features, None)
             .expect("Failed to generate address");
     }
 
@@ -289,9 +289,9 @@ async fn test_wallet_builder_complex_configuration_integration() {
     for _i in 5..8 {
         // Start from key index 5
         let address = wallet
-            .get_dual_address(features.clone(), None)
+            .get_dual_address(features, None)
             .expect("Failed to generate address");
-        let address_str = format!("{:?}", address);
+        let address_str = format!("{address:?}");
         assert!(!address_str.is_empty());
     }
 
@@ -311,7 +311,7 @@ async fn test_wallet_builder_concurrent_operations_integration() {
 
             let wallet = WalletBuilder::new()
                 .generate_new()
-                .with_label(&format!("Concurrent Wallet {}", i))
+                .with_label(format!("Concurrent Wallet {i}"))
                 .with_network("testnet")
                 .with_event_listener(Box::new(listener))
                 .build_async()
@@ -334,10 +334,7 @@ async fn test_wallet_builder_concurrent_operations_integration() {
     assert_eq!(wallets.len(), num_wallets);
 
     for (index, wallet) in wallets {
-        assert_eq!(
-            wallet.label(),
-            Some(&format!("Concurrent Wallet {}", index))
-        );
+        assert_eq!(wallet.label(), Some(&format!("Concurrent Wallet {index}")));
         assert_eq!(wallet.network(), "testnet");
         assert!(wallet.events_enabled());
         assert_eq!(wallet.event_listener_count(), 1);
@@ -347,7 +344,7 @@ async fn test_wallet_builder_concurrent_operations_integration() {
         let address = wallet
             .get_dual_address(features, None)
             .expect("Failed to generate address");
-        let address_str = format!("{:?}", address);
+        let address_str = format!("{address:?}");
         assert!(!address_str.is_empty());
     }
 
@@ -476,12 +473,12 @@ async fn test_wallet_builder_consistency_integration() {
     // Verify they generate the same addresses
     let features = TariAddressFeatures::create_interactive_and_one_sided();
     let address1 = wallet1
-        .get_dual_address(features.clone(), None)
+        .get_dual_address(features, None)
         .expect("Failed to generate address from wallet1");
     let address2 = wallet2
         .get_dual_address(features, None)
         .expect("Failed to generate address from wallet2");
-    assert_eq!(format!("{:?}", address1), format!("{:?}", address2));
+    assert_eq!(format!("{address1:?}"), format!("{address2:?}"));
 
     println!("✓ Wallet consistency integration test passed");
 }

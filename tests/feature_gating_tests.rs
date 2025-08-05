@@ -17,7 +17,7 @@ mod storage_feature_tests {
         let _phantom_event: Option<StoredEvent> = None;
 
         // If this compiles, the storage feature is working correctly
-        assert!(true);
+        // Test passes by compilation success
     }
 }
 
@@ -45,7 +45,7 @@ mod basic_functionality_tests {
     fn test_basic_wallet_creation_works_without_storage() {
         // Basic wallet creation should work regardless of storage feature
         let wallet = Wallet::generate_new(None);
-        assert!(wallet.get_wallet_id().len() > 0);
+        assert!(!wallet.get_wallet_id().is_empty());
     }
 
     #[test]
@@ -67,7 +67,7 @@ mod feature_combination_tests {
         // without conflicts
 
         // This would access both storage and http functionality
-        assert!(true);
+        // Test passes by compilation success
     }
 }
 

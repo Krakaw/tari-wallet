@@ -379,7 +379,7 @@ mod automatic_assignment_tests {
                 .create_event(
                     "wallet-1",
                     "UTXO_RECEIVED",
-                    format!(r#"{{"event": {}}}"#, i),
+                    format!(r#"{{"event": {i}}}"#),
                     "scanner",
                 )
                 .await
@@ -466,7 +466,7 @@ mod automatic_assignment_tests {
                 .create_event(
                     "wallet-sequential",
                     "UTXO_RECEIVED",
-                    format!(r#"{{"task": {}}}"#, i),
+                    format!(r#"{{"task": {i}}}"#),
                     "scanner",
                 )
                 .await

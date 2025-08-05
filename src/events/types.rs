@@ -834,7 +834,6 @@ impl From<serde_json::Error> for WalletEventError {
 pub type WalletEventResult<T> = Result<T, WalletEventError>;
 
 /// Specific payload structures for wallet events
-
 /// Payload for UTXO received events - captures the essential data about a newly received UTXO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UtxoReceivedPayload {
@@ -872,6 +871,7 @@ pub struct UtxoReceivedPayload {
 
 impl UtxoReceivedPayload {
     /// Create a new UTXO received payload with required fields
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         utxo_id: String,
         amount: u64,
@@ -980,6 +980,7 @@ pub struct UtxoSpentPayload {
 
 impl UtxoSpentPayload {
     /// Create a new UTXO spent payload with required fields
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         utxo_id: String,
         amount: u64,
@@ -1071,6 +1072,7 @@ pub struct ReorgPayload {
 
 impl ReorgPayload {
     /// Create a new reorg payload with required fields
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         fork_height: u64,
         old_block_hash: String,
@@ -3205,7 +3207,7 @@ mod tests {
         assert_eq!(deserialized.utxo_id, "utxo_456");
         assert_eq!(deserialized.amount, 500000);
         assert_eq!(deserialized.spending_block_height, 12400);
-        assert_eq!(deserialized.is_self_spend, true);
+        assert!(deserialized.is_self_spend);
         assert_eq!(deserialized.transaction_fee, Some(1000));
     }
 
@@ -3340,7 +3342,7 @@ mod tests {
                 assert_eq!(payload.utxo_id, "spent_utxo");
                 assert_eq!(payload.amount, 1500000);
                 assert_eq!(payload.spending_block_height, 15500);
-                assert_eq!(payload.is_self_spend, false);
+                assert!(!payload.is_self_spend);
             }
             _ => panic!("Expected UtxoSpent event"),
         }
@@ -3587,8 +3589,7 @@ mod tests {
         for error in recoverable_errors {
             assert!(
                 error.is_recoverable(),
-                "Error should be recoverable: {:?}",
-                error
+                "Error should be recoverable: {error:?}"
             );
         }
 
@@ -3615,8 +3616,7 @@ mod tests {
         for error in non_recoverable_errors {
             assert!(
                 !error.is_recoverable(),
-                "Error should not be recoverable: {:?}",
-                error
+                "Error should not be recoverable: {error:?}"
             );
         }
     }
@@ -3713,9 +3713,7 @@ mod tests {
             assert_eq!(
                 error.category(),
                 expected_category,
-                "Error {:?} should have category {}",
-                error,
-                expected_category
+                "Error {error:?} should have category {expected_category}"
             );
         }
     }

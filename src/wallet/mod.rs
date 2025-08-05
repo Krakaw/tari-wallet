@@ -6,7 +6,7 @@
 pub mod builder;
 
 // Re-export builder types for convenience
-pub use builder::{StorageMode, WalletBuildError, WalletBuilder, WalletWithEvents};
+pub use builder::{StorageMode, WalletBuildError, WalletBuilder};
 
 use crate::common::string_to_network;
 use crate::data_structures::address::{
@@ -507,6 +507,7 @@ impl Wallet {
     /// # Returns
     ///
     /// Returns `Ok(())` if the event was successfully dispatched, or an error if dispatch fails.
+    #[allow(clippy::too_many_arguments)]
     pub async fn emit_utxo_received(
         &mut self,
         amount: u64,
@@ -589,6 +590,7 @@ impl Wallet {
     /// # Returns
     ///
     /// Returns `Ok(())` if the event was successfully dispatched, or an error if dispatch fails.
+    #[allow(clippy::too_many_arguments)]
     pub async fn emit_utxo_spent(
         &mut self,
         amount: u64,
@@ -676,6 +678,7 @@ impl Wallet {
     /// # Returns
     ///
     /// Returns `Ok(())` if the event was successfully dispatched, or an error if dispatch fails.
+    #[allow(clippy::too_many_arguments)]
     pub async fn emit_reorg(
         &mut self,
         fork_height: u64,
@@ -723,7 +726,7 @@ impl Wallet {
     /// It uses the wallet's metadata label if available, or generates one from the master key.
     pub fn get_wallet_id(&self) -> String {
         if let Some(label) = &self.metadata.label {
-            format!("wallet_{}", label)
+            format!("wallet_{label}")
         } else {
             // Generate ID from master key hash (first 8 chars)
             let master_key_bytes = self.master_key.as_bytes();
