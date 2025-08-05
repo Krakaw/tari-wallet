@@ -23,6 +23,7 @@
 - `tests/feature_gating_tests.rs` - Tests for storage feature gating behavior (Task 4.5)
 - `tests/connection_pool_tests.rs` - Tests for connection pooling functionality (Task 4.6)
 - `tests/event_replay_methods_tests.rs` - Tests for specialized event retrieval methods for replay functionality (Task 4.7)
+- `tests/event_storage_comprehensive_tests.rs` - Comprehensive unit tests for event storage operations covering automatic assignment, batch operations, sequence validation, and edge cases (Task 4.8)
 - `tests/storage/event_storage_tests.rs` - Unit tests for event storage implementation
 - `tests/storage/mod.rs` - Storage test module organization
 
@@ -70,7 +71,7 @@
   - [x] 4.5 Feature-gate event storage with existing `storage` feature flag
   - [x] 4.6 Add connection pooling support for concurrent event writes
   - [x] 4.7 Implement event retrieval methods for replay functionality
-  - [ ] 4.8 Write unit tests for event storage operations
+  - [x] 4.8 Write unit tests for event storage operations
   - [ ] 4.9 Add database integrity tests to verify append-only behavior
 
 - [ ] 5.0 Implement Event Replay and Verification System

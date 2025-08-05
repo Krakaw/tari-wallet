@@ -2478,4 +2478,215 @@ mod tests {
         assert_eq!(stats.total_events, 0);
         assert_eq!(stats.unique_wallets, 0);
     }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_insert_event_with_automatic_assignment() {
+        use tokio_rusqlite::Connection;
+
+        let conn = Connection::open(":memory:").await.unwrap();
+        let storage = SqliteEventStorage::new(conn).await.unwrap();
+        let wallet_id = "test-wallet";
+
+        // Insert first event
+        let (db_id1, seq1) = storage
+            .insert_event(
+                wallet_id,
+                "UTXO_RECEIVED",
+                "{\"amount\": 100}".to_string(),
+                "{}".to_string(),
+                "test-source",
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(db_id1 > 0);
+        assert_eq!(seq1, 1);
+
+        // Insert second event
+        let (db_id2, seq2) = storage
+            .insert_event(
+                wallet_id,
+                "UTXO_SPENT",
+                "{\"amount\": 50}".to_string(),
+                "{}".to_string(),
+                "test-source",
+                Some("correlation-123".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert!(db_id2 > 0);
+        assert_eq!(seq2, 2);
+        assert_ne!(db_id1, db_id2);
+
+        // Verify events are stored with correct sequences
+        let event1 = storage.get_event_by_sequence(wallet_id, 1).await.unwrap();
+        let event2 = storage.get_event_by_sequence(wallet_id, 2).await.unwrap();
+
+        assert!(event1.is_some());
+        assert!(event2.is_some());
+
+        let event1 = event1.unwrap();
+        let event2 = event2.unwrap();
+
+        assert_eq!(event1.event_type, "UTXO_RECEIVED");
+        assert_eq!(event2.event_type, "UTXO_SPENT");
+        assert_eq!(event2.correlation_id, Some("correlation-123".to_string()));
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_validate_sequence_continuity() {
+        use tokio_rusqlite::Connection;
+
+        let conn = Connection::open(":memory:").await.unwrap();
+        let storage = SqliteEventStorage::new(conn).await.unwrap();
+        let wallet_id = "continuity-test-wallet";
+
+        // No events - should be valid
+        let missing = storage
+            .validate_sequence_continuity(wallet_id)
+            .await
+            .unwrap();
+        assert!(missing.is_empty());
+
+        // Create continuous sequence
+        storage
+            .insert_event(
+                wallet_id,
+                "UTXO_RECEIVED",
+                "{}".to_string(),
+                "{}".to_string(),
+                "test",
+                None,
+            )
+            .await
+            .unwrap();
+        storage
+            .insert_event(
+                wallet_id,
+                "UTXO_SPENT",
+                "{}".to_string(),
+                "{}".to_string(),
+                "test",
+                None,
+            )
+            .await
+            .unwrap();
+        storage
+            .insert_event(
+                wallet_id,
+                "UTXO_RECEIVED",
+                "{}".to_string(),
+                "{}".to_string(),
+                "test",
+                None,
+            )
+            .await
+            .unwrap();
+
+        let missing = storage
+            .validate_sequence_continuity(wallet_id)
+            .await
+            .unwrap();
+        assert!(missing.is_empty());
+
+        // Create event with gap (manually store event with sequence 5)
+        let gap_event = StoredEvent::new(
+            "gap-event".to_string(),
+            wallet_id.to_string(),
+            "UTXO_RECEIVED".to_string(),
+            5, // Creates gap at sequence 4
+            "{}".to_string(),
+            "{}".to_string(),
+            "test".to_string(),
+            None,
+            SystemTime::now(),
+        );
+        storage.store_event(&gap_event).await.unwrap();
+
+        let missing = storage
+            .validate_sequence_continuity(wallet_id)
+            .await
+            .unwrap();
+        assert_eq!(missing, vec![4]);
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_get_event_count_by_type() {
+        use tokio_rusqlite::Connection;
+
+        let conn = Connection::open(":memory:").await.unwrap();
+        let storage = SqliteEventStorage::new(conn).await.unwrap();
+        let wallet_id = "count-by-type-wallet";
+
+        // No events initially
+        let counts = storage.get_event_count_by_type(wallet_id).await.unwrap();
+        assert!(counts.is_empty());
+
+        // Create events of different types
+        storage
+            .insert_event(
+                wallet_id,
+                "UTXO_RECEIVED",
+                "{}".to_string(),
+                "{}".to_string(),
+                "test",
+                None,
+            )
+            .await
+            .unwrap();
+        storage
+            .insert_event(
+                wallet_id,
+                "UTXO_RECEIVED",
+                "{}".to_string(),
+                "{}".to_string(),
+                "test",
+                None,
+            )
+            .await
+            .unwrap();
+        storage
+            .insert_event(
+                wallet_id,
+                "UTXO_SPENT",
+                "{}".to_string(),
+                "{}".to_string(),
+                "test",
+                None,
+            )
+            .await
+            .unwrap();
+        storage
+            .insert_event(
+                wallet_id,
+                "REORG",
+                "{}".to_string(),
+                "{}".to_string(),
+                "test",
+                None,
+            )
+            .await
+            .unwrap();
+        storage
+            .insert_event(
+                wallet_id,
+                "UTXO_RECEIVED",
+                "{}".to_string(),
+                "{}".to_string(),
+                "test",
+                None,
+            )
+            .await
+            .unwrap();
+
+        let counts = storage.get_event_count_by_type(wallet_id).await.unwrap();
+        assert_eq!(counts.get("UTXO_RECEIVED"), Some(&3));
+        assert_eq!(counts.get("UTXO_SPENT"), Some(&1));
+        assert_eq!(counts.get("REORG"), Some(&1));
+    }
 }
