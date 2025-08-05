@@ -733,6 +733,19 @@ impl Wallet {
     }
 }
 
+impl Clone for Wallet {
+    fn clone(&self) -> Self {
+        Self {
+            master_key: self.master_key.clone(),
+            birthday: self.birthday,
+            metadata: self.metadata.clone(),
+            original_seed_phrase: self.original_seed_phrase.clone(),
+            // Don't clone the event registry - new wallet instances start without event listeners
+            event_registry: None,
+        }
+    }
+}
+
 impl Zeroize for Wallet {
     fn zeroize(&mut self) {
         self.master_key.zeroize();
