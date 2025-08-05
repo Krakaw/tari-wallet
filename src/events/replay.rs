@@ -552,6 +552,184 @@ pub enum ConfidenceLevel {
     Low,
 }
 
+/// Detailed inconsistency report for replayed state analysis
+#[derive(Debug, Clone, Serialize)]
+pub struct InconsistencyReport {
+    /// Wallet ID that was analyzed
+    pub wallet_id: String,
+    /// List of detected inconsistencies
+    pub inconsistencies: Vec<InconsistencyIssue>,
+    /// Summary of issues by severity
+    pub severity_summary: SeveritySummary,
+    /// Total number of issues found
+    pub total_issues: usize,
+    /// Time taken for detection
+    pub detection_duration: Duration,
+    /// Summary of the replayed state analyzed
+    pub replayed_state_summary: ReplayedStateSummary,
+}
+
+/// Individual inconsistency issue detected during analysis
+#[derive(Debug, Clone, Serialize)]
+pub struct InconsistencyIssue {
+    /// Type of inconsistency detected
+    pub issue_type: InconsistencyType,
+    /// Severity level of the issue
+    pub severity: InconsistencySeverity,
+    /// Detailed description of the issue
+    pub description: String,
+    /// Affected entity (UTXO ID, transaction hash, etc.)
+    pub affected_entity: Option<String>,
+    /// Expected value or state
+    pub expected: Option<String>,
+    /// Actual value or state found
+    pub actual: Option<String>,
+    /// Block height where issue was detected (if applicable)
+    pub block_height: Option<u64>,
+    /// Sequence number where issue was detected (if applicable)
+    pub sequence_number: Option<u64>,
+    /// Additional context or metadata
+    pub context: HashMap<String, String>,
+    /// Potential impact of this issue
+    pub impact: InconsistencyImpact,
+    /// Suggested remediation actions
+    pub remediation: Vec<String>,
+}
+
+/// Types of inconsistencies that can be detected
+#[derive(Debug, Clone, Serialize)]
+pub enum InconsistencyType {
+    /// UTXO state is internally inconsistent
+    InternalStateInconsistency,
+    /// Business logic violation
+    LogicalInconsistency,
+    /// Time-related inconsistency (events out of order, etc.)
+    TemporalInconsistency,
+    /// Balance calculation doesn't match UTXO values
+    BalanceInconsistency,
+    /// UTXO has invalid state or transitions
+    UtxoStateInconsistency,
+    /// Duplicate entities found
+    DuplicateEntity,
+    /// Missing expected data
+    MissingData,
+    /// Data corruption detected
+    DataCorruption,
+    /// Cross-reference validation failed
+    CrossReferenceInconsistency,
+    /// Merkle or cryptographic proof validation failed
+    CryptographicInconsistency,
+}
+
+/// Severity levels for inconsistency issues
+#[derive(Debug, Clone, Serialize)]
+pub enum InconsistencySeverity {
+    /// Critical issue that affects wallet functionality
+    Critical,
+    /// Major issue that affects balance or transaction accuracy
+    Major,
+    /// Minor issue that affects metadata or auxiliary data
+    Minor,
+    /// Informational notice that may indicate potential issues
+    Info,
+}
+
+/// Impact assessment for inconsistency issues
+#[derive(Debug, Clone, Serialize)]
+pub enum InconsistencyImpact {
+    /// Affects wallet balance calculations
+    BalanceImpact,
+    /// Affects transaction history accuracy
+    TransactionHistoryImpact,
+    /// Affects UTXO availability for spending
+    SpendabilityImpact,
+    /// Affects wallet state reconstruction
+    StateReconstructionImpact,
+    /// Affects audit and compliance
+    AuditImpact,
+    /// Performance or efficiency impact
+    PerformanceImpact,
+    /// No functional impact, cosmetic only
+    NoFunctionalImpact,
+}
+
+/// Summary of issues categorized by severity
+#[derive(Debug, Clone, Serialize)]
+pub struct SeveritySummary {
+    /// Number of critical issues
+    pub critical_count: usize,
+    /// Number of major issues
+    pub major_count: usize,
+    /// Number of minor issues
+    pub minor_count: usize,
+    /// Number of informational issues
+    pub info_count: usize,
+    /// Overall risk level
+    pub overall_risk: RiskLevel,
+    /// Whether the state is considered reliable
+    pub state_reliability: StateReliability,
+}
+
+/// Overall risk level assessment
+#[derive(Debug, Clone, Serialize)]
+pub enum RiskLevel {
+    /// High risk - critical issues that require immediate attention
+    High,
+    /// Medium risk - significant issues that should be addressed
+    Medium,
+    /// Low risk - minor issues that can be addressed as time permits
+    Low,
+    /// No significant risk detected
+    None,
+}
+
+/// Assessment of state reliability
+#[derive(Debug, Clone, Serialize)]
+pub enum StateReliability {
+    /// State is reliable and can be trusted
+    Reliable,
+    /// State has some issues but is generally trustworthy
+    MostlyReliable,
+    /// State has significant issues and should be used with caution
+    Questionable,
+    /// State is unreliable and should not be trusted
+    Unreliable,
+}
+
+/// Summary of the replayed state that was analyzed
+#[derive(Debug, Clone, Serialize)]
+pub struct ReplayedStateSummary {
+    /// Total number of UTXOs
+    pub total_utxos: usize,
+    /// Total number of spent UTXOs
+    pub total_spent_utxos: usize,
+    /// Total balance
+    pub total_balance: u64,
+    /// Highest block height
+    pub highest_block: u64,
+    /// Last sequence number
+    pub last_sequence: u64,
+    /// Transaction count
+    pub transaction_count: usize,
+    /// Analysis timestamp
+    pub analyzed_at: SystemTime,
+}
+
+impl ReplayedStateSummary {
+    /// Create summary from replayed wallet state
+    pub fn from_state(state: &ReplayedWalletState) -> Self {
+        Self {
+            total_utxos: state.utxos.len(),
+            total_spent_utxos: state.spent_utxos.len(),
+            total_balance: state.total_balance,
+            highest_block: state.highest_block,
+            last_sequence: state.last_sequence,
+            transaction_count: state.transaction_count,
+            analyzed_at: SystemTime::now(),
+        }
+    }
+}
+
 /// Callback function type for progress reporting
 pub type ProgressCallback = Arc<dyn Fn(&ReplayProgress) + Send + Sync>;
 
@@ -971,6 +1149,615 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
         if let Some(ref callback) = self.progress_callback {
             callback(progress);
         }
+    }
+
+    /// Detect internal state inconsistencies within the replayed state
+    fn detect_internal_inconsistencies(
+        &self,
+        state: &ReplayedWalletState,
+        inconsistencies: &mut Vec<InconsistencyIssue>,
+    ) {
+        // Check if UTXO IDs match their HashMap keys
+        for (key, utxo) in &state.utxos {
+            if key != &utxo.utxo_id {
+                inconsistencies.push(InconsistencyIssue {
+                    issue_type: InconsistencyType::InternalStateInconsistency,
+                    severity: InconsistencySeverity::Major,
+                    description: format!(
+                        "UTXO ID mismatch: HashMap key '{}' does not match UTXO ID '{}'",
+                        key, utxo.utxo_id
+                    ),
+                    affected_entity: Some(key.clone()),
+                    expected: Some(key.clone()),
+                    actual: Some(utxo.utxo_id.clone()),
+                    block_height: Some(utxo.block_height),
+                    sequence_number: None,
+                    context: HashMap::from([
+                        ("utxo_amount".to_string(), utxo.amount.to_string()),
+                        ("block_height".to_string(), utxo.block_height.to_string()),
+                    ]),
+                    impact: InconsistencyImpact::StateReconstructionImpact,
+                    remediation: vec![
+                        "Verify event replay logic".to_string(),
+                        "Check UTXO creation process".to_string(),
+                    ],
+                });
+            }
+        }
+
+        // Check spent UTXOs for similar inconsistencies
+        for (key, spent_utxo) in &state.spent_utxos {
+            if key != &spent_utxo.original_utxo.utxo_id {
+                inconsistencies.push(InconsistencyIssue {
+                    issue_type: InconsistencyType::InternalStateInconsistency,
+                    severity: InconsistencySeverity::Major,
+                    description: format!(
+                        "Spent UTXO ID mismatch: HashMap key '{}' does not match original UTXO ID '{}'",
+                        key, spent_utxo.original_utxo.utxo_id
+                    ),
+                    affected_entity: Some(key.clone()),
+                    expected: Some(key.clone()),
+                    actual: Some(spent_utxo.original_utxo.utxo_id.clone()),
+                    block_height: Some(spent_utxo.spent_block_height),
+                    sequence_number: None,
+                    context: HashMap::from([
+                        ("original_amount".to_string(), spent_utxo.original_utxo.amount.to_string()),
+                        ("spent_block".to_string(), spent_utxo.spent_block_height.to_string()),
+                    ]),
+                    impact: InconsistencyImpact::StateReconstructionImpact,
+                    remediation: vec![
+                        "Verify spent UTXO tracking logic".to_string(),
+                        "Check event application order".to_string(),
+                    ],
+                });
+            }
+        }
+    }
+
+    /// Detect logical inconsistencies in business rules
+    fn detect_logical_inconsistencies(
+        &self,
+        state: &ReplayedWalletState,
+        inconsistencies: &mut Vec<InconsistencyIssue>,
+    ) {
+        // Check for impossible maturity states
+        for utxo in state.utxos.values() {
+            if let Some(maturity_height) = utxo.maturity_height {
+                if utxo.is_mature && utxo.block_height < maturity_height {
+                    inconsistencies.push(InconsistencyIssue {
+                        issue_type: InconsistencyType::LogicalInconsistency,
+                        severity: InconsistencySeverity::Major,
+                        description: format!(
+                            "UTXO marked as mature but block height {} is less than maturity height {}",
+                            utxo.block_height, maturity_height
+                        ),
+                        affected_entity: Some(utxo.utxo_id.clone()),
+                        expected: Some("is_mature should be false".to_string()),
+                        actual: Some("is_mature is true".to_string()),
+                        block_height: Some(utxo.block_height),
+                        sequence_number: None,
+                        context: HashMap::from([
+                            ("maturity_height".to_string(), maturity_height.to_string()),
+                            ("amount".to_string(), utxo.amount.to_string()),
+                        ]),
+                        impact: InconsistencyImpact::SpendabilityImpact,
+                        remediation: vec![
+                            "Verify maturity calculation logic".to_string(),
+                            "Check coinbase transaction handling".to_string(),
+                        ],
+                    });
+                }
+            }
+
+            // Check for zero-value UTXOs
+            if utxo.amount == 0 {
+                inconsistencies.push(InconsistencyIssue {
+                    issue_type: InconsistencyType::LogicalInconsistency,
+                    severity: InconsistencySeverity::Minor,
+                    description: "UTXO has zero value".to_string(),
+                    affected_entity: Some(utxo.utxo_id.clone()),
+                    expected: Some("amount > 0".to_string()),
+                    actual: Some("amount = 0".to_string()),
+                    block_height: Some(utxo.block_height),
+                    sequence_number: None,
+                    context: HashMap::from([
+                        (
+                            "transaction_hash".to_string(),
+                            utxo.transaction_hash.clone(),
+                        ),
+                        ("output_index".to_string(), utxo.output_index.to_string()),
+                    ]),
+                    impact: InconsistencyImpact::BalanceImpact,
+                    remediation: vec![
+                        "Verify transaction parsing logic".to_string(),
+                        "Check for dust transactions".to_string(),
+                    ],
+                });
+            }
+        }
+
+        // Check for duplicate UTXOs across unspent and spent collections
+        for utxo_id in state.utxos.keys() {
+            if state.spent_utxos.contains_key(utxo_id) {
+                inconsistencies.push(InconsistencyIssue {
+                    issue_type: InconsistencyType::LogicalInconsistency,
+                    severity: InconsistencySeverity::Critical,
+                    description: format!(
+                        "UTXO {} exists in both unspent and spent collections",
+                        utxo_id
+                    ),
+                    affected_entity: Some(utxo_id.clone()),
+                    expected: Some("UTXO should be in only one collection".to_string()),
+                    actual: Some("UTXO exists in both collections".to_string()),
+                    block_height: None,
+                    sequence_number: None,
+                    context: HashMap::new(),
+                    impact: InconsistencyImpact::BalanceImpact,
+                    remediation: vec![
+                        "Fix UTXO state transition logic".to_string(),
+                        "Ensure proper move from unspent to spent".to_string(),
+                    ],
+                });
+            }
+        }
+    }
+
+    /// Detect temporal inconsistencies in event ordering and timestamps
+    fn detect_temporal_inconsistencies(
+        &self,
+        state: &ReplayedWalletState,
+        inconsistencies: &mut Vec<InconsistencyIssue>,
+    ) {
+        // Check that spent UTXOs were spent after they were received
+        for spent_utxo in state.spent_utxos.values() {
+            if spent_utxo.spent_at < spent_utxo.original_utxo.received_at {
+                inconsistencies.push(InconsistencyIssue {
+                    issue_type: InconsistencyType::TemporalInconsistency,
+                    severity: InconsistencySeverity::Major,
+                    description: format!(
+                        "UTXO {} was spent before it was received",
+                        spent_utxo.original_utxo.utxo_id
+                    ),
+                    affected_entity: Some(spent_utxo.original_utxo.utxo_id.clone()),
+                    expected: Some("spent_at > received_at".to_string()),
+                    actual: Some("spent_at < received_at".to_string()),
+                    block_height: Some(spent_utxo.spent_block_height),
+                    sequence_number: None,
+                    context: HashMap::from([
+                        (
+                            "received_at".to_string(),
+                            format!("{:?}", spent_utxo.original_utxo.received_at),
+                        ),
+                        ("spent_at".to_string(), format!("{:?}", spent_utxo.spent_at)),
+                    ]),
+                    impact: InconsistencyImpact::TransactionHistoryImpact,
+                    remediation: vec![
+                        "Check event timestamp assignments".to_string(),
+                        "Verify chronological event processing".to_string(),
+                    ],
+                });
+            }
+
+            // Check that spending block height is not less than receiving block height
+            if spent_utxo.spent_block_height < spent_utxo.original_utxo.block_height {
+                inconsistencies.push(InconsistencyIssue {
+                    issue_type: InconsistencyType::TemporalInconsistency,
+                    severity: InconsistencySeverity::Critical,
+                    description: format!(
+                        "UTXO {} was spent at block {} before it was confirmed at block {}",
+                        spent_utxo.original_utxo.utxo_id,
+                        spent_utxo.spent_block_height,
+                        spent_utxo.original_utxo.block_height
+                    ),
+                    affected_entity: Some(spent_utxo.original_utxo.utxo_id.clone()),
+                    expected: Some("spent_block_height >= received_block_height".to_string()),
+                    actual: Some("spent_block_height < received_block_height".to_string()),
+                    block_height: Some(spent_utxo.spent_block_height),
+                    sequence_number: None,
+                    context: HashMap::from([
+                        (
+                            "received_block".to_string(),
+                            spent_utxo.original_utxo.block_height.to_string(),
+                        ),
+                        (
+                            "spent_block".to_string(),
+                            spent_utxo.spent_block_height.to_string(),
+                        ),
+                    ]),
+                    impact: InconsistencyImpact::TransactionHistoryImpact,
+                    remediation: vec![
+                        "Verify blockchain synchronization".to_string(),
+                        "Check for reorganization handling errors".to_string(),
+                    ],
+                });
+            }
+        }
+    }
+
+    /// Detect balance calculation inconsistencies
+    fn detect_balance_inconsistencies(
+        &self,
+        state: &ReplayedWalletState,
+        inconsistencies: &mut Vec<InconsistencyIssue>,
+    ) {
+        // Calculate balance from UTXOs and compare with stored balance
+        let calculated_balance: u64 = state.utxos.values().map(|u| u.amount).sum();
+
+        if calculated_balance != state.total_balance {
+            inconsistencies.push(InconsistencyIssue {
+                issue_type: InconsistencyType::BalanceInconsistency,
+                severity: InconsistencySeverity::Critical,
+                description: format!(
+                    "Total balance mismatch: calculated {} vs stored {}",
+                    calculated_balance, state.total_balance
+                ),
+                affected_entity: Some(state.wallet_id.clone()),
+                expected: Some(calculated_balance.to_string()),
+                actual: Some(state.total_balance.to_string()),
+                block_height: None,
+                sequence_number: None,
+                context: HashMap::from([
+                    ("utxo_count".to_string(), state.utxos.len().to_string()),
+                    (
+                        "difference".to_string(),
+                        (calculated_balance as i64 - state.total_balance as i64).to_string(),
+                    ),
+                ]),
+                impact: InconsistencyImpact::BalanceImpact,
+                remediation: vec![
+                    "Recalculate balance from UTXOs".to_string(),
+                    "Verify balance update logic in event processing".to_string(),
+                ],
+            });
+        }
+
+        // Check for any UTXOs with amounts that would cause overflow
+        for utxo in state.utxos.values() {
+            if utxo.amount > u64::MAX / 2 {
+                // Conservative check for potential overflow
+                inconsistencies.push(InconsistencyIssue {
+                    issue_type: InconsistencyType::BalanceInconsistency,
+                    severity: InconsistencySeverity::Major,
+                    description: format!(
+                        "UTXO {} has suspiciously large amount: {}",
+                        utxo.utxo_id, utxo.amount
+                    ),
+                    affected_entity: Some(utxo.utxo_id.clone()),
+                    expected: Some("reasonable amount < u64::MAX/2".to_string()),
+                    actual: Some(utxo.amount.to_string()),
+                    block_height: Some(utxo.block_height),
+                    sequence_number: None,
+                    context: HashMap::from([(
+                        "transaction_hash".to_string(),
+                        utxo.transaction_hash.clone(),
+                    )]),
+                    impact: InconsistencyImpact::BalanceImpact,
+                    remediation: vec![
+                        "Verify transaction amount parsing".to_string(),
+                        "Check for data corruption".to_string(),
+                    ],
+                });
+            }
+        }
+    }
+
+    /// Detect UTXO state inconsistencies
+    fn detect_utxo_state_inconsistencies(
+        &self,
+        state: &ReplayedWalletState,
+        inconsistencies: &mut Vec<InconsistencyIssue>,
+    ) {
+        // Check for missing required fields
+        for utxo in state.utxos.values() {
+            if utxo.utxo_id.is_empty() {
+                inconsistencies.push(InconsistencyIssue {
+                    issue_type: InconsistencyType::UtxoStateInconsistency,
+                    severity: InconsistencySeverity::Critical,
+                    description: "UTXO has empty UTXO ID".to_string(),
+                    affected_entity: None,
+                    expected: Some("non-empty UTXO ID".to_string()),
+                    actual: Some("empty string".to_string()),
+                    block_height: Some(utxo.block_height),
+                    sequence_number: None,
+                    context: HashMap::from([
+                        ("amount".to_string(), utxo.amount.to_string()),
+                        (
+                            "transaction_hash".to_string(),
+                            utxo.transaction_hash.clone(),
+                        ),
+                    ]),
+                    impact: InconsistencyImpact::StateReconstructionImpact,
+                    remediation: vec![
+                        "Fix UTXO ID generation logic".to_string(),
+                        "Verify event payload construction".to_string(),
+                    ],
+                });
+            }
+
+            if utxo.transaction_hash.is_empty() {
+                inconsistencies.push(InconsistencyIssue {
+                    issue_type: InconsistencyType::UtxoStateInconsistency,
+                    severity: InconsistencySeverity::Major,
+                    description: format!("UTXO {} has empty transaction hash", utxo.utxo_id),
+                    affected_entity: Some(utxo.utxo_id.clone()),
+                    expected: Some("non-empty transaction hash".to_string()),
+                    actual: Some("empty string".to_string()),
+                    block_height: Some(utxo.block_height),
+                    sequence_number: None,
+                    context: HashMap::new(),
+                    impact: InconsistencyImpact::TransactionHistoryImpact,
+                    remediation: vec![
+                        "Fix transaction hash tracking".to_string(),
+                        "Verify blockchain data extraction".to_string(),
+                    ],
+                });
+            }
+
+            if utxo.commitment.is_empty() {
+                inconsistencies.push(InconsistencyIssue {
+                    issue_type: InconsistencyType::UtxoStateInconsistency,
+                    severity: InconsistencySeverity::Major,
+                    description: format!("UTXO {} has empty commitment", utxo.utxo_id),
+                    affected_entity: Some(utxo.utxo_id.clone()),
+                    expected: Some("non-empty commitment".to_string()),
+                    actual: Some("empty string".to_string()),
+                    block_height: Some(utxo.block_height),
+                    sequence_number: None,
+                    context: HashMap::new(),
+                    impact: InconsistencyImpact::SpendabilityImpact,
+                    remediation: vec![
+                        "Fix commitment extraction logic".to_string(),
+                        "Verify cryptographic data handling".to_string(),
+                    ],
+                });
+            }
+        }
+    }
+
+    /// Categorize inconsistencies by severity and assess overall risk
+    fn categorize_inconsistency_severity(
+        &self,
+        inconsistencies: &[InconsistencyIssue],
+    ) -> SeveritySummary {
+        let mut critical_count = 0;
+        let mut major_count = 0;
+        let mut minor_count = 0;
+        let mut info_count = 0;
+
+        for issue in inconsistencies {
+            match issue.severity {
+                InconsistencySeverity::Critical => critical_count += 1,
+                InconsistencySeverity::Major => major_count += 1,
+                InconsistencySeverity::Minor => minor_count += 1,
+                InconsistencySeverity::Info => info_count += 1,
+            }
+        }
+
+        let overall_risk = if critical_count > 0 {
+            RiskLevel::High
+        } else if major_count > 0 {
+            RiskLevel::Medium
+        } else if minor_count > 0 {
+            RiskLevel::Low
+        } else {
+            RiskLevel::None
+        };
+
+        let state_reliability = if critical_count > 0 {
+            StateReliability::Unreliable
+        } else if major_count > 2 {
+            StateReliability::Questionable
+        } else if major_count > 0 || minor_count > 5 {
+            StateReliability::MostlyReliable
+        } else {
+            StateReliability::Reliable
+        };
+
+        SeveritySummary {
+            critical_count,
+            major_count,
+            minor_count,
+            info_count,
+            overall_risk,
+            state_reliability,
+        }
+    }
+
+    /// Generate a detailed human-readable report from inconsistency results
+    pub fn generate_detailed_report(&self, report: &InconsistencyReport) -> String {
+        let mut output = String::new();
+
+        output.push_str(&format!("# Wallet Event Replay Inconsistency Report\n\n"));
+        output.push_str(&format!("**Wallet ID:** {}\n", report.wallet_id));
+        output.push_str(&format!(
+            "**Analysis Duration:** {:?}\n",
+            report.detection_duration
+        ));
+        output.push_str(&format!(
+            "**Total Issues Found:** {}\n\n",
+            report.total_issues
+        ));
+
+        // Risk assessment summary
+        output.push_str("## Risk Assessment\n\n");
+        output.push_str(&format!(
+            "**Overall Risk Level:** {:?}\n",
+            report.severity_summary.overall_risk
+        ));
+        output.push_str(&format!(
+            "**State Reliability:** {:?}\n\n",
+            report.severity_summary.state_reliability
+        ));
+
+        // Issue severity breakdown
+        output.push_str("## Issue Severity Breakdown\n\n");
+        output.push_str(&format!(
+            "- **Critical:** {} issues\n",
+            report.severity_summary.critical_count
+        ));
+        output.push_str(&format!(
+            "- **Major:** {} issues\n",
+            report.severity_summary.major_count
+        ));
+        output.push_str(&format!(
+            "- **Minor:** {} issues\n",
+            report.severity_summary.minor_count
+        ));
+        output.push_str(&format!(
+            "- **Info:** {} issues\n\n",
+            report.severity_summary.info_count
+        ));
+
+        // State summary
+        output.push_str("## Replayed State Summary\n\n");
+        output.push_str(&format!(
+            "- **Total UTXOs:** {}\n",
+            report.replayed_state_summary.total_utxos
+        ));
+        output.push_str(&format!(
+            "- **Spent UTXOs:** {}\n",
+            report.replayed_state_summary.total_spent_utxos
+        ));
+        output.push_str(&format!(
+            "- **Total Balance:** {} microTari\n",
+            report.replayed_state_summary.total_balance
+        ));
+        output.push_str(&format!(
+            "- **Highest Block:** {}\n",
+            report.replayed_state_summary.highest_block
+        ));
+        output.push_str(&format!(
+            "- **Last Sequence:** {}\n",
+            report.replayed_state_summary.last_sequence
+        ));
+        output.push_str(&format!(
+            "- **Transaction Count:** {}\n\n",
+            report.replayed_state_summary.transaction_count
+        ));
+
+        if !report.inconsistencies.is_empty() {
+            output.push_str("## Detailed Issues\n\n");
+
+            // Group issues by type
+            let mut issues_by_type = HashMap::new();
+            for issue in &report.inconsistencies {
+                issues_by_type
+                    .entry(format!("{:?}", issue.issue_type))
+                    .or_insert_with(Vec::new)
+                    .push(issue);
+            }
+
+            for (issue_type, issues) in issues_by_type {
+                output.push_str(&format!("### {} ({} issues)\n\n", issue_type, issues.len()));
+
+                for (i, issue) in issues.iter().enumerate() {
+                    output.push_str(&format!("#### Issue {} - {:?}\n\n", i + 1, issue.severity));
+                    output.push_str(&format!("**Description:** {}\n\n", issue.description));
+
+                    if let Some(entity) = &issue.affected_entity {
+                        output.push_str(&format!("**Affected Entity:** {}\n", entity));
+                    }
+
+                    if let Some(expected) = &issue.expected {
+                        output.push_str(&format!("**Expected:** {}\n", expected));
+                    }
+
+                    if let Some(actual) = &issue.actual {
+                        output.push_str(&format!("**Actual:** {}\n", actual));
+                    }
+
+                    if let Some(block_height) = issue.block_height {
+                        output.push_str(&format!("**Block Height:** {}\n", block_height));
+                    }
+
+                    output.push_str(&format!("**Impact:** {:?}\n", issue.impact));
+
+                    if !issue.remediation.is_empty() {
+                        output.push_str("**Recommended Actions:**\n");
+                        for action in &issue.remediation {
+                            output.push_str(&format!("- {}\n", action));
+                        }
+                    }
+
+                    if !issue.context.is_empty() {
+                        output.push_str("**Additional Context:**\n");
+                        for (key, value) in &issue.context {
+                            output.push_str(&format!("- {}: {}\n", key, value));
+                        }
+                    }
+
+                    output.push_str("\n---\n\n");
+                }
+            }
+        } else {
+            output.push_str("## ✅ No Issues Found\n\n");
+            output.push_str("The replayed wallet state appears to be consistent and reliable.\n\n");
+        }
+
+        output.push_str("## Recommendations\n\n");
+
+        match report.severity_summary.overall_risk {
+            RiskLevel::High => {
+                output.push_str("⚠️ **IMMEDIATE ACTION REQUIRED**\n\n");
+                output.push_str("Critical issues detected that affect wallet functionality. ");
+                output.push_str("Do not rely on this wallet state for transactions until issues are resolved.\n\n");
+            }
+            RiskLevel::Medium => {
+                output.push_str("⚠️ **ACTION RECOMMENDED**\n\n");
+                output.push_str("Significant issues detected that should be addressed. ");
+                output.push_str("Review the issues and consider re-scanning or investigating event sources.\n\n");
+            }
+            RiskLevel::Low => {
+                output.push_str("ℹ️ **MINOR ISSUES**\n\n");
+                output.push_str("Minor issues detected that can be addressed when convenient. ");
+                output.push_str("Wallet functionality should not be significantly affected.\n\n");
+            }
+            RiskLevel::None => {
+                output.push_str("✅ **ALL CLEAR**\n\n");
+                output.push_str("No significant issues detected. Wallet state appears healthy and reliable.\n\n");
+            }
+        }
+
+        output.push_str(&format!("Report generated at: {:?}\n", SystemTime::now()));
+
+        output
+    }
+
+    /// Detect inconsistencies in replayed state with detailed analysis
+    pub async fn detect_inconsistencies(
+        &self,
+        replayed_state: &ReplayedWalletState,
+    ) -> WalletEventResult<InconsistencyReport> {
+        let start_time = Instant::now();
+        let mut inconsistencies = Vec::new();
+
+        // Check for internal state inconsistencies
+        self.detect_internal_inconsistencies(replayed_state, &mut inconsistencies);
+
+        // Check for logical inconsistencies
+        self.detect_logical_inconsistencies(replayed_state, &mut inconsistencies);
+
+        // Check for temporal inconsistencies
+        self.detect_temporal_inconsistencies(replayed_state, &mut inconsistencies);
+
+        // Check for balance inconsistencies
+        self.detect_balance_inconsistencies(replayed_state, &mut inconsistencies);
+
+        // Check for UTXO state inconsistencies
+        self.detect_utxo_state_inconsistencies(replayed_state, &mut inconsistencies);
+
+        let severity_summary = self.categorize_inconsistency_severity(&inconsistencies);
+        let detection_duration = start_time.elapsed();
+        let total_issues = inconsistencies.len();
+
+        Ok(InconsistencyReport {
+            wallet_id: replayed_state.wallet_id.clone(),
+            inconsistencies,
+            severity_summary,
+            total_issues,
+            detection_duration,
+            replayed_state_summary: ReplayedStateSummary::from_state(replayed_state),
+        })
     }
 
     /// Verify replayed state against current wallet state
