@@ -203,6 +203,8 @@ impl BinaryScanConfig {
 /// ```
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct ScanContext {
+    /// Wallet ID for event tracking
+    pub wallet_id: String,
     /// Private view key for wallet scanning
     pub view_key: PrivateKey,
     /// Wallet entropy (16 bytes)
@@ -246,7 +248,11 @@ impl ScanContext {
         seed_phrase.zeroize();
         view_key_raw.zeroize();
 
+        // Generate a consistent wallet ID based on the entropy
+        let wallet_id = format!("wallet_{}", hex::encode(&entropy_array[..8]));
+
         Ok(Self {
+            wallet_id,
             view_key,
             entropy: entropy_array,
         })
@@ -287,7 +293,14 @@ impl ScanContext {
 
         let entropy = [0u8; 16];
 
-        Ok(Self { view_key, entropy })
+        // Generate a wallet ID based on view key since we don't have entropy
+        let wallet_id = format!("viewkey_{}", hex::encode(&view_key_array[..8]));
+
+        Ok(Self {
+            wallet_id,
+            view_key,
+            entropy,
+        })
     }
 
     /// Check if this context has entropy (from wallet vs view-key only)

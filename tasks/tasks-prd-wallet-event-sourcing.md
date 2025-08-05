@@ -27,7 +27,7 @@
   - [x] 1.3 Implement Serialize/Deserialize traits for JSON serialization
   - [x] 1.4 Add proper error types for event processing failures
   - [x] 1.5 Implement Zeroize trait for sensitive event data
-  - [ ] 1.6 Create event metadata structure (ID, timestamp, sequence number, wallet_id)
+  - [x] 1.6 Create event metadata structure (ID, timestamp, sequence number, wallet_id)
   - [ ] 1.7 Write unit tests for event type serialization and deserialization
 
 - [ ] 2.0 Implement Event Listener Interface and Registry

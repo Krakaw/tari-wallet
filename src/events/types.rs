@@ -6,10 +6,35 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime};
 use thiserror::Error;
 use zeroize::Zeroize;
+
+/// Thread-safe sequence number generator for event ordering
+/// Each wallet maintains its own sequence counter
+static SEQUENCE_GENERATORS: LazyLock<Mutex<HashMap<String, u64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Generate the next sequence number for a given wallet
+fn next_sequence_number(wallet_id: &str) -> u64 {
+    let mut generators = SEQUENCE_GENERATORS.lock().unwrap();
+    let counter = generators.entry(wallet_id.to_string()).or_insert(0);
+    *counter += 1;
+    *counter
+}
+
+/// Reset sequence number for a wallet (useful for testing)
+pub fn reset_sequence_number(wallet_id: &str) {
+    let mut generators = SEQUENCE_GENERATORS.lock().unwrap();
+    generators.insert(wallet_id.to_string(), 0);
+}
+
+/// Get current sequence number for a wallet without incrementing
+pub fn current_sequence_number(wallet_id: &str) -> u64 {
+    let generators = SEQUENCE_GENERATORS.lock().unwrap();
+    generators.get(wallet_id).copied().unwrap_or(0)
+}
 
 /// Shared event metadata present in all events
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +43,10 @@ pub struct EventMetadata {
     pub event_id: String,
     /// Timestamp when the event was created
     pub timestamp: SystemTime,
+    /// Sequence number for ordering events (auto-incrementing per wallet)
+    pub sequence_number: u64,
+    /// Wallet ID that this event belongs to
+    pub wallet_id: String,
     /// Optional correlation ID for tracking related events
     pub correlation_id: Option<String>,
     /// Source component that emitted this event
@@ -25,22 +54,65 @@ pub struct EventMetadata {
 }
 
 impl EventMetadata {
-    /// Create new event metadata with generated ID
-    pub fn new(source: &str) -> Self {
+    /// Create new event metadata with generated ID and auto-incrementing sequence number
+    pub fn new(source: &str, wallet_id: &str) -> Self {
         Self {
             event_id: uuid::Uuid::new_v4().to_string(),
             timestamp: SystemTime::now(),
+            sequence_number: next_sequence_number(wallet_id),
+            wallet_id: wallet_id.to_string(),
             correlation_id: None,
             source: source.to_string(),
         }
     }
 
+    /// Create new event metadata with default wallet_id for cases where wallet context is unknown
+    pub fn new_system(source: &str) -> Self {
+        Self::new(source, "system")
+    }
+
     /// Create new event metadata with correlation ID
-    pub fn with_correlation(source: &str, correlation_id: String) -> Self {
+    pub fn with_correlation(source: &str, wallet_id: &str, correlation_id: String) -> Self {
         Self {
             event_id: uuid::Uuid::new_v4().to_string(),
             timestamp: SystemTime::now(),
+            sequence_number: next_sequence_number(wallet_id),
+            wallet_id: wallet_id.to_string(),
             correlation_id: Some(correlation_id),
+            source: source.to_string(),
+        }
+    }
+
+    /// Create new event metadata with explicit sequence number (for replay scenarios)
+    pub fn with_sequence(
+        source: &str,
+        wallet_id: &str,
+        sequence_number: u64,
+        correlation_id: Option<String>,
+    ) -> Self {
+        Self {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            timestamp: SystemTime::now(),
+            sequence_number,
+            wallet_id: wallet_id.to_string(),
+            correlation_id,
+            source: source.to_string(),
+        }
+    }
+
+    /// Create metadata with custom timestamp (for historical events)
+    pub fn with_timestamp(
+        source: &str,
+        wallet_id: &str,
+        timestamp: SystemTime,
+        correlation_id: Option<String>,
+    ) -> Self {
+        Self {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            timestamp,
+            sequence_number: next_sequence_number(wallet_id),
+            wallet_id: wallet_id.to_string(),
+            correlation_id,
             source: source.to_string(),
         }
     }
@@ -1565,25 +1637,61 @@ impl SerializableEvent for WalletEvent {
 /// Helper functions for creating wallet events
 impl WalletEvent {
     /// Create a new UtxoReceived event
-    pub fn utxo_received(payload: UtxoReceivedPayload) -> Self {
+    pub fn utxo_received(wallet_id: &str, payload: UtxoReceivedPayload) -> Self {
         Self::UtxoReceived {
-            metadata: EventMetadata::new("wallet"),
+            metadata: EventMetadata::new("wallet", wallet_id),
             payload,
         }
     }
 
     /// Create a new UtxoSpent event
-    pub fn utxo_spent(payload: UtxoSpentPayload) -> Self {
+    pub fn utxo_spent(wallet_id: &str, payload: UtxoSpentPayload) -> Self {
         Self::UtxoSpent {
-            metadata: EventMetadata::new("wallet"),
+            metadata: EventMetadata::new("wallet", wallet_id),
             payload,
         }
     }
 
     /// Create a new Reorg event
-    pub fn reorg(payload: ReorgPayload) -> Self {
+    pub fn reorg(wallet_id: &str, payload: ReorgPayload) -> Self {
         Self::Reorg {
-            metadata: EventMetadata::new("wallet"),
+            metadata: EventMetadata::new("wallet", wallet_id),
+            payload,
+        }
+    }
+
+    /// Create a new UtxoReceived event with correlation ID
+    pub fn utxo_received_with_correlation(
+        wallet_id: &str,
+        payload: UtxoReceivedPayload,
+        correlation_id: String,
+    ) -> Self {
+        Self::UtxoReceived {
+            metadata: EventMetadata::with_correlation("wallet", wallet_id, correlation_id),
+            payload,
+        }
+    }
+
+    /// Create a new UtxoSpent event with correlation ID
+    pub fn utxo_spent_with_correlation(
+        wallet_id: &str,
+        payload: UtxoSpentPayload,
+        correlation_id: String,
+    ) -> Self {
+        Self::UtxoSpent {
+            metadata: EventMetadata::with_correlation("wallet", wallet_id, correlation_id),
+            payload,
+        }
+    }
+
+    /// Create a new Reorg event with correlation ID
+    pub fn reorg_with_correlation(
+        wallet_id: &str,
+        payload: ReorgPayload,
+        correlation_id: String,
+    ) -> Self {
+        Self::Reorg {
+            metadata: EventMetadata::with_correlation("wallet", wallet_id, correlation_id),
             payload,
         }
     }
@@ -1617,12 +1725,13 @@ impl WalletScanEvent {
 impl WalletScanEvent {
     /// Create a new ScanStarted event
     pub fn scan_started(
+        wallet_id: &str,
         config: ScanConfig,
         block_range: (u64, u64),
         wallet_context: String,
     ) -> Self {
         Self::ScanStarted {
-            metadata: EventMetadata::new("wallet_scanner"),
+            metadata: EventMetadata::new("wallet_scanner", wallet_id),
             config,
             block_range,
             wallet_context,
@@ -1631,6 +1740,7 @@ impl WalletScanEvent {
 
     /// Create a new BlockProcessed event
     pub fn block_processed(
+        wallet_id: &str,
         height: u64,
         hash: String,
         timestamp: u64,
@@ -1638,7 +1748,7 @@ impl WalletScanEvent {
         outputs_count: usize,
     ) -> Self {
         Self::BlockProcessed {
-            metadata: EventMetadata::new("wallet_scanner"),
+            metadata: EventMetadata::new("wallet_scanner", wallet_id),
             height,
             hash,
             timestamp,
@@ -1650,13 +1760,14 @@ impl WalletScanEvent {
 
     /// Create a new OutputFound event
     pub fn output_found(
+        wallet_id: &str,
         output_data: OutputData,
         block_info: BlockInfo,
         address_info: AddressInfo,
         transaction_data: TransactionData,
     ) -> Self {
         Self::OutputFound {
-            metadata: EventMetadata::new("wallet_scanner"),
+            metadata: EventMetadata::new("wallet_scanner", wallet_id),
             output_data,
             block_info,
             address_info,
@@ -1666,13 +1777,14 @@ impl WalletScanEvent {
 
     /// Create a new SpentOutputFound event
     pub fn spent_output_found(
+        wallet_id: &str,
         spent_output_data: SpentOutputData,
         spending_block_info: BlockInfo,
         original_output_info: OutputData,
         spending_transaction_data: TransactionData,
     ) -> Self {
         Self::SpentOutputFound {
-            metadata: EventMetadata::new("wallet_scanner"),
+            metadata: EventMetadata::new("wallet_scanner", wallet_id),
             spent_output_data,
             spending_block_info,
             original_output_info,
@@ -1682,6 +1794,7 @@ impl WalletScanEvent {
 
     /// Create a new ScanProgress event
     pub fn scan_progress(
+        wallet_id: &str,
         current_block: u64,
         total_blocks: u64,
         current_block_height: u64,
@@ -1690,7 +1803,7 @@ impl WalletScanEvent {
         estimated_time_remaining: Option<Duration>,
     ) -> Self {
         Self::ScanProgress {
-            metadata: EventMetadata::new("wallet_scanner"),
+            metadata: EventMetadata::new("wallet_scanner", wallet_id),
             current_block,
             total_blocks,
             current_block_height,
@@ -1702,12 +1815,13 @@ impl WalletScanEvent {
 
     /// Create a new ScanCompleted event
     pub fn scan_completed(
+        wallet_id: &str,
         final_statistics: HashMap<String, u64>,
         success: bool,
         total_duration: Duration,
     ) -> Self {
         Self::ScanCompleted {
-            metadata: EventMetadata::new("wallet_scanner"),
+            metadata: EventMetadata::new("wallet_scanner", wallet_id),
             final_statistics,
             success,
             total_duration,
@@ -1716,6 +1830,7 @@ impl WalletScanEvent {
 
     /// Create a new ScanError event
     pub fn scan_error(
+        wallet_id: &str,
         error_message: String,
         error_code: Option<String>,
         block_height: Option<u64>,
@@ -1723,7 +1838,7 @@ impl WalletScanEvent {
         is_recoverable: bool,
     ) -> Self {
         Self::ScanError {
-            metadata: EventMetadata::new("wallet_scanner"),
+            metadata: EventMetadata::new("wallet_scanner", wallet_id),
             error_message,
             error_code,
             block_height,
@@ -1734,12 +1849,13 @@ impl WalletScanEvent {
 
     /// Create a new ScanCancelled event
     pub fn scan_cancelled(
+        wallet_id: &str,
         reason: String,
         final_statistics: HashMap<String, u64>,
         partial_completion: Option<f64>,
     ) -> Self {
         Self::ScanCancelled {
-            metadata: EventMetadata::new("wallet_scanner"),
+            metadata: EventMetadata::new("wallet_scanner", wallet_id),
             reason,
             final_statistics,
             partial_completion,
@@ -1760,6 +1876,7 @@ mod tests {
             .with_retry_attempts(3);
 
         let event = WalletScanEvent::scan_started(
+            "test_wallet",
             config.clone(),
             (1000, 2000),
             "test_wallet_context".to_string(),
@@ -1788,7 +1905,12 @@ mod tests {
     #[test]
     fn test_scan_started_event_traits() {
         let config = ScanConfig::default();
-        let event = WalletScanEvent::scan_started(config, (0, 100), "wallet_123".to_string());
+        let event = WalletScanEvent::scan_started(
+            "test_wallet",
+            config,
+            (0, 100),
+            "wallet_123".to_string(),
+        );
 
         // Test EventType trait
         assert_eq!(event.event_type(), "ScanStarted");
@@ -2076,7 +2198,7 @@ mod tests {
             "testnet".to_string(),
         );
 
-        let mut event = WalletEvent::utxo_received(payload);
+        let mut event = WalletEvent::utxo_received("test_wallet", payload);
 
         // Verify event can be zeroized
         event.zeroize();
@@ -2825,18 +2947,42 @@ mod tests {
 
     #[test]
     fn test_event_metadata_creation() {
-        let metadata = EventMetadata::new("test_source");
+        let metadata = EventMetadata::new("test_source", "test_wallet");
 
         assert!(!metadata.event_id.is_empty());
         assert_eq!(metadata.source, "test_source");
+        assert_eq!(metadata.wallet_id, "test_wallet");
+        assert!(metadata.sequence_number > 0);
         assert!(metadata.correlation_id.is_none());
         assert!(metadata.timestamp <= SystemTime::now());
     }
 
     #[test]
+    fn test_event_metadata_sequence_numbers() {
+        // Reset sequence for predictable testing
+        reset_sequence_number("test_wallet_seq");
+
+        let metadata1 = EventMetadata::new("test_source", "test_wallet_seq");
+        let metadata2 = EventMetadata::new("test_source", "test_wallet_seq");
+        let metadata3 = EventMetadata::new("test_source", "other_wallet");
+
+        // Sequence numbers should increment per wallet
+        assert_eq!(metadata1.sequence_number, 1);
+        assert_eq!(metadata2.sequence_number, 2);
+        assert_eq!(metadata3.sequence_number, 1); // Different wallet starts at 1
+
+        // Check current sequence number
+        assert_eq!(current_sequence_number("test_wallet_seq"), 2);
+        assert_eq!(current_sequence_number("other_wallet"), 1);
+    }
+
+    #[test]
     fn test_event_metadata_with_correlation() {
-        let metadata =
-            EventMetadata::with_correlation("test_source", "correlation_123".to_string());
+        let metadata = EventMetadata::with_correlation(
+            "test_source",
+            "test_wallet",
+            "correlation_123".to_string(),
+        );
 
         assert!(!metadata.event_id.is_empty());
         assert_eq!(metadata.source, "test_source");
@@ -3039,7 +3185,7 @@ mod tests {
             "testnet".to_string(),
         );
 
-        let event = WalletEvent::utxo_received(payload);
+        let event = WalletEvent::utxo_received("test_wallet", payload);
 
         // Test JSON serialization
         let json = event.to_debug_json().unwrap();
@@ -3091,7 +3237,7 @@ mod tests {
             "testnet".to_string(),
         );
 
-        let event = WalletEvent::utxo_spent(payload);
+        let event = WalletEvent::utxo_spent("test_wallet", payload);
 
         // Test JSON serialization
         let json = event.to_debug_json().unwrap();
@@ -3135,7 +3281,7 @@ mod tests {
             1697123900,
         );
 
-        let event = WalletEvent::reorg(payload);
+        let event = WalletEvent::reorg("test_wallet", payload);
 
         // Test JSON serialization
         let json = event.to_debug_json().unwrap();
@@ -3183,7 +3329,7 @@ mod tests {
             "testnet".to_string(),
         );
 
-        let event = WalletEvent::utxo_received(payload);
+        let event = WalletEvent::utxo_received("test_wallet", payload);
 
         // Test that metadata is properly included
         let json = event.to_debug_json().unwrap();
@@ -3545,48 +3691,57 @@ mod tests {
     fn test_wallet_event_serialization_completeness() {
         // Test that all WalletEvent variants can be serialized and deserialized
         let events = vec![
-            WalletEvent::utxo_received(UtxoReceivedPayload::new(
-                "test1".to_string(),
-                100,
-                1000,
-                "block1".to_string(),
-                1697124100,
-                "tx1".to_string(),
-                0,
-                "addr1".to_string(),
-                1,
-                "commit1".to_string(),
-                0,
-                "net".to_string(),
-            )),
-            WalletEvent::utxo_spent(UtxoSpentPayload::new(
-                "test2".to_string(),
-                200,
-                1000,
-                1100,
-                "block2".to_string(),
-                1697124200,
-                "tx2".to_string(),
-                1,
-                "addr2".to_string(),
-                2,
-                "commit2".to_string(),
-                "method".to_string(),
-                false,
-                "net".to_string(),
-            )),
-            WalletEvent::reorg(ReorgPayload::new(
-                1000,
-                "old".to_string(),
-                "new".to_string(),
-                2,
-                3,
-                vec!["tx3".to_string()],
-                vec!["utxo3".to_string()],
-                0,
-                "net".to_string(),
-                1697124300,
-            )),
+            WalletEvent::utxo_received(
+                "test_wallet",
+                UtxoReceivedPayload::new(
+                    "test1".to_string(),
+                    100,
+                    1000,
+                    "block1".to_string(),
+                    1697124100,
+                    "tx1".to_string(),
+                    0,
+                    "addr1".to_string(),
+                    1,
+                    "commit1".to_string(),
+                    0,
+                    "net".to_string(),
+                ),
+            ),
+            WalletEvent::utxo_spent(
+                "test_wallet",
+                UtxoSpentPayload::new(
+                    "test2".to_string(),
+                    200,
+                    1000,
+                    1100,
+                    "block2".to_string(),
+                    1697124200,
+                    "tx2".to_string(),
+                    1,
+                    "addr2".to_string(),
+                    2,
+                    "commit2".to_string(),
+                    "method".to_string(),
+                    false,
+                    "net".to_string(),
+                ),
+            ),
+            WalletEvent::reorg(
+                "test_wallet",
+                ReorgPayload::new(
+                    1000,
+                    "old".to_string(),
+                    "new".to_string(),
+                    2,
+                    3,
+                    vec!["tx3".to_string()],
+                    vec!["utxo3".to_string()],
+                    0,
+                    "net".to_string(),
+                    1697124300,
+                ),
+            ),
         ];
 
         for event in events {

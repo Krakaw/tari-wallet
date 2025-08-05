@@ -497,9 +497,15 @@ impl ScanEventEmitter {
 
     /// Create event metadata with consistent source and correlation ID
     fn create_metadata(&self) -> EventMetadata {
+        let wallet_id = self
+            .current_context
+            .as_ref()
+            .map(|ctx| ctx.wallet_id.as_str())
+            .unwrap_or("unknown");
+
         match &self.correlation_id {
-            Some(id) => EventMetadata::with_correlation(&self.source, id.clone()),
-            None => EventMetadata::new(&self.source),
+            Some(id) => EventMetadata::with_correlation(&self.source, wallet_id, id.clone()),
+            None => EventMetadata::new(&self.source, wallet_id),
         }
     }
 

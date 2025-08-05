@@ -442,7 +442,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::ScanStarted {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new_system("console_logger"),
                 config: config.clone(),
                 block_range: *block_range,
                 wallet_context: wallet_context.to_string(),
@@ -476,7 +476,7 @@ impl ConsoleLoggingListener {
 
             self.log_message(
                 &WalletScanEvent::BlockProcessed {
-                    metadata: crate::events::types::EventMetadata::new("console_logger"),
+                    metadata: crate::events::types::EventMetadata::new_system("console_logger"),
                     height,
                     hash: hash.to_string(),
                     timestamp: SystemTime::now()
@@ -527,7 +527,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::OutputFound {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new_system("console_logger"),
                 output_data: output_data.clone(),
                 block_info: block_info.clone(),
                 address_info: address_info.clone(),
@@ -567,7 +567,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::SpentOutputFound {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new_system("console_logger"),
                 spent_output_data: spent_output_data.clone(),
                 spending_block_info: spending_block_info.clone(),
                 original_output_info: OutputData::new(
@@ -654,7 +654,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::ScanProgress {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new_system("console_logger"),
                 current_block,
                 total_blocks,
                 current_block_height: current_block, // Use current_block as fallback
@@ -727,7 +727,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::ScanCompleted {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new_system("console_logger"),
                 final_statistics: final_statistics.clone(),
                 success,
                 total_duration: *total_duration,
@@ -772,7 +772,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::ScanError {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new_system("console_logger"),
                 error_message: error_message.to_string(),
                 error_code: error_code.clone(),
                 block_height: *block_height,
@@ -808,7 +808,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::ScanCancelled {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new_system("console_logger"),
                 reason: reason.to_string(),
                 final_statistics: final_statistics.clone(),
                 partial_completion: *partial_completion,

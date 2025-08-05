@@ -232,7 +232,11 @@ impl ScannerStorage {
                 [0u8; 16] // View-only wallet
             };
 
-            Ok(Some(ScanContext { view_key, entropy }))
+            Ok(Some(ScanContext {
+                wallet_id: wallet_id.to_string(),
+                view_key,
+                entropy,
+            }))
         } else {
             Err(WalletError::ResourceNotFound(format!(
                 "Wallet with ID {wallet_id} not found"
