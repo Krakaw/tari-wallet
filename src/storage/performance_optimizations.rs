@@ -271,7 +271,7 @@ impl BatchOperations {
         let batch_size = (target_memory_bytes / avg_item_size_bytes as f32) as usize;
 
         // Constrain to reasonable bounds
-        batch_size.max(10).min(1000)
+        batch_size.clamp(10, 1000)
     }
 
     /// Recommend batch configuration for different workload types
@@ -313,7 +313,7 @@ mod tests {
             100,  // 100MB available
             0.1,  // Use 10% of memory
         );
-        assert!(batch_size >= 10 && batch_size <= 1000);
+        assert!((10..=1000).contains(&batch_size));
 
         // Test edge cases - very large items with small memory should hit minimum
         let small_batch = BatchOperations::calculate_optimal_batch_size(100000, 1, 0.1);
