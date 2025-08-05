@@ -7,13 +7,18 @@
 - `src/events/replay.rs` - Event replay functionality and state verification
 - `src/wallet/builder.rs` - Wallet builder implementation with event listener registration support
 - `src/wallet/mod.rs` - Updated wallet module with builder exports
-- `src/storage/event_storage.rs` - Database schema and operations for event persistence
+- `src/storage/event_storage.rs` - Database schema and operations for event persistence with SQLite implementation
+- `src/storage/sqlite.rs` - Updated main SQLite storage with wallet_events table schema integration
+- `src/storage/mod.rs` - Updated storage module to export event storage components
 - `tests/events/mod.rs` - Integration tests for event system
 - `tests/events/event_capture_tests.rs` - Tests for event capture functionality
 - `tests/events/event_replay_tests.rs` - Tests for event replay and verification
 - `tests/events/builder_integration_tests.rs` - Tests for wallet builder integration
 - `tests/integration/builder_integration_tests.rs` - Integration tests for builder pattern with event listeners
 - `tests/builder_integration_standalone.rs` - Standalone integration tests for wallet builder with event listeners
+- `tests/event_storage_integration.rs` - Integration tests for event storage database operations
+- `tests/storage/event_storage_tests.rs` - Unit tests for event storage implementation
+- `tests/storage/mod.rs` - Storage test module organization
 
 ### Notes
 
@@ -52,7 +57,7 @@
   - [x] 3.7 Write integration tests for builder pattern with event listeners
 
 - [ ] 4.0 Implement Event Storage in SQLite
-  - [ ] 4.1 Create database migration for `wallet_events` table with required schema
+  - [x] 4.1 Create database migration for `wallet_events` table with required schema
   - [ ] 4.2 Implement event storage operations (insert, query by wallet_id, query by sequence)
   - [ ] 4.3 Add automatic timestamping and sequence number assignment
   - [ ] 4.4 Ensure append-only behavior (no updates or deletes allowed)
