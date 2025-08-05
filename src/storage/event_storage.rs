@@ -402,6 +402,12 @@ pub struct SqliteEventStorage {
     connection: Connection,
 }
 
+/// Pooled SQLite implementation of event storage for high-concurrency scenarios
+#[cfg(feature = "storage")]
+pub struct PooledSqliteEventStorage {
+    pool: crate::storage::connection_pool::ConnectionPool,
+}
+
 #[cfg(feature = "storage")]
 impl SqliteEventStorage {
     /// Create a new SQLite event storage instance
@@ -1468,6 +1474,863 @@ impl EventStorage for SqliteEventStorage {
             .map_err(|e| {
                 WalletEventError::storage("is_sequence_available", format!("Failed to check sequence availability: {e}"))
             })
+    }
+}
+
+/// Implementation of pooled SQLite event storage for high-concurrency scenarios
+#[cfg(feature = "storage")]
+impl PooledSqliteEventStorage {
+    /// Create a new pooled SQLite event storage instance
+    pub async fn new(
+        pool: crate::storage::connection_pool::ConnectionPool,
+    ) -> WalletEventResult<Self> {
+        // Initialize schema using a connection from the pool
+        {
+            let conn_guard = pool.acquire().await?;
+            Self::create_schema_with_connection(conn_guard.connection()).await?;
+        } // conn_guard is dropped here, releasing the connection
+
+        Ok(Self { pool })
+    }
+
+    /// Create a pooled storage with default connection pool configuration
+    pub async fn with_database_path(database_path: String) -> WalletEventResult<Self> {
+        let pool =
+            crate::storage::connection_pool::ConnectionPool::with_database_path(database_path)
+                .await?;
+        Self::new(pool).await
+    }
+
+    /// Create a high-performance pooled storage
+    pub async fn high_performance(database_path: String) -> WalletEventResult<Self> {
+        let pool = crate::storage::connection_pool::ConnectionPool::high_performance(database_path)
+            .await?;
+        Self::new(pool).await
+    }
+
+    /// Get connection pool statistics
+    pub async fn get_pool_stats(&self) -> crate::storage::connection_pool::ConnectionPoolStats {
+        self.pool.get_stats().await
+    }
+
+    /// Create the database schema using a specific connection
+    async fn create_schema_with_connection(connection: &Connection) -> WalletEventResult<()> {
+        let sql = r#"
+            -- Wallet events table (append-only event log)
+            CREATE TABLE IF NOT EXISTS wallet_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT UNIQUE NOT NULL,
+                wallet_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                sequence_number INTEGER NOT NULL,
+                payload_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                source TEXT NOT NULL,
+                correlation_id TEXT,
+                timestamp INTEGER NOT NULL, -- Unix timestamp in seconds
+                stored_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                
+                -- Ensure sequence numbers are unique per wallet
+                UNIQUE(wallet_id, sequence_number)
+            );
+
+            -- Indexes for efficient querying
+            CREATE INDEX IF NOT EXISTS idx_events_wallet_id ON wallet_events(wallet_id);
+            CREATE INDEX IF NOT EXISTS idx_events_event_type ON wallet_events(event_type);
+            CREATE INDEX IF NOT EXISTS idx_events_sequence ON wallet_events(wallet_id, sequence_number);
+            CREATE INDEX IF NOT EXISTS idx_events_timestamp ON wallet_events(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_events_correlation ON wallet_events(correlation_id);
+            CREATE INDEX IF NOT EXISTS idx_events_source ON wallet_events(source);
+            CREATE INDEX IF NOT EXISTS idx_events_stored_at ON wallet_events(stored_at);
+            
+            -- Compound indexes for common query patterns
+            CREATE INDEX IF NOT EXISTS idx_events_wallet_type ON wallet_events(wallet_id, event_type);
+            CREATE INDEX IF NOT EXISTS idx_events_wallet_time ON wallet_events(wallet_id, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_events_type_time ON wallet_events(event_type, timestamp);
+            
+            -- View for easy querying of recent events
+            CREATE VIEW IF NOT EXISTS recent_wallet_events AS
+            SELECT * FROM wallet_events 
+            ORDER BY stored_at DESC 
+            LIMIT 1000;
+
+            -- Trigger to ensure append-only behavior (prevent updates/deletes)
+            CREATE TRIGGER IF NOT EXISTS prevent_event_updates
+            BEFORE UPDATE ON wallet_events
+            BEGIN
+                SELECT RAISE(ABORT, 'Updates to wallet_events are not allowed - append-only table');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS prevent_event_deletes
+            BEFORE DELETE ON wallet_events
+            BEGIN
+                SELECT RAISE(ABORT, 'Deletes from wallet_events are not allowed - append-only table');
+            END;
+        "#;
+
+        connection
+            .call(move |conn| Ok(conn.execute_batch(sql)?))
+            .await
+            .map_err(|e| {
+                WalletEventError::storage(
+                    "create_schema",
+                    format!("Failed to create event schema: {e}"),
+                )
+            })?;
+
+        Ok(())
+    }
+}
+
+/// EventStorage implementation for PooledSqliteEventStorage
+#[cfg(feature = "storage")]
+#[async_trait]
+impl EventStorage for PooledSqliteEventStorage {
+    async fn initialize(&self) -> WalletEventResult<()> {
+        // Schema is already initialized during construction
+        Ok(())
+    }
+
+    async fn store_event(&self, event: &StoredEvent) -> WalletEventResult<u64> {
+        let conn_guard = self.pool.acquire().await?;
+        let event_clone = event.clone();
+        let timestamp_secs = event_clone
+            .timestamp
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        conn_guard
+            .execute_with_timeout(conn_guard.connection().call(move |conn| {
+                conn.execute(
+                    r#"
+                        INSERT INTO wallet_events 
+                        (event_id, wallet_id, event_type, sequence_number, payload_json, 
+                         metadata_json, source, correlation_id, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        "#,
+                    params![
+                        event_clone.event_id,
+                        event_clone.wallet_id,
+                        event_clone.event_type,
+                        event_clone.sequence_number as i64,
+                        event_clone.payload_json,
+                        event_clone.metadata_json,
+                        event_clone.source,
+                        event_clone.correlation_id,
+                        timestamp_secs,
+                    ],
+                )?;
+                Ok(conn.last_insert_rowid() as u64)
+            }))
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("store_event", format!("Failed to store event: {e}"))
+            })
+    }
+
+    async fn store_events_batch(&self, events: &[StoredEvent]) -> WalletEventResult<Vec<u64>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn_guard = self.pool.acquire().await?;
+        let events_clone = events.to_vec();
+
+        conn_guard
+            .execute_with_timeout(conn_guard.connection().call(move |conn| {
+                let tx = conn.transaction()?;
+                let mut event_ids = Vec::new();
+
+                for event in &events_clone {
+                    let timestamp_secs = event
+                        .timestamp
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64;
+
+                    tx.execute(
+                        r#"
+                            INSERT INTO wallet_events 
+                            (event_id, wallet_id, event_type, sequence_number, payload_json, 
+                             metadata_json, source, correlation_id, timestamp)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            "#,
+                        params![
+                            event.event_id,
+                            event.wallet_id,
+                            event.event_type,
+                            event.sequence_number as i64,
+                            event.payload_json,
+                            event.metadata_json,
+                            event.source,
+                            event.correlation_id,
+                            timestamp_secs,
+                        ],
+                    )?;
+                    event_ids.push(tx.last_insert_rowid() as u64);
+                }
+
+                tx.commit()?;
+                Ok(event_ids)
+            }))
+            .await
+            .map_err(|e| {
+                WalletEventError::storage(
+                    "store_events_batch",
+                    format!("Failed to store events batch: {e}"),
+                )
+            })
+    }
+
+    async fn get_events(&self, filter: &EventFilter) -> WalletEventResult<Vec<StoredEvent>> {
+        let conn_guard = self.pool.acquire().await?;
+        let filter_clone = filter.clone();
+
+        conn_guard
+            .execute_with_timeout(conn_guard.connection().call(move |conn| {
+                let mut base_query = "SELECT * FROM wallet_events".to_string();
+                let (where_clause, params) = SqliteEventStorage::build_filter_clause(&filter_clone);
+
+                if !where_clause.is_empty() {
+                    base_query.push(' ');
+                    base_query.push_str(&where_clause);
+                }
+
+                // Add ordering
+                if filter_clone.order_by_sequence_desc {
+                    base_query.push_str(" ORDER BY sequence_number DESC");
+                } else {
+                    base_query.push_str(" ORDER BY sequence_number ASC");
+                }
+
+                // Add limit and offset
+                if let Some(limit) = filter_clone.limit {
+                    base_query.push_str(&format!(" LIMIT {limit}"));
+                }
+
+                if let Some(offset) = filter_clone.offset {
+                    base_query.push_str(&format!(" OFFSET {offset}"));
+                }
+
+                let mut stmt = conn.prepare(&base_query)?;
+                let param_refs: Vec<&dyn rusqlite::ToSql> = params
+                    .iter()
+                    .map(|p| p.as_ref() as &dyn rusqlite::ToSql)
+                    .collect();
+
+                let rows =
+                    stmt.query_map(&param_refs[..], SqliteEventStorage::row_to_stored_event)?;
+
+                let mut events = Vec::new();
+                for row in rows {
+                    events.push(row?);
+                }
+
+                Ok(events)
+            }))
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("get_events", format!("Failed to get events: {e}"))
+            })
+    }
+
+    async fn get_event_by_id(&self, event_id: &str) -> WalletEventResult<Option<StoredEvent>> {
+        let conn_guard = self.pool.acquire().await?;
+        let event_id_owned = event_id.to_string();
+
+        conn_guard
+            .execute_with_timeout(conn_guard.connection().call(move |conn| {
+                let mut stmt = conn.prepare("SELECT * FROM wallet_events WHERE event_id = ?")?;
+                let mut rows = stmt.query_map(
+                    params![event_id_owned],
+                    SqliteEventStorage::row_to_stored_event,
+                )?;
+
+                if let Some(row) = rows.next() {
+                    Ok(Some(row?))
+                } else {
+                    Ok(None)
+                }
+            }))
+            .await
+            .map_err(|e| {
+                WalletEventError::storage(
+                    "get_event_by_id",
+                    format!("Failed to get event by ID: {e}"),
+                )
+            })
+    }
+
+    async fn get_latest_sequence(&self, wallet_id: &str) -> WalletEventResult<Option<u64>> {
+        let conn_guard = self.pool.acquire().await?;
+        let wallet_id_owned = wallet_id.to_string();
+
+        conn_guard
+            .execute_with_timeout(conn_guard.connection().call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT MAX(sequence_number) FROM wallet_events WHERE wallet_id = ?",
+                )?;
+                let sequence: Option<i64> =
+                    stmt.query_row(params![wallet_id_owned], |row| row.get(0))?;
+                Ok(sequence.map(|s| s as u64))
+            }))
+            .await
+            .map_err(|e| {
+                WalletEventError::storage(
+                    "get_latest_sequence",
+                    format!("Failed to get latest sequence: {e}"),
+                )
+            })
+    }
+
+    async fn get_event_count(&self, wallet_id: &str) -> WalletEventResult<u64> {
+        let conn_guard = self.pool.acquire().await?;
+        let wallet_id_owned = wallet_id.to_string();
+
+        conn_guard
+            .execute_with_timeout(conn_guard.connection().call(move |conn| {
+                let mut stmt =
+                    conn.prepare("SELECT COUNT(*) FROM wallet_events WHERE wallet_id = ?")?;
+                let count: i64 = stmt.query_row(params![wallet_id_owned], |row| row.get(0))?;
+                Ok(count as u64)
+            }))
+            .await
+            .map_err(|e| {
+                WalletEventError::storage(
+                    "get_event_count",
+                    format!("Failed to get event count: {e}"),
+                )
+            })
+    }
+
+    async fn get_events_since_sequence(
+        &self,
+        wallet_id: &str,
+        sequence: u64,
+    ) -> WalletEventResult<Vec<StoredEvent>> {
+        let filter = EventFilter::new()
+            .with_wallet_id(wallet_id.to_string())
+            .with_sequence_range(sequence + 1, u64::MAX);
+
+        self.get_events(&filter).await
+    }
+
+    async fn event_exists(&self, event_id: &str) -> WalletEventResult<bool> {
+        let conn_guard = self.pool.acquire().await?;
+        let event_id_owned = event_id.to_string();
+
+        conn_guard
+            .execute_with_timeout(conn_guard.connection().call(move |conn| {
+                let mut stmt =
+                    conn.prepare("SELECT 1 FROM wallet_events WHERE event_id = ? LIMIT 1")?;
+                let exists = stmt.exists(params![event_id_owned])?;
+                Ok(exists)
+            }))
+            .await
+            .map_err(|e| {
+                WalletEventError::storage(
+                    "event_exists",
+                    format!("Failed to check event existence: {e}"),
+                )
+            })
+    }
+
+    async fn get_storage_stats(&self) -> WalletEventResult<EventStorageStats> {
+        let conn_guard = self.pool.acquire().await?;
+
+        conn_guard
+            .execute_with_timeout(
+                conn_guard.connection().call(|conn| {
+                    // Get total events and unique wallets
+                    let mut stmt = conn.prepare(
+                        "SELECT COUNT(*) as total, COUNT(DISTINCT wallet_id) as unique_wallets FROM wallet_events",
+                    )?;
+                    let (total_events, unique_wallets): (i64, i64) = stmt.query_row([], |row| {
+                        Ok((row.get("total")?, row.get("unique_wallets")?))
+                    })?;
+
+                    // Get events by type
+                    let mut stmt = conn.prepare(
+                        "SELECT event_type, COUNT(*) as count FROM wallet_events GROUP BY event_type",
+                    )?;
+                    let type_rows = stmt.query_map([], |row| {
+                        Ok((row.get::<_, String>("event_type")?, row.get::<_, i64>("count")?))
+                    })?;
+
+                    let mut events_by_type = std::collections::HashMap::new();
+                    for row in type_rows {
+                        let (event_type, count) = row?;
+                        events_by_type.insert(event_type, count as u64);
+                    }
+
+                    // Get oldest and newest timestamps
+                    let mut stmt = conn.prepare(
+                        "SELECT MIN(timestamp) as oldest, MAX(timestamp) as newest FROM wallet_events",
+                    )?;
+                    let (oldest_secs, newest_secs): (Option<i64>, Option<i64>) = stmt.query_row([], |row| {
+                        Ok((row.get("oldest")?, row.get("newest")?))
+                    })?;
+
+                    let oldest_event = oldest_secs.map(|s| UNIX_EPOCH + std::time::Duration::from_secs(s as u64));
+                    let newest_event = newest_secs.map(|s| UNIX_EPOCH + std::time::Duration::from_secs(s as u64));
+
+                    Ok(EventStorageStats {
+                        total_events: total_events as u64,
+                        unique_wallets: unique_wallets as u64,
+                        events_by_type,
+                        oldest_event,
+                        newest_event,
+                        storage_size_bytes: None,
+                    })
+                })
+            )
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("get_storage_stats", format!("Failed to get storage stats: {e}"))
+            })
+    }
+
+    // For brevity, I'll implement key methods. The remaining methods follow the same pattern
+    // of acquiring a connection from the pool and executing with timeout.
+
+    async fn get_wallet_events(&self, wallet_id: &str) -> WalletEventResult<Vec<StoredEvent>> {
+        let filter = EventFilter::new().with_wallet_id(wallet_id.to_string());
+        self.get_events(&filter).await
+    }
+
+    async fn get_wallet_events_in_range(
+        &self,
+        wallet_id: &str,
+        from_sequence: u64,
+        to_sequence: u64,
+    ) -> WalletEventResult<Vec<StoredEvent>> {
+        let filter = EventFilter::new()
+            .with_wallet_id(wallet_id.to_string())
+            .with_sequence_range(from_sequence, to_sequence);
+        self.get_events(&filter).await
+    }
+
+    async fn get_wallet_events_head(
+        &self,
+        wallet_id: &str,
+        limit: usize,
+    ) -> WalletEventResult<Vec<StoredEvent>> {
+        let filter = EventFilter::new()
+            .with_wallet_id(wallet_id.to_string())
+            .with_limit(limit);
+        self.get_events(&filter).await
+    }
+
+    async fn get_wallet_events_tail(
+        &self,
+        wallet_id: &str,
+        limit: usize,
+    ) -> WalletEventResult<Vec<StoredEvent>> {
+        let filter = EventFilter::new()
+            .with_wallet_id(wallet_id.to_string())
+            .with_limit(limit)
+            .order_desc();
+        self.get_events(&filter).await
+    }
+
+    async fn get_events_by_sequences(
+        &self,
+        wallet_id: &str,
+        sequences: &[u64],
+    ) -> WalletEventResult<Vec<StoredEvent>> {
+        if sequences.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn_guard = self.pool.acquire().await?;
+        let wallet_id_owned = wallet_id.to_string();
+        let sequences_owned = sequences.to_vec();
+
+        conn_guard
+            .execute_with_timeout(
+                conn_guard.connection().call(move |conn| {
+                    let placeholders = sequences_owned
+                        .iter()
+                        .map(|_| "?")
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let query = format!(
+                        "SELECT * FROM wallet_events WHERE wallet_id = ? AND sequence_number IN ({}) ORDER BY sequence_number ASC",
+                        placeholders
+                    );
+
+                    let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::new();
+                    params.push(Box::new(wallet_id_owned));
+                    for seq in sequences_owned {
+                        params.push(Box::new(seq as i64));
+                    }
+
+                    let mut stmt = conn.prepare(&query)?;
+                    let param_refs: Vec<&dyn rusqlite::ToSql> = params
+                        .iter()
+                        .map(|p| p.as_ref() as &dyn rusqlite::ToSql)
+                        .collect();
+
+                    let rows = stmt.query_map(&param_refs[..], SqliteEventStorage::row_to_stored_event)?;
+
+                    let mut events = Vec::new();
+                    for row in rows {
+                        events.push(row?);
+                    }
+
+                    Ok(events)
+                })
+            )
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("get_events_by_sequences", format!("Failed to get events by sequences: {e}"))
+            })
+    }
+
+    async fn get_event_by_sequence(
+        &self,
+        wallet_id: &str,
+        sequence: u64,
+    ) -> WalletEventResult<Option<StoredEvent>> {
+        let conn_guard = self.pool.acquire().await?;
+        let wallet_id_owned = wallet_id.to_string();
+
+        conn_guard
+            .execute_with_timeout(conn_guard.connection().call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT * FROM wallet_events WHERE wallet_id = ? AND sequence_number = ?",
+                )?;
+                let mut rows = stmt.query_map(
+                    params![wallet_id_owned, sequence as i64],
+                    SqliteEventStorage::row_to_stored_event,
+                )?;
+
+                if let Some(row) = rows.next() {
+                    Ok(Some(row?))
+                } else {
+                    Ok(None)
+                }
+            }))
+            .await
+            .map_err(|e| {
+                WalletEventError::storage(
+                    "get_event_by_sequence",
+                    format!("Failed to get event by sequence: {e}"),
+                )
+            })
+    }
+
+    async fn insert_event(
+        &self,
+        wallet_id: &str,
+        event_type: &str,
+        payload_json: String,
+        metadata_json: String,
+        source: &str,
+        correlation_id: Option<String>,
+    ) -> WalletEventResult<(u64, u64)> {
+        let conn_guard = self.pool.acquire().await?;
+        let wallet_id_owned = wallet_id.to_string();
+        let event_type_owned = event_type.to_string();
+        let source_owned = source.to_string();
+
+        conn_guard
+            .execute_with_timeout(
+                conn_guard.connection().call(move |conn| {
+                    let tx = conn.transaction()?;
+
+                    // Get next sequence number
+                    let sequence_number: u64 = {
+                        let mut stmt = tx.prepare(
+                            "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM wallet_events WHERE wallet_id = ?",
+                        )?;
+                        stmt.query_row(params![&wallet_id_owned], |row| {
+                            let seq: i64 = row.get(0)?;
+                            Ok(seq as u64)
+                        })?
+                    };
+
+                    // Generate event ID
+                    let event_id = uuid::Uuid::new_v4().to_string();
+                    let timestamp_secs = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64;
+
+                    // Insert event
+                    tx.execute(
+                        r#"
+                        INSERT INTO wallet_events 
+                        (event_id, wallet_id, event_type, sequence_number, payload_json, 
+                         metadata_json, source, correlation_id, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        "#,
+                        params![
+                            event_id,
+                            wallet_id_owned,
+                            event_type_owned,
+                            sequence_number as i64,
+                            payload_json,
+                            metadata_json,
+                            source_owned,
+                            correlation_id,
+                            timestamp_secs,
+                        ],
+                    )?;
+
+                    let db_id = tx.last_insert_rowid() as u64;
+                    tx.commit()?;
+
+                    Ok((db_id, sequence_number))
+                })
+            )
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("insert_event", format!("Failed to insert event: {e}"))
+            })
+    }
+
+    async fn insert_events_batch(
+        &self,
+        wallet_id: &str,
+        events: &[(String, String, String, String, Option<String>)],
+    ) -> WalletEventResult<Vec<(u64, u64)>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn_guard = self.pool.acquire().await?;
+        let wallet_id_owned = wallet_id.to_string();
+        let events_owned = events.to_vec();
+
+        conn_guard
+            .execute_with_timeout(
+                conn_guard.connection().call(move |conn| {
+                    let tx = conn.transaction()?;
+                    let mut results = Vec::new();
+
+                    // Get current max sequence number
+                    let mut current_sequence: u64 = {
+                        let mut stmt = tx.prepare(
+                            "SELECT COALESCE(MAX(sequence_number), 0) FROM wallet_events WHERE wallet_id = ?",
+                        )?;
+                        stmt.query_row(params![&wallet_id_owned], |row| {
+                            let seq: i64 = row.get(0)?;
+                            Ok(seq as u64)
+                        })?
+                    };
+
+                    for (event_type, payload_json, metadata_json, source, correlation_id) in events_owned {
+                        current_sequence += 1;
+                        let event_id = uuid::Uuid::new_v4().to_string();
+                        let timestamp_secs = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64;
+
+                        tx.execute(
+                            r#"
+                            INSERT INTO wallet_events 
+                            (event_id, wallet_id, event_type, sequence_number, payload_json, 
+                             metadata_json, source, correlation_id, timestamp)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            "#,
+                            params![
+                                event_id,
+                                wallet_id_owned,
+                                event_type,
+                                current_sequence as i64,
+                                payload_json,
+                                metadata_json,
+                                source,
+                                correlation_id,
+                                timestamp_secs,
+                            ],
+                        )?;
+
+                        let db_id = tx.last_insert_rowid() as u64;
+                        results.push((db_id, current_sequence));
+                    }
+
+                    tx.commit()?;
+                    Ok(results)
+                })
+            )
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("insert_events_batch", format!("Failed to insert events batch: {e}"))
+            })
+    }
+
+    // Implement remaining methods following the same pattern...
+    // For brevity, I'll add simplified implementations
+
+    async fn get_event_count_by_type(
+        &self,
+        wallet_id: &str,
+    ) -> WalletEventResult<std::collections::HashMap<String, u64>> {
+        let conn_guard = self.pool.acquire().await?;
+        let wallet_id_owned = wallet_id.to_string();
+
+        conn_guard
+            .execute_with_timeout(
+                conn_guard.connection().call(move |conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT event_type, COUNT(*) as count FROM wallet_events WHERE wallet_id = ? GROUP BY event_type",
+                    )?;
+                    let rows = stmt.query_map(params![wallet_id_owned], |row| {
+                        Ok((row.get::<_, String>("event_type")?, row.get::<_, i64>("count")? as u64))
+                    })?;
+
+                    let mut result = std::collections::HashMap::new();
+                    for row in rows {
+                        let (event_type, count) = row?;
+                        result.insert(event_type, count);
+                    }
+
+                    Ok(result)
+                })
+            )
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("get_event_count_by_type", format!("Failed to get event count by type: {e}"))
+            })
+    }
+
+    async fn validate_sequence_continuity(&self, wallet_id: &str) -> WalletEventResult<Vec<u64>> {
+        let conn_guard = self.pool.acquire().await?;
+        let wallet_id_owned = wallet_id.to_string();
+
+        conn_guard
+            .execute_with_timeout(
+                conn_guard.connection().call(move |conn| {
+                    // Get all sequence numbers for the wallet
+                    let mut stmt = conn.prepare(
+                        "SELECT sequence_number FROM wallet_events WHERE wallet_id = ? ORDER BY sequence_number",
+                    )?;
+                    let rows = stmt.query_map(params![wallet_id_owned], |row| {
+                        Ok(row.get::<_, i64>("sequence_number")? as u64)
+                    })?;
+
+                    let mut sequences = Vec::new();
+                    for row in rows {
+                        sequences.push(row?);
+                    }
+
+                    // Find missing sequence numbers
+                    let mut missing = Vec::new();
+                    if !sequences.is_empty() {
+                        let mut expected = 1;
+                        for seq in sequences {
+                            while expected < seq {
+                                missing.push(expected);
+                                expected += 1;
+                            }
+                            expected = seq + 1;
+                        }
+                    }
+
+                    Ok(missing)
+                })
+            )
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("validate_sequence_continuity", format!("Failed to validate sequence continuity: {e}"))
+            })
+    }
+
+    async fn create_event(
+        &self,
+        wallet_id: &str,
+        event_type: &str,
+        payload_json: String,
+        source: &str,
+    ) -> WalletEventResult<StoredEvent> {
+        let (_, sequence) = self
+            .insert_event(
+                wallet_id,
+                event_type,
+                payload_json.clone(),
+                "{}".to_string(), // Empty metadata
+                source,
+                None,
+            )
+            .await?;
+
+        // Retrieve the created event
+        self.get_event_by_sequence(wallet_id, sequence)
+            .await?
+            .ok_or_else(|| {
+                WalletEventError::storage("create_event", "Event not found after creation")
+            })
+    }
+
+    async fn create_event_with_correlation(
+        &self,
+        wallet_id: &str,
+        event_type: &str,
+        payload_json: String,
+        source: &str,
+        correlation_id: String,
+    ) -> WalletEventResult<StoredEvent> {
+        let (_, sequence) = self
+            .insert_event(
+                wallet_id,
+                event_type,
+                payload_json.clone(),
+                "{}".to_string(),
+                source,
+                Some(correlation_id),
+            )
+            .await?;
+
+        self.get_event_by_sequence(wallet_id, sequence)
+            .await?
+            .ok_or_else(|| {
+                WalletEventError::storage(
+                    "create_event_with_correlation",
+                    "Event not found after creation",
+                )
+            })
+    }
+
+    async fn create_events_batch(
+        &self,
+        wallet_id: &str,
+        events: &[(String, String, String)],
+    ) -> WalletEventResult<Vec<StoredEvent>> {
+        let batch_events: Vec<(String, String, String, String, Option<String>)> = events
+            .iter()
+            .map(|(event_type, payload_json, source)| {
+                (
+                    event_type.clone(),
+                    payload_json.clone(),
+                    "{}".to_string(),
+                    source.clone(),
+                    None,
+                )
+            })
+            .collect();
+
+        let results = self.insert_events_batch(wallet_id, &batch_events).await?;
+
+        let sequences: Vec<u64> = results.iter().map(|(_, seq)| *seq).collect();
+        self.get_events_by_sequences(wallet_id, &sequences).await
+    }
+
+    async fn get_next_sequence_number(&self, wallet_id: &str) -> WalletEventResult<u64> {
+        let latest = self.get_latest_sequence(wallet_id).await?;
+        Ok(latest.unwrap_or(0) + 1)
+    }
+
+    async fn is_sequence_available(
+        &self,
+        wallet_id: &str,
+        sequence: u64,
+    ) -> WalletEventResult<bool> {
+        let event = self.get_event_by_sequence(wallet_id, sequence).await?;
+        Ok(event.is_none())
     }
 }
 

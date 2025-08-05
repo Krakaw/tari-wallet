@@ -59,6 +59,7 @@ rayon = { version = "1.8", optional = true }
 
 # === Async & Concurrency ===
 async-trait = "0.1"
+futures = { version = "0.3", optional = true }
 
 # === Logging & Tracing ===
 tracing = { version = "0.1", optional = true }
@@ -130,6 +131,7 @@ async-trait = "0.1"
 # Async runtime for integration tests (only for non-WASM targets)
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { version = "1.0", features = ["full", "test-util"] }
+futures = "0.3"
 
 [build-dependencies]
 tonic-build = "0.10" # GRPC code generation
@@ -146,7 +148,7 @@ http = [
     "wasm-bindgen-futures",
 ]
 wasm = ["web-sys", "js-sys", "serde-wasm-bindgen", "wasm-bindgen-futures"]
-storage = ["rusqlite", "tokio-rusqlite"]
+storage = ["rusqlite", "tokio-rusqlite", "futures"]
 sqlite-bundled = ["rusqlite/bundled"]
 grpc-storage = ["grpc", "storage"]
 http-storage = ["http", "storage"]
