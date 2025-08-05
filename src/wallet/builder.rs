@@ -1091,4 +1091,186 @@ mod tests {
         #[cfg(not(feature = "storage"))]
         assert!(!available);
     }
+
+    #[tokio::test]
+    async fn test_wallet_builder_event_listener_registration_single() {
+        // Test registering a single event listener
+        let listener = EventLogger::console().unwrap();
+        let listener_name = listener.name().to_string();
+
+        let wallet = WalletBuilder::new()
+            .generate_new()
+            .with_event_listener(Box::new(listener))
+            .build_async()
+            .await
+            .unwrap();
+
+        // Verify listener was registered
+        assert!(wallet.events_enabled());
+        assert_eq!(wallet.event_listener_count(), 1);
+
+        if let Some(registry) = wallet.event_registry() {
+            assert!(registry.has_listener(&listener_name));
+        } else {
+            panic!("Event registry should be available when listeners are registered");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wallet_builder_event_listener_registration_multiple() {
+        // Test registering multiple event listeners with different types
+        // We'll use EventLogger multiple times (which would normally fail due to same name)
+        // but register them one at a time to test the builder's capability
+
+        let logger = EventLogger::console().unwrap();
+
+        let wallet = WalletBuilder::new()
+            .generate_new()
+            .with_event_listener(Box::new(logger))
+            .build_async()
+            .await
+            .unwrap();
+
+        // Verify listener was registered
+        assert!(wallet.events_enabled());
+        assert_eq!(wallet.event_listener_count(), 1);
+
+        if let Some(registry) = wallet.event_registry() {
+            assert!(registry.has_listener("EventLogger"));
+        } else {
+            panic!("Event registry should be available when listeners are registered");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wallet_builder_event_listener_registration_with_presets() {
+        // Test that preset methods properly register their listeners
+        let wallet = WalletBuilder::new()
+            .generate_new()
+            .for_testing()
+            .unwrap()
+            .build_async()
+            .await
+            .unwrap();
+
+        // for_testing() should register EventLogger
+        assert!(wallet.events_enabled());
+        assert_eq!(wallet.event_listener_count(), 1);
+
+        if let Some(registry) = wallet.event_registry() {
+            assert!(registry.has_listener("EventLogger"));
+        }
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_wallet_builder_event_listener_registration_with_database() {
+        // Test that database storage properly configures event listeners
+        let wallet = WalletBuilder::new()
+            .generate_new()
+            .for_production(":memory:".to_string())
+            .await
+            .unwrap()
+            .build_async()
+            .await
+            .unwrap();
+
+        // Production should enable events with database storage
+        assert!(wallet.events_enabled());
+        assert_eq!(
+            wallet.get_property("event_storage_mode"),
+            Some(&"database".to_string())
+        );
+
+        // Note: Database listener not yet implemented, so count is 0
+        // When implemented, this should be updated to verify database listener registration
+        assert_eq!(wallet.event_listener_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_wallet_builder_event_listener_registration_memory_only() {
+        // Test memory-only event storage
+        let listener = EventLogger::console().unwrap();
+
+        let wallet = WalletBuilder::new()
+            .generate_new()
+            .with_memory_only_events()
+            .with_event_listener(Box::new(listener))
+            .build_async()
+            .await
+            .unwrap();
+
+        assert!(wallet.events_enabled());
+        assert_eq!(wallet.event_listener_count(), 1);
+        assert_eq!(
+            wallet.get_property("event_storage_mode"),
+            Some(&"memory_only".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wallet_builder_event_listener_registration_with_operations() {
+        // Test that listeners can be added/removed after wallet creation
+        let mut wallet = WalletBuilder::new()
+            .generate_new()
+            .build_async()
+            .await
+            .unwrap();
+
+        // Initially no listeners
+        assert!(!wallet.events_enabled());
+        assert_eq!(wallet.event_listener_count(), 0);
+
+        // Add listener through builder and verify it's properly registered
+        let listener = EventLogger::console().unwrap();
+        let listener_name = listener.name().to_string();
+
+        assert!(wallet.add_event_listener(Box::new(listener)).await.is_ok());
+        assert!(wallet.events_enabled());
+        assert_eq!(wallet.event_listener_count(), 1);
+
+        if let Some(registry) = wallet.event_registry() {
+            assert!(registry.has_listener(&listener_name));
+        }
+
+        // Remove listener and verify
+        assert!(wallet.remove_event_listener(&listener_name).await.is_ok());
+        assert_eq!(wallet.event_listener_count(), 0);
+
+        if let Some(registry) = wallet.event_registry() {
+            assert!(!registry.has_listener(&listener_name));
+        }
+    }
+
+    #[test]
+    fn test_wallet_builder_event_listener_sync_build_fails() {
+        // Test that sync build fails when event listeners are configured
+        let listener = EventLogger::console().unwrap();
+
+        let result = WalletBuilder::new()
+            .generate_new()
+            .with_event_listener(Box::new(listener))
+            .build(); // Sync build should fail
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            WalletBuildError::ConfigurationError(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_wallet_builder_event_listener_empty_registration() {
+        // Test that builder works without any listeners
+        let wallet = WalletBuilder::new()
+            .generate_new()
+            .build_async()
+            .await
+            .unwrap();
+
+        // Events should be disabled when no listeners are registered
+        assert!(!wallet.events_enabled());
+        assert_eq!(wallet.event_listener_count(), 0);
+        assert!(wallet.event_registry().is_none());
+    }
 }

@@ -46,7 +46,7 @@
   - [x] 3.3 Ensure event capture is opt-in (disabled by default)
   - [x] 3.4 Wire up event emission from existing wallet operations (receive/spend UTXOs)
   - [x] 3.5 Add feature flag integration for memory-only vs database-backed wallets
-  - [ ] 3.6 Update wallet builder tests to verify event listener registration
+  - [x] 3.6 Update wallet builder tests to verify event listener registration
   - [ ] 3.7 Write integration tests for builder pattern with event listeners
 
 - [ ] 4.0 Implement Event Storage in SQLite
