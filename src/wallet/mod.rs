@@ -6,7 +6,7 @@
 pub mod builder;
 
 // Re-export builder types for convenience
-pub use builder::{WalletBuildError, WalletBuilder, WalletWithEvents};
+pub use builder::{StorageMode, WalletBuildError, WalletBuilder, WalletWithEvents};
 
 use crate::common::string_to_network;
 use crate::data_structures::address::{

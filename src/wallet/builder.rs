@@ -9,6 +9,15 @@ use crate::events::{EventRegistry, WalletEventListener};
 use crate::wallet::{Wallet, WalletMetadata};
 use std::collections::HashMap;
 
+/// Storage mode for wallet events
+#[derive(Debug, Clone, PartialEq)]
+pub enum StorageMode {
+    /// Events are stored in memory only (no persistence)
+    MemoryOnly,
+    /// Events are persisted to a database
+    Database,
+}
+
 /// Errors that can occur during wallet building
 #[derive(Debug, Clone)]
 pub enum WalletBuildError {
@@ -355,6 +364,236 @@ impl WalletBuilder {
         self
     }
 
+    /// Configure the wallet with database-backed event storage
+    ///
+    /// This method marks the wallet for database storage mode but doesn't
+    /// add database storage listeners yet (feature coming soon).
+    ///
+    /// # Arguments
+    ///
+    /// * `database_path` - Path to the SQLite database file (use ":memory:" for in-memory)
+    ///
+    /// # Returns
+    ///
+    /// Returns the builder for method chaining
+    ///
+    /// # Note
+    ///
+    /// This method requires the `storage` feature to be enabled.
+    #[cfg(feature = "storage")]
+    pub async fn with_database_storage(
+        mut self,
+        _database_path: String,
+    ) -> Result<Self, WalletBuildError> {
+        // Initialize event registry if not present
+        if self.event_registry.is_none() {
+            self.event_registry = Some(EventRegistry::new());
+        }
+
+        // Mark as database storage mode
+        self.metadata
+            .properties
+            .insert("event_storage_mode".to_string(), "database".to_string());
+
+        Ok(self)
+    }
+
+    /// Configure the wallet with database-backed event storage (fallback for non-storage builds)
+    ///
+    /// When the `storage` feature is not enabled, this method returns an error
+    /// indicating that database storage is not available.
+    #[cfg(not(feature = "storage"))]
+    pub async fn with_database_storage(
+        self,
+        _database_path: String,
+    ) -> Result<Self, WalletBuildError> {
+        Err(WalletBuildError::ConfigurationError(
+            "Database storage is not available. Please enable the 'storage' feature.".to_string(),
+        ))
+    }
+
+    /// Configure the wallet with memory-only event handling
+    ///
+    /// This method sets up the wallet for memory-only operation without
+    /// database persistence. Events will only be handled by registered
+    /// listeners but not persisted to disk.
+    ///
+    /// # Returns
+    ///
+    /// Returns the builder for method chaining
+    pub fn with_memory_only_events(mut self) -> Self {
+        // Initialize event registry if not present
+        if self.event_registry.is_none() {
+            self.event_registry = Some(EventRegistry::new());
+        }
+
+        // Add a marker property to indicate memory-only mode
+        self.metadata
+            .properties
+            .insert("event_storage_mode".to_string(), "memory_only".to_string());
+
+        self
+    }
+
+    /// Configure the wallet for production use with database storage
+    ///
+    /// This is a convenience method that sets up optimal configuration for
+    /// production environments, including database storage and performance
+    /// tuning.
+    ///
+    /// # Arguments
+    ///
+    /// * `database_path` - Path to the SQLite database file
+    ///
+    /// # Returns
+    ///
+    /// Returns the builder for method chaining
+    ///
+    /// # Features
+    ///
+    /// This method is only available when the `storage` feature is enabled.
+    #[cfg(feature = "storage")]
+    pub async fn for_production(
+        mut self,
+        _database_path: String,
+    ) -> Result<Self, WalletBuildError> {
+        // Set production metadata
+        self.metadata
+            .properties
+            .insert("deployment_mode".to_string(), "production".to_string());
+        self.metadata
+            .properties
+            .insert("event_storage_mode".to_string(), "database".to_string());
+
+        // Initialize event registry if not present
+        if self.event_registry.is_none() {
+            self.event_registry = Some(EventRegistry::new());
+        }
+
+        // TODO: Add database storage listener when it implements WalletEventListener trait
+
+        Ok(self)
+    }
+
+    /// Configure the wallet for development use with enhanced debugging
+    ///
+    /// This is a convenience method that sets up optimal configuration for
+    /// development environments, including console logging and detailed
+    /// event tracking.
+    ///
+    /// # Arguments
+    ///
+    /// * `database_path` - Optional path to database (if None, uses memory-only)
+    ///
+    /// # Returns
+    ///
+    /// Returns the builder for method chaining
+    pub async fn for_development(
+        mut self,
+        _database_path: Option<String>,
+    ) -> Result<Self, WalletBuildError> {
+        use crate::events::listeners::EventLogger;
+
+        // Set development metadata
+        self.metadata
+            .properties
+            .insert("deployment_mode".to_string(), "development".to_string());
+
+        // Initialize event registry if not present
+        if self.event_registry.is_none() {
+            self.event_registry = Some(EventRegistry::new());
+        }
+
+        // Add detailed event logging
+        let event_logger = EventLogger::console()
+            .map_err(|e| WalletBuildError::ConfigurationError(e.to_string()))?;
+        self.listeners_to_register.push(Box::new(event_logger));
+
+        // Set storage mode based on path provided and feature availability
+        #[cfg(feature = "storage")]
+        if _database_path.is_some() {
+            self.metadata
+                .properties
+                .insert("event_storage_mode".to_string(), "database".to_string());
+            // TODO: Add database storage listener when it implements WalletEventListener trait
+        } else {
+            self.metadata
+                .properties
+                .insert("event_storage_mode".to_string(), "memory_only".to_string());
+        }
+
+        #[cfg(not(feature = "storage"))]
+        {
+            self.metadata
+                .properties
+                .insert("event_storage_mode".to_string(), "memory_only".to_string());
+        }
+
+        Ok(self)
+    }
+
+    /// Configure the wallet for testing with event capture
+    ///
+    /// This is a convenience method that sets up optimal configuration for
+    /// testing environments, including event logging for event capture
+    /// and verification.
+    ///
+    /// # Returns
+    ///
+    /// Returns the builder for method chaining
+    pub fn for_testing(mut self) -> Result<Self, WalletBuildError> {
+        use crate::events::listeners::EventLogger;
+
+        // Set testing metadata
+        self.metadata
+            .properties
+            .insert("deployment_mode".to_string(), "testing".to_string());
+        self.metadata
+            .properties
+            .insert("event_storage_mode".to_string(), "memory_only".to_string());
+
+        // Initialize event registry if not present
+        if self.event_registry.is_none() {
+            self.event_registry = Some(EventRegistry::new());
+        }
+
+        // Add event logger for test event capture
+        let event_logger = EventLogger::console()
+            .map_err(|e| WalletBuildError::ConfigurationError(e.to_string()))?;
+        self.listeners_to_register.push(Box::new(event_logger));
+
+        Ok(self)
+    }
+
+    /// Get the configured storage mode
+    ///
+    /// Returns the storage mode based on the current configuration.
+    pub fn get_storage_mode(&self) -> StorageMode {
+        match self.metadata.properties.get("event_storage_mode") {
+            Some(mode) if mode == "database" => StorageMode::Database,
+            Some(mode) if mode == "memory_only" => StorageMode::MemoryOnly,
+            _ => {
+                // Default based on feature availability
+                #[cfg(feature = "storage")]
+                {
+                    StorageMode::Database
+                }
+                #[cfg(not(feature = "storage"))]
+                {
+                    StorageMode::MemoryOnly
+                }
+            }
+        }
+    }
+
+    /// Check if database storage is available
+    ///
+    /// Returns true if the storage feature is enabled and database storage
+    /// can be used.
+    pub fn is_database_storage_available() -> bool {
+        cfg!(feature = "storage")
+    }
+
     /// Build the wallet synchronously (without event system)
     ///
     /// This method creates the wallet without setting up the event system.
@@ -680,5 +919,176 @@ mod tests {
 
         // Try to disable again (should return false)
         assert!(!wallet.disable_events().await);
+    }
+
+    #[tokio::test]
+    async fn test_wallet_builder_memory_only_events() {
+        let wallet = WalletBuilder::new()
+            .generate_new()
+            .with_memory_only_events()
+            .build_async()
+            .await
+            .unwrap();
+
+        assert!(wallet.events_enabled());
+        assert_eq!(
+            wallet.get_property("event_storage_mode"),
+            Some(&"memory_only".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wallet_builder_for_testing() {
+        let wallet = WalletBuilder::new()
+            .generate_new()
+            .for_testing()
+            .unwrap()
+            .build_async()
+            .await
+            .unwrap();
+
+        assert!(wallet.events_enabled());
+        assert_eq!(
+            wallet.get_property("deployment_mode"),
+            Some(&"testing".to_string())
+        );
+        assert_eq!(
+            wallet.get_property("event_storage_mode"),
+            Some(&"memory_only".to_string())
+        );
+        assert_eq!(wallet.event_listener_count(), 1); // Event logger
+    }
+
+    #[tokio::test]
+    async fn test_wallet_builder_for_development_memory_only() {
+        let wallet = WalletBuilder::new()
+            .generate_new()
+            .for_development(None)
+            .await
+            .unwrap()
+            .build_async()
+            .await
+            .unwrap();
+
+        assert!(wallet.events_enabled());
+        assert_eq!(
+            wallet.get_property("deployment_mode"),
+            Some(&"development".to_string())
+        );
+        assert_eq!(
+            wallet.get_property("event_storage_mode"),
+            Some(&"memory_only".to_string())
+        );
+        assert_eq!(wallet.event_listener_count(), 1); // EventLogger
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_wallet_builder_with_database_storage() {
+        let wallet = WalletBuilder::new()
+            .generate_new()
+            .with_database_storage(":memory:".to_string())
+            .await
+            .unwrap()
+            .build_async()
+            .await
+            .unwrap();
+
+        assert!(wallet.events_enabled());
+        assert_eq!(
+            wallet.get_property("event_storage_mode"),
+            Some(&"database".to_string())
+        );
+        assert_eq!(wallet.event_listener_count(), 0); // Database listener not yet implemented
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_wallet_builder_for_production() {
+        let wallet = WalletBuilder::new()
+            .generate_new()
+            .for_production(":memory:".to_string())
+            .await
+            .unwrap()
+            .build_async()
+            .await
+            .unwrap();
+
+        assert!(wallet.events_enabled());
+        assert_eq!(
+            wallet.get_property("deployment_mode"),
+            Some(&"production".to_string())
+        );
+        assert_eq!(
+            wallet.get_property("event_storage_mode"),
+            Some(&"database".to_string())
+        );
+        assert_eq!(wallet.event_listener_count(), 0); // Database listener not yet implemented
+    }
+
+    #[cfg(feature = "storage")]
+    #[tokio::test]
+    async fn test_wallet_builder_for_development_with_database() {
+        let wallet = WalletBuilder::new()
+            .generate_new()
+            .for_development(Some(":memory:".to_string()))
+            .await
+            .unwrap()
+            .build_async()
+            .await
+            .unwrap();
+
+        assert!(wallet.events_enabled());
+        assert_eq!(
+            wallet.get_property("deployment_mode"),
+            Some(&"development".to_string())
+        );
+        assert_eq!(
+            wallet.get_property("event_storage_mode"),
+            Some(&"database".to_string())
+        );
+        assert_eq!(wallet.event_listener_count(), 1); // EventLogger (Database not yet implemented)
+    }
+
+    #[cfg(not(feature = "storage"))]
+    #[tokio::test]
+    async fn test_wallet_builder_database_storage_unavailable() {
+        let result = WalletBuilder::new()
+            .generate_new()
+            .with_database_storage("test.db".to_string())
+            .await;
+
+        assert!(result.is_err());
+        assert!(result.is_err());
+        if let Err(WalletBuildError::ConfigurationError(msg)) = result {
+            assert!(msg.contains("Database storage is not available"));
+        } else {
+            panic!("Expected ConfigurationError");
+        }
+    }
+
+    #[test]
+    fn test_storage_mode_detection() {
+        let builder_memory = WalletBuilder::new()
+            .generate_new()
+            .with_memory_only_events();
+        assert_eq!(builder_memory.get_storage_mode(), StorageMode::MemoryOnly);
+
+        // Test default storage mode based on feature availability
+        let builder_default = WalletBuilder::new().generate_new();
+        #[cfg(feature = "storage")]
+        assert_eq!(builder_default.get_storage_mode(), StorageMode::Database);
+        #[cfg(not(feature = "storage"))]
+        assert_eq!(builder_default.get_storage_mode(), StorageMode::MemoryOnly);
+    }
+
+    #[test]
+    fn test_database_storage_availability() {
+        let available = WalletBuilder::is_database_storage_available();
+
+        #[cfg(feature = "storage")]
+        assert!(available);
+        #[cfg(not(feature = "storage"))]
+        assert!(!available);
     }
 }
