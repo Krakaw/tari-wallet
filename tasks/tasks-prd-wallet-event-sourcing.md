@@ -31,7 +31,7 @@
   - [x] 1.7 Write unit tests for event type serialization and deserialization
 
 - [ ] 2.0 Implement Event Listener Interface and Registry
-  - [ ] 2.1 Define `EventListener` trait with async event handling method
+  - [x] 2.1 Define `EventListener` trait with async event handling method
   - [ ] 2.2 Create `EventRegistry` to manage multiple registered listeners
   - [ ] 2.3 Implement async event dispatch to all registered listeners
   - [ ] 2.4 Add error handling to prevent listener failures from breaking wallet operations
