@@ -12,6 +12,8 @@
 - `tests/events/event_capture_tests.rs` - Tests for event capture functionality
 - `tests/events/event_replay_tests.rs` - Tests for event replay and verification
 - `tests/events/builder_integration_tests.rs` - Tests for wallet builder integration
+- `tests/integration/builder_integration_tests.rs` - Integration tests for builder pattern with event listeners
+- `tests/builder_integration_standalone.rs` - Standalone integration tests for wallet builder with event listeners
 
 ### Notes
 
@@ -40,14 +42,14 @@
   - [x] 2.6 Add listener registration/deregistration methods
   - [x] 2.7 Write unit tests for event listener interface and registry
 
-- [ ] 3.0 Integrate Event System with Wallet Builder
+- [x] 3.0 Integrate Event System with Wallet Builder
   - [x] 3.1 Modify wallet builder to accept event listeners via `with_event_listener()` method
   - [x] 3.2 Add internal event registry to wallet structure
   - [x] 3.3 Ensure event capture is opt-in (disabled by default)
   - [x] 3.4 Wire up event emission from existing wallet operations (receive/spend UTXOs)
   - [x] 3.5 Add feature flag integration for memory-only vs database-backed wallets
   - [x] 3.6 Update wallet builder tests to verify event listener registration
-  - [ ] 3.7 Write integration tests for builder pattern with event listeners
+  - [x] 3.7 Write integration tests for builder pattern with event listeners
 
 - [ ] 4.0 Implement Event Storage in SQLite
   - [ ] 4.1 Create database migration for `wallet_events` table with required schema
