@@ -11,8 +11,8 @@ categories = ["cryptography"]
 
 [package.metadata.cargo-machete]
 ignored = [
-    "tonic-build",  # Used in build.rs for GRPC code generation
-    "prost",        # Used by generated GRPC protobuf code (verified by compilation test)
+    "tonic-build", # Used in build.rs for GRPC code generation
+    "prost",       # Used by generated GRPC protobuf code (verified by compilation test)
 ]
 
 [dependencies]
@@ -21,7 +21,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 borsh = { version = "1.5.7", features = ["derive"] }
 thiserror = "1.0"
-zeroize = { version = "1.7", features = ["derive"] }  # Secure memory clearing
+zeroize = { version = "1.7", features = ["derive"] } # Secure memory clearing
 
 # === Tari Ecosystem Dependencies ===
 tari_crypto = { version = "0.22" }
@@ -29,25 +29,27 @@ tari_utilities = { version = "0.8", features = ["std"] }
 tari_script = { version = "1.0.0-rc.5" }
 
 # === Cryptographic Primitives ===
-chacha20poly1305 = "0.10"  # AEAD encryption
-digest = "0.10"             # Hash function traits
-blake2 = "0.10"             # Blake2 hash functions
-blake2b_simd = "1.0"        # SIMD-optimized Blake2b
-chacha20 = "0.9"            # ChaCha20 stream cipher (for CipherSeed)
-argon2 = "0.5"              # Key derivation (for CipherSeed)
-curve25519-dalek = { version = "4.1", features = ["alloc"] }  # Elliptic curve operations
+chacha20poly1305 = "0.10" # AEAD encryption
+digest = "0.10" # Hash function traits
+blake2 = "0.10" # Blake2 hash functions
+blake2b_simd = "1.0" # SIMD-optimized Blake2b
+chacha20 = "0.9" # ChaCha20 stream cipher (for CipherSeed)
+argon2 = "0.5" # Key derivation (for CipherSeed)
+curve25519-dalek = { version = "4.1", features = [
+    "alloc",
+] } # Elliptic curve operations
 
 # === Random Number Generation ===
 rand_core = "0.6"
 rand = "0.8"
 
 # === Encoding & Utilities ===
-hex = "0.4"                 # Hexadecimal encoding/decoding
-bs58 = "0.5"                # Base58 encoding (for addresses)
-crc32fast = "1.4"           # CRC32 checksums
-primitive-types = { version = "0.12", features = ["serde"] }  # U256, H256, etc.
-lazy_static = "1.4"         # Static variable initialization
-chrono = { version = "0.4", features = ["serde"] }  # Date and time handling
+hex = "0.4"                                                  # Hexadecimal encoding/decoding
+bs58 = "0.5"                                                 # Base58 encoding (for addresses)
+crc32fast = "1.4"                                            # CRC32 checksums
+primitive-types = { version = "0.12", features = ["serde"] } # U256, H256, etc.
+lazy_static = "1.4"                                          # Static variable initialization
+chrono = { version = "0.4", features = ["serde"] }           # Date and time handling
 
 # === WebAssembly Support ===
 wasm-bindgen = "0.2"
@@ -63,30 +65,52 @@ tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", optional = true }
 
 # === GRPC Dependencies (blockchain scanning) ===
-tonic = { version = "0.10", features = ["tls", "tls-roots", "prost"], optional = true }
+tonic = { version = "0.10", features = [
+    "tls",
+    "tls-roots",
+    "prost",
+], optional = true }
 prost = { version = "0.12", optional = true }
 
 # === CLI Tools ===
 
 
 # === Database Storage ===
-rusqlite = { version = "0.31", features = ["chrono", "serde_json", "blob"], optional = true }
+rusqlite = { version = "0.31", features = [
+    "chrono",
+    "serde_json",
+    "blob",
+], optional = true }
 tokio-rusqlite = { version = "0.5", optional = true }
 
 # === Platform-Specific Dependencies ===
 # Native targets (non-WASM) - Full reqwest with all features
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-reqwest = { version = "0.12.22", features = ["json", "stream", "gzip"], optional = true }
+reqwest = { version = "0.12.22", features = [
+    "json",
+    "stream",
+    "gzip",
+], optional = true }
 tokio = { version = "1.0", features = ["full", "test-util"] }
 clap = { version = "4.4", features = ["derive"] }
 uuid = { version = "1.0", features = ["v4"] }
 
 # WASM targets - Use web-sys instead of reqwest for HTTP functionality
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-web-sys = { version = "0.3", features = ["console", "Request", "Response", "Headers", "RequestInit", "RequestMode", "Window"], optional = true }
+web-sys = { version = "0.3", features = [
+    "console",
+    "Request",
+    "Response",
+    "Headers",
+    "RequestInit",
+    "RequestMode",
+    "Window",
+], optional = true }
 js-sys = { version = "0.3", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
-getrandom = { version = "0.2", features = ["js"] }  # WASM-compatible random number generation
+getrandom = { version = "0.2", features = [
+    "js",
+] } # WASM-compatible random number generation
 wasm-bindgen-futures = { version = "0.4", optional = true }
 uuid = { version = "1.0", features = ["v4", "js"] }
 
@@ -108,14 +132,22 @@ async-trait = "0.1"
 tokio = { version = "1.0", features = ["full", "test-util"] }
 
 [build-dependencies]
-tonic-build = "0.10"  # GRPC code generation
+tonic-build = "0.10" # GRPC code generation
 
 [features]
 default = ["http"]
 grpc = ["rayon", "tonic", "prost", "tracing", "tracing-subscriber"]
-http = ["tracing", "reqwest", "web-sys", "js-sys", "serde-wasm-bindgen", "wasm-bindgen-futures"]
+http = [
+    "tracing",
+    "reqwest",
+    "web-sys",
+    "js-sys",
+    "serde-wasm-bindgen",
+    "wasm-bindgen-futures",
+]
 wasm = ["web-sys", "js-sys", "serde-wasm-bindgen", "wasm-bindgen-futures"]
 storage = ["rusqlite", "tokio-rusqlite"]
+sqlite-bundled = ["rusqlite/bundled"]
 grpc-storage = ["grpc", "storage"]
 http-storage = ["http", "storage"]
 
@@ -125,7 +157,7 @@ name = "scanner"
 required-features = ["grpc"]
 
 [[bin]]
-name = "wallet" 
+name = "wallet"
 required-features = ["storage"]
 
 [[bin]]
