@@ -4,7 +4,7 @@ target
 .vscode
 /REFERENCE_*
 *.db
-*.db-journal
+*.db*
 
 # Coverage reports
 coverage/
