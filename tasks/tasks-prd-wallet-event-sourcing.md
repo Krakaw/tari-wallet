@@ -28,6 +28,8 @@
 - `tests/storage/event_storage_tests.rs` - Unit tests for event storage implementation
 - `tests/storage/mod.rs` - Storage test module organization
 - `tests/inconsistency_detection_tests.rs` - Tests for inconsistency detection and detailed reporting functionality (Task 5.3)
+- `src/events/user_api.rs` - User-facing API methods for triggering event replay operations with convenience methods and progress monitoring (Task 5.4)
+- `tests/user_api_tests.rs` - Tests for user-facing API methods and replay operations (Task 5.4)
 
 ### Notes
 
@@ -80,7 +82,7 @@
   - [x] 5.1 Create event replay engine that processes events in chronological order
   - [x] 5.2 Implement state verification logic to compare replayed state vs current state
   - [x] 5.3 Add inconsistency detection and detailed reporting functionality
-  - [ ] 5.4 Create user-facing API methods for triggering event replay
+  - [x] 5.4 Create user-facing API methods for triggering event replay
   - [ ] 5.5 Handle edge cases (partial wallet states, missing events, corrupted data)
   - [ ] 5.6 Add progress reporting for long-running replay operations
   - [ ] 5.7 Implement replay cancellation support
