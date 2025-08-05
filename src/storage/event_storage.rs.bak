@@ -864,7 +864,7 @@ impl EventStorage for SqliteEventStorage {
     ) -> WalletEventResult<Vec<StoredEvent>> {
         let filter = EventFilter::new()
             .with_wallet_id(wallet_id.to_string())
-            .with_sequence_range(sequence + 1, i64::MAX as u64);
+            .with_sequence_range(sequence + 1, u64::MAX);
 
         self.get_events(&filter).await
     }
@@ -1901,7 +1901,7 @@ impl EventStorage for PooledSqliteEventStorage {
     ) -> WalletEventResult<Vec<StoredEvent>> {
         let filter = EventFilter::new()
             .with_wallet_id(wallet_id.to_string())
-            .with_sequence_range(sequence + 1, i64::MAX as u64);
+            .with_sequence_range(sequence + 1, u64::MAX);
 
         self.get_events(&filter).await
     }

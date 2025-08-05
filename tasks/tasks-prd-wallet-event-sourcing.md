@@ -22,6 +22,7 @@
 - `tests/append_only_behavior_tests.rs` - Integration tests for append-only behavior enforcement (Task 4.4)
 - `tests/feature_gating_tests.rs` - Tests for storage feature gating behavior (Task 4.5)
 - `tests/connection_pool_tests.rs` - Tests for connection pooling functionality (Task 4.6)
+- `tests/event_replay_methods_tests.rs` - Tests for specialized event retrieval methods for replay functionality (Task 4.7)
 - `tests/storage/event_storage_tests.rs` - Unit tests for event storage implementation
 - `tests/storage/mod.rs` - Storage test module organization
 
@@ -68,7 +69,7 @@
   - [x] 4.4 Ensure append-only behavior (no updates or deletes allowed)
   - [x] 4.5 Feature-gate event storage with existing `storage` feature flag
   - [x] 4.6 Add connection pooling support for concurrent event writes
-  - [ ] 4.7 Implement event retrieval methods for replay functionality
+  - [x] 4.7 Implement event retrieval methods for replay functionality
   - [ ] 4.8 Write unit tests for event storage operations
   - [ ] 4.9 Add database integrity tests to verify append-only behavior
 

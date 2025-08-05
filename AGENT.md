@@ -134,6 +134,22 @@ impl Zeroize for Wallet {
 - **Limited dead code**: Only 2 functions in types.rs marked `#[allow(dead_code)]` remain
 - **Monster functions**: Some test functions >300 lines
 
+### Rust string format
+- Use inline string for format!
+```
+error: variables can be used directly in the `format!` string
+   --> tests/event_replay_methods_tests.rs:260:17
+    |
+260 |                 format!("event-{}", i),
+    |                 ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+260 -                 format!("event-{}", i),
+260 +                 format!("event-{i}"),
+```
+
 ## Performance-Critical Code Paths
 
 
