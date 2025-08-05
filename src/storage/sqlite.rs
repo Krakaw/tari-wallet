@@ -22,8 +22,8 @@ use crate::{
     },
     errors::{WalletError, WalletResult},
     storage::{
-        OutputFilter, OutputStatus, StorageStats, StoredOutput, StoredWallet, TransactionFilter,
-        WalletStorage,
+        OutputFilter, OutputStatus, SqlitePerformanceConfig, StorageStats, StoredOutput,
+        StoredWallet, TransactionFilter, WalletStorage,
     },
 };
 
@@ -31,26 +31,68 @@ use crate::{
 #[cfg(feature = "storage")]
 pub struct SqliteStorage {
     connection: Connection,
+    performance_config: SqlitePerformanceConfig,
 }
 
 #[cfg(feature = "storage")]
 impl SqliteStorage {
     /// Create a new SQLite storage instance
     pub async fn new<P: AsRef<Path>>(database_path: P) -> WalletResult<Self> {
+        Self::new_with_config(
+            database_path,
+            SqlitePerformanceConfig::production_optimized(),
+        )
+        .await
+    }
+
+    /// Create a new SQLite storage instance with custom performance configuration
+    pub async fn new_with_config<P: AsRef<Path>>(
+        database_path: P,
+        performance_config: SqlitePerformanceConfig,
+    ) -> WalletResult<Self> {
         let connection = Connection::open(database_path).await.map_err(|e| {
             WalletError::StorageError(format!("Failed to open SQLite database: {e}"))
         })?;
 
-        Ok(Self { connection })
+        let storage = Self {
+            connection,
+            performance_config,
+        };
+
+        // Apply performance optimizations before any other operations
+        storage
+            .performance_config
+            .apply_to_connection(&storage.connection)
+            .await?;
+
+        Ok(storage)
     }
 
     /// Create an in-memory SQLite storage instance (useful for testing)
     pub async fn new_in_memory() -> WalletResult<Self> {
+        Self::new_in_memory_with_config(SqlitePerformanceConfig::ultra_fast()).await
+    }
+
+    /// Create an in-memory SQLite storage instance with custom performance configuration
+    pub async fn new_in_memory_with_config(
+        performance_config: SqlitePerformanceConfig,
+    ) -> WalletResult<Self> {
         let connection = Connection::open(":memory:").await.map_err(|e| {
             WalletError::StorageError(format!("Failed to create in-memory database: {e}"))
         })?;
 
-        Ok(Self { connection })
+        let storage = Self {
+            connection,
+            performance_config,
+        };
+
+        // Apply performance optimizations
+        storage
+            .performance_config
+            .apply_to_connection(&storage.connection)
+            .await?;
+
+        Ok(storage)
     }
 
     /// Create the database schema
@@ -206,6 +248,11 @@ impl SqliteStorage {
             .call(move |conn| Ok(conn.execute_batch(sql)?))
             .await
             .map_err(|e| WalletError::StorageError(format!("Failed to create schema: {e}")))?;
+
+        // Apply scanning-specific optimizations after schema creation
+        self.performance_config
+            .apply_scanning_optimizations(&self.connection)
+            .await?;
 
         Ok(())
     }
