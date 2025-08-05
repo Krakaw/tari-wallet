@@ -17,6 +17,7 @@
 - `tests/integration/builder_integration_tests.rs` - Integration tests for builder pattern with event listeners
 - `tests/builder_integration_standalone.rs` - Standalone integration tests for wallet builder with event listeners
 - `tests/event_storage_integration.rs` - Integration tests for event storage database operations
+- `tests/event_storage_operations_tests.rs` - Integration tests for enhanced event storage operations (Task 4.2)
 - `tests/storage/event_storage_tests.rs` - Unit tests for event storage implementation
 - `tests/storage/mod.rs` - Storage test module organization
 
@@ -58,7 +59,7 @@
 
 - [ ] 4.0 Implement Event Storage in SQLite
   - [x] 4.1 Create database migration for `wallet_events` table with required schema
-  - [ ] 4.2 Implement event storage operations (insert, query by wallet_id, query by sequence)
+  - [x] 4.2 Implement event storage operations (insert, query by wallet_id, query by sequence)
   - [ ] 4.3 Add automatic timestamping and sequence number assignment
   - [ ] 4.4 Ensure append-only behavior (no updates or deletes allowed)
   - [ ] 4.5 Feature-gate event storage with existing `storage` feature flag

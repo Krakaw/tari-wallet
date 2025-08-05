@@ -194,6 +194,74 @@ pub trait EventStorage {
 
     /// Get storage statistics
     async fn get_storage_stats(&self) -> WalletEventResult<EventStorageStats>;
+
+    // Additional specialized query operations for task 4.2
+
+    /// Get all events for a specific wallet, ordered by sequence number
+    async fn get_wallet_events(&self, wallet_id: &str) -> WalletEventResult<Vec<StoredEvent>>;
+
+    /// Get events for a wallet within a specific sequence range
+    async fn get_wallet_events_in_range(
+        &self,
+        wallet_id: &str,
+        from_sequence: u64,
+        to_sequence: u64,
+    ) -> WalletEventResult<Vec<StoredEvent>>;
+
+    /// Get the first N events for a wallet (oldest first)
+    async fn get_wallet_events_head(
+        &self,
+        wallet_id: &str,
+        limit: usize,
+    ) -> WalletEventResult<Vec<StoredEvent>>;
+
+    /// Get the last N events for a wallet (newest first)
+    async fn get_wallet_events_tail(
+        &self,
+        wallet_id: &str,
+        limit: usize,
+    ) -> WalletEventResult<Vec<StoredEvent>>;
+
+    /// Get events by specific sequence numbers
+    async fn get_events_by_sequences(
+        &self,
+        wallet_id: &str,
+        sequences: &[u64],
+    ) -> WalletEventResult<Vec<StoredEvent>>;
+
+    /// Get a specific event by wallet_id and sequence number
+    async fn get_event_by_sequence(
+        &self,
+        wallet_id: &str,
+        sequence: u64,
+    ) -> WalletEventResult<Option<StoredEvent>>;
+
+    /// Insert a new event with automatic sequence number assignment
+    async fn insert_event(
+        &self,
+        wallet_id: &str,
+        event_type: &str,
+        payload_json: String,
+        metadata_json: String,
+        source: &str,
+        correlation_id: Option<String>,
+    ) -> WalletEventResult<(u64, u64)>; // Returns (db_id, sequence_number)
+
+    /// Insert multiple events with automatic sequence number assignment
+    async fn insert_events_batch(
+        &self,
+        wallet_id: &str,
+        events: &[(String, String, String, String, Option<String>)], // (event_type, payload, metadata, source, correlation_id)
+    ) -> WalletEventResult<Vec<(u64, u64)>>; // Returns vec of (db_id, sequence_number)
+
+    /// Get event count by type for a wallet
+    async fn get_event_count_by_type(
+        &self,
+        wallet_id: &str,
+    ) -> WalletEventResult<std::collections::HashMap<String, u64>>;
+
+    /// Check sequence number continuity for a wallet (detect gaps)
+    async fn validate_sequence_continuity(&self, wallet_id: &str) -> WalletEventResult<Vec<u64>>; // Returns missing sequence numbers
 }
 
 /// Statistics about event storage
@@ -656,6 +724,329 @@ impl EventStorage for SqliteEventStorage {
             .await
             .map_err(|e| {
                 WalletEventError::storage("get_storage_stats", format!("Failed to get storage stats: {e}"))
+            })
+    }
+
+    // Implementation of specialized query operations for task 4.2
+
+    async fn get_wallet_events(&self, wallet_id: &str) -> WalletEventResult<Vec<StoredEvent>> {
+        let filter = EventFilter::new().with_wallet_id(wallet_id.to_string());
+        self.get_events(&filter).await
+    }
+
+    async fn get_wallet_events_in_range(
+        &self,
+        wallet_id: &str,
+        from_sequence: u64,
+        to_sequence: u64,
+    ) -> WalletEventResult<Vec<StoredEvent>> {
+        let filter = EventFilter::new()
+            .with_wallet_id(wallet_id.to_string())
+            .with_sequence_range(from_sequence, to_sequence);
+        self.get_events(&filter).await
+    }
+
+    async fn get_wallet_events_head(
+        &self,
+        wallet_id: &str,
+        limit: usize,
+    ) -> WalletEventResult<Vec<StoredEvent>> {
+        let filter = EventFilter::new()
+            .with_wallet_id(wallet_id.to_string())
+            .with_limit(limit);
+        self.get_events(&filter).await
+    }
+
+    async fn get_wallet_events_tail(
+        &self,
+        wallet_id: &str,
+        limit: usize,
+    ) -> WalletEventResult<Vec<StoredEvent>> {
+        let filter = EventFilter::new()
+            .with_wallet_id(wallet_id.to_string())
+            .with_limit(limit)
+            .order_desc();
+        self.get_events(&filter).await
+    }
+
+    async fn get_events_by_sequences(
+        &self,
+        wallet_id: &str,
+        sequences: &[u64],
+    ) -> WalletEventResult<Vec<StoredEvent>> {
+        if sequences.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let wallet_id_owned = wallet_id.to_string();
+        let sequences_owned = sequences.to_vec();
+
+        self.connection
+            .call(move |conn| {
+                let placeholders = sequences_owned
+                    .iter()
+                    .map(|_| "?")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let query = format!(
+                    "SELECT * FROM wallet_events WHERE wallet_id = ? AND sequence_number IN ({}) ORDER BY sequence_number ASC",
+                    placeholders
+                );
+
+                let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::new();
+                params.push(Box::new(wallet_id_owned));
+                for seq in sequences_owned {
+                    params.push(Box::new(seq as i64));
+                }
+
+                let mut stmt = conn.prepare(&query)?;
+                let param_refs: Vec<&dyn rusqlite::ToSql> = params
+                    .iter()
+                    .map(|p| p.as_ref() as &dyn rusqlite::ToSql)
+                    .collect();
+
+                let rows = stmt.query_map(&param_refs[..], Self::row_to_stored_event)?;
+
+                let mut events = Vec::new();
+                for row in rows {
+                    events.push(row?);
+                }
+
+                Ok(events)
+            })
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("get_events_by_sequences", format!("Failed to get events by sequences: {e}"))
+            })
+    }
+
+    async fn get_event_by_sequence(
+        &self,
+        wallet_id: &str,
+        sequence: u64,
+    ) -> WalletEventResult<Option<StoredEvent>> {
+        let wallet_id_owned = wallet_id.to_string();
+        self.connection
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT * FROM wallet_events WHERE wallet_id = ? AND sequence_number = ?",
+                )?;
+                let mut rows = stmt.query_map(
+                    params![wallet_id_owned, sequence as i64],
+                    Self::row_to_stored_event,
+                )?;
+
+                if let Some(row) = rows.next() {
+                    Ok(Some(row?))
+                } else {
+                    Ok(None)
+                }
+            })
+            .await
+            .map_err(|e| {
+                WalletEventError::storage(
+                    "get_event_by_sequence",
+                    format!("Failed to get event by sequence: {e}"),
+                )
+            })
+    }
+
+    async fn insert_event(
+        &self,
+        wallet_id: &str,
+        event_type: &str,
+        payload_json: String,
+        metadata_json: String,
+        source: &str,
+        correlation_id: Option<String>,
+    ) -> WalletEventResult<(u64, u64)> {
+        let wallet_id_owned = wallet_id.to_string();
+        let event_type_owned = event_type.to_string();
+        let source_owned = source.to_string();
+
+        self.connection
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+
+                // Get next sequence number
+                let sequence_number: u64 = {
+                    let mut stmt = tx.prepare(
+                        "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM wallet_events WHERE wallet_id = ?",
+                    )?;
+                    stmt.query_row(params![&wallet_id_owned], |row| {
+                        let seq: i64 = row.get(0)?;
+                        Ok(seq as u64)
+                    })?
+                };
+
+                // Generate event ID
+                let event_id = uuid::Uuid::new_v4().to_string();
+                let timestamp_secs = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+
+                // Insert event
+                tx.execute(
+                    r#"
+                    INSERT INTO wallet_events 
+                    (event_id, wallet_id, event_type, sequence_number, payload_json, 
+                     metadata_json, source, correlation_id, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                    params![
+                        event_id,
+                        wallet_id_owned,
+                        event_type_owned,
+                        sequence_number as i64,
+                        payload_json,
+                        metadata_json,
+                        source_owned,
+                        correlation_id,
+                        timestamp_secs,
+                    ],
+                )?;
+
+                let db_id = tx.last_insert_rowid() as u64;
+                tx.commit()?;
+
+                Ok((db_id, sequence_number))
+            })
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("insert_event", format!("Failed to insert event: {e}"))
+            })
+    }
+
+    async fn insert_events_batch(
+        &self,
+        wallet_id: &str,
+        events: &[(String, String, String, String, Option<String>)],
+    ) -> WalletEventResult<Vec<(u64, u64)>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let wallet_id_owned = wallet_id.to_string();
+        let events_owned = events.to_vec();
+
+        self.connection
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                let mut results = Vec::new();
+
+                // Get current max sequence number
+                let mut current_sequence: u64 = {
+                    let mut stmt = tx.prepare(
+                        "SELECT COALESCE(MAX(sequence_number), 0) FROM wallet_events WHERE wallet_id = ?",
+                    )?;
+                    stmt.query_row(params![&wallet_id_owned], |row| {
+                        let seq: i64 = row.get(0)?;
+                        Ok(seq as u64)
+                    })?
+                };
+
+                for (event_type, payload_json, metadata_json, source, correlation_id) in events_owned {
+                    current_sequence += 1;
+                    let event_id = uuid::Uuid::new_v4().to_string();
+                    let timestamp_secs = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64;
+
+                    tx.execute(
+                        r#"
+                        INSERT INTO wallet_events 
+                        (event_id, wallet_id, event_type, sequence_number, payload_json, 
+                         metadata_json, source, correlation_id, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        "#,
+                        params![
+                            event_id,
+                            wallet_id_owned,
+                            event_type,
+                            current_sequence as i64,
+                            payload_json,
+                            metadata_json,
+                            source,
+                            correlation_id,
+                            timestamp_secs,
+                        ],
+                    )?;
+
+                    let db_id = tx.last_insert_rowid() as u64;
+                    results.push((db_id, current_sequence));
+                }
+
+                tx.commit()?;
+                Ok(results)
+            })
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("insert_events_batch", format!("Failed to insert events batch: {e}"))
+            })
+    }
+
+    async fn get_event_count_by_type(
+        &self,
+        wallet_id: &str,
+    ) -> WalletEventResult<std::collections::HashMap<String, u64>> {
+        let wallet_id_owned = wallet_id.to_string();
+        self.connection
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT event_type, COUNT(*) as count FROM wallet_events WHERE wallet_id = ? GROUP BY event_type",
+                )?;
+                let rows = stmt.query_map(params![wallet_id_owned], |row| {
+                    Ok((row.get::<_, String>("event_type")?, row.get::<_, i64>("count")?))
+                })?;
+
+                let mut result = std::collections::HashMap::new();
+                for row in rows {
+                    let (event_type, count) = row?;
+                    result.insert(event_type, count as u64);
+                }
+
+                Ok(result)
+            })
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("get_event_count_by_type", format!("Failed to get event count by type: {e}"))
+            })
+    }
+
+    async fn validate_sequence_continuity(&self, wallet_id: &str) -> WalletEventResult<Vec<u64>> {
+        let wallet_id_owned = wallet_id.to_string();
+        self.connection
+            .call(move |conn| {
+                // Get all sequence numbers for the wallet
+                let mut stmt = conn.prepare(
+                    "SELECT sequence_number FROM wallet_events WHERE wallet_id = ? ORDER BY sequence_number ASC",
+                )?;
+                let rows = stmt.query_map(params![wallet_id_owned], |row| {
+                    Ok(row.get::<_, i64>("sequence_number")? as u64)
+                })?;
+
+                let mut sequences = Vec::new();
+                for row in rows {
+                    sequences.push(row?);
+                }
+
+                // Find missing sequence numbers
+                let mut missing = Vec::new();
+                if !sequences.is_empty() {
+                    for expected in 1..=sequences[sequences.len() - 1] {
+                        if !sequences.contains(&expected) {
+                            missing.push(expected);
+                        }
+                    }
+                }
+
+                Ok(missing)
+            })
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("validate_sequence_continuity", format!("Failed to validate sequence continuity: {e}"))
             })
     }
 }
