@@ -10,6 +10,8 @@
 //! - [`DatabaseStorageListener`]: Persists scan results to SQLite database
 //! - [`ProgressTrackingListener`]: Tracks and reports scan progress with customizable callbacks
 //! - [`ConsoleLoggingListener`]: Logs events to console for development and debugging
+//! - [`EventLogger`]: Structured logging of events to files or console with multiple formats
+//! - [`AuditTrail`]: Comprehensive audit trail for compliance and security monitoring
 //!
 //! ## Testing Utilities
 //! - [`MockEventListener`]: Captures events for testing and assertions
@@ -20,7 +22,8 @@
 //! ```rust,ignore
 //! use lightweight_wallet_libs::events::{EventDispatcher, EventListener};
 //! use lightweight_wallet_libs::events::listeners::{
-//!     DatabaseStorageListener, ProgressTrackingListener, ConsoleLoggingListener
+//!     DatabaseStorageListener, ProgressTrackingListener, ConsoleLoggingListener,
+//!     EventLogger, AuditTrail
 //! };
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -192,15 +195,19 @@
 
 // Module exports
 pub mod ascii_progress_bar;
+pub mod audit_trail;
 pub mod console_logging;
 pub mod database_storage;
+pub mod event_logger;
 pub mod mock_listener;
 pub mod progress_tracking;
 
 // Re-exports for convenience
 pub use ascii_progress_bar::{AsciiProgressBarConfig, AsciiProgressBarListener};
+pub use audit_trail::{AuditTrail, AuditTrailConfig, RiskLevel};
 pub use console_logging::ConsoleLoggingListener;
 pub use database_storage::DatabaseStorageListener;
+pub use event_logger::{EventLogger, EventLoggerConfig, LogFormat, LogOutput};
 pub use mock_listener::MockEventListener;
 pub use progress_tracking::ProgressTrackingListener;
 

@@ -86,6 +86,7 @@ use std::time::{Duration, Instant};
 // Public module exports
 pub mod error_recovery;
 pub mod integration_test_examples;
+pub mod listener;
 pub mod listeners;
 pub mod test_utils;
 pub mod types;
@@ -97,6 +98,7 @@ mod serialization_tests;
 pub use error_recovery::{
     ErrorRecord, ErrorRecoveryConfig, ErrorRecoveryManager, ErrorStats, RetryableOperation,
 };
+pub use listener::{EventListener as WalletEventListener, EventRegistry, RegistryStats};
 pub use test_utils::{EventCapture, EventPattern, PerformanceAssertion, TestScenario};
 pub use types::{
     EventListenerError, ReorgPayload, SharedWalletEvent, UtxoReceivedPayload, UtxoSpentPayload,

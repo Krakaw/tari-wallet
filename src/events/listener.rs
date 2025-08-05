@@ -9,7 +9,6 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::Arc;
 
 use crate::events::types::{SharedWalletEvent, WalletEventError, WalletEventResult};
 
@@ -183,10 +182,10 @@ pub trait EventListener: Send + Sync {
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut registry = EventRegistry::new();
-/// 
+///
 /// // Register a console logging listener
 /// registry.register(Box::new(ConsoleLogger::new())).await?;
-/// 
+///
 /// // The registry can now dispatch events to all registered listeners
 /// # Ok(())
 /// # }
@@ -323,12 +322,11 @@ impl EventRegistry {
     ///
     /// Returns `Ok(())` if the listener was removed, or an error if not found.
     pub async fn remove(&mut self, listener_name: &str) -> WalletEventResult<()> {
-        let index = self
-            .listener_names
-            .remove(listener_name)
-            .ok_or_else(|| WalletEventError::EventNotFound {
+        let index = self.listener_names.remove(listener_name).ok_or_else(|| {
+            WalletEventError::EventNotFound {
                 event_id: listener_name.to_string(),
-            })?;
+            }
+        })?;
 
         // Cleanup the listener before removal
         if let Err(e) = self.listeners[index].cleanup().await {
@@ -379,9 +377,20 @@ impl EventRegistry {
             .or_insert(0) += 1;
 
         #[cfg(target_arch = "wasm32")]
-        web_sys::console::log_1(&format!("Dispatching event: {} to {} listeners", event_type, self.listeners.len()).into());
+        web_sys::console::log_1(
+            &format!(
+                "Dispatching event: {} to {} listeners",
+                event_type,
+                self.listeners.len()
+            )
+            .into(),
+        );
         #[cfg(not(target_arch = "wasm32"))]
-        println!("Dispatching event: {} to {} listeners", event_type, self.listeners.len());
+        println!(
+            "Dispatching event: {} to {} listeners",
+            event_type,
+            self.listeners.len()
+        );
 
         for listener in &mut self.listeners {
             // Skip listeners that don't want this event type
@@ -404,10 +413,17 @@ impl EventRegistry {
                 // Log the error but continue with other listeners
                 #[cfg(target_arch = "wasm32")]
                 web_sys::console::error_1(
-                    &format!("Event listener '{}' failed to handle {}: {}", listener_name, event_type, e).into(),
+                    &format!(
+                        "Event listener '{}' failed to handle {}: {}",
+                        listener_name, event_type, e
+                    )
+                    .into(),
                 );
                 #[cfg(not(target_arch = "wasm32"))]
-                eprintln!("Event listener '{}' failed to handle {}: {}", listener_name, event_type, e);
+                eprintln!(
+                    "Event listener '{}' failed to handle {}: {}",
+                    listener_name, event_type, e
+                );
             }
         }
     }
@@ -487,9 +503,18 @@ impl EventRegistry {
     /// It should be called when the registry is no longer needed.
     pub async fn shutdown(&mut self) {
         #[cfg(target_arch = "wasm32")]
-        web_sys::console::log_1(&format!("Shutting down event registry with {} listeners", self.listeners.len()).into());
+        web_sys::console::log_1(
+            &format!(
+                "Shutting down event registry with {} listeners",
+                self.listeners.len()
+            )
+            .into(),
+        );
         #[cfg(not(target_arch = "wasm32"))]
-        println!("Shutting down event registry with {} listeners", self.listeners.len());
+        println!(
+            "Shutting down event registry with {} listeners",
+            self.listeners.len()
+        );
 
         // Cleanup all listeners
         for listener in &mut self.listeners {
@@ -747,7 +772,10 @@ mod tests {
         let selective_listener = TestListener::new_selective("selective_listener");
         let events_received = selective_listener.events_received.clone();
 
-        registry.register(Box::new(selective_listener)).await.unwrap();
+        registry
+            .register(Box::new(selective_listener))
+            .await
+            .unwrap();
 
         // Create UtxoReceived event (should be handled)
         let metadata1 = EventMetadata::new("test", "test_wallet");
