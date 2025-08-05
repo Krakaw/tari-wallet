@@ -31,6 +31,7 @@
 - `src/events/user_api.rs` - User-facing API methods for triggering event replay operations with convenience methods and progress monitoring (Task 5.4)
 - `tests/user_api_tests.rs` - Tests for user-facing API methods and replay operations (Task 5.4)
 - `tests/edge_case_replay_tests.rs` - Tests for edge case handling in event replay (partial states, missing events, corrupted data) (Task 5.5)
+- `src/events/listeners/sqlite_event_listener.rs` - Direct SQLite event listener for storing wallet scanning events in the main database (Task 6.1)
 
 ### Notes
 
@@ -89,3 +90,8 @@
   - [ ] 5.7 Implement replay cancellation support
   - [ ] 5.8 Write comprehensive integration tests for event replay scenarios
   - [ ] 5.9 Add performance tests to ensure replay doesn't impact wallet operations
+
+- [ ] 6. SQLite fixes
+   - [x] 6.1 This whole implementation is incomplete and invalid, it should be storing the events ONLY in the sqlite table that was created in 4.1
+   - [ ] 6.2 Create the listeners that can be used in @/src/bin/scanner.rs to store the events in the wallet_events table by default.
+   - [ ] 6.3 Remove the event_loggers and their tests only keep what is relevant to the sqlite wallet_events testing
