@@ -102,8 +102,10 @@ pub use error_recovery::{
 pub use listener::{EventListener as WalletEventListener, EventRegistry, RegistryStats};
 #[cfg(feature = "storage")]
 pub use replay::{
-    EventReplayEngine, ReplayConfig, ReplayProgress, ReplayResult, ReplayedWalletState,
-    SpentUtxoState, UtxoState, ValidationIssue, ValidationIssueType, ValidationSeverity,
+    BalanceComparison, EventReplayEngine, ReplayConfig, ReplayProgress, ReplayResult,
+    ReplayedWalletState, SpentUtxoState, StateComparison, StateDiscrepancy,
+    StateVerificationResult, TransactionComparison, UtxoComparison, UtxoState, ValidationIssue,
+    ValidationIssueType, ValidationSeverity, VerificationStatus, VerificationSummary,
 };
 pub use test_utils::{EventCapture, EventPattern, PerformanceAssertion, TestScenario};
 pub use types::{

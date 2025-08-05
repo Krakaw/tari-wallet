@@ -12,6 +12,8 @@
 //! - **Progress tracking**: Monitor replay progress with callbacks
 //! - **Error handling**: Graceful handling of corrupted or missing events
 //! - **Cancellation support**: Ability to cancel long-running replay operations
+//! - **State verification**: Compare replayed state against current wallet state
+//! - **Discrepancy detection**: Identify and report differences between states
 //!
 //! # Usage
 //!
@@ -36,6 +38,7 @@
 //! # }
 //! ```
 
+use crate::data_structures::wallet_transaction::{WalletState, WalletTransaction};
 use crate::events::types::{WalletEvent, WalletEventError, WalletEventResult};
 #[cfg(feature = "storage")]
 use crate::storage::event_storage::{EventStorage, StoredEvent};
@@ -354,6 +357,199 @@ pub struct ReplayMetrics {
     pub peak_memory_usage: Option<usize>,
     /// Number of storage queries made
     pub storage_queries: usize,
+}
+
+/// Result of state verification comparing replayed state vs current state
+#[derive(Debug, Clone, Serialize)]
+pub struct StateVerificationResult {
+    /// Whether the states match perfectly
+    pub states_match: bool,
+    /// Detailed comparison results
+    pub comparison: StateComparison,
+    /// List of discrepancies found
+    pub discrepancies: Vec<StateDiscrepancy>,
+    /// Summary of the verification
+    pub summary: VerificationSummary,
+    /// Time taken for verification
+    pub verification_duration: Duration,
+}
+
+/// Detailed comparison between replayed and current wallet states
+#[derive(Debug, Clone, Serialize)]
+pub struct StateComparison {
+    /// Balance comparison
+    pub balance_comparison: BalanceComparison,
+    /// UTXO comparison results
+    pub utxo_comparison: UtxoComparison,
+    /// Transaction count comparison
+    pub transaction_comparison: TransactionComparison,
+    /// General statistics comparison
+    pub statistics_comparison: StatisticsComparison,
+}
+
+/// Balance comparison between states
+#[derive(Debug, Clone, Serialize)]
+pub struct BalanceComparison {
+    /// Replayed state balance
+    pub replayed_balance: u64,
+    /// Current state balance
+    pub current_balance: u64,
+    /// Difference (replayed - current)
+    pub difference: i64,
+    /// Whether balances match
+    pub balances_match: bool,
+}
+
+/// UTXO comparison between states
+#[derive(Debug, Clone, Serialize)]
+pub struct UtxoComparison {
+    /// Number of UTXOs in replayed state
+    pub replayed_utxo_count: usize,
+    /// Number of UTXOs in current state
+    pub current_utxo_count: usize,
+    /// UTXOs only in replayed state
+    pub only_in_replayed: Vec<String>,
+    /// UTXOs only in current state
+    pub only_in_current: Vec<String>,
+    /// UTXOs with different values
+    pub value_mismatches: Vec<UtxoValueMismatch>,
+    /// Whether all UTXOs match
+    pub utxos_match: bool,
+}
+
+/// UTXO value mismatch details
+#[derive(Debug, Clone, Serialize)]
+pub struct UtxoValueMismatch {
+    /// UTXO identifier
+    pub utxo_id: String,
+    /// Value in replayed state
+    pub replayed_value: u64,
+    /// Value in current state
+    pub current_value: u64,
+    /// Difference
+    pub difference: i64,
+}
+
+/// Transaction count comparison
+#[derive(Debug, Clone, Serialize)]
+pub struct TransactionComparison {
+    /// Transaction count in replayed state
+    pub replayed_count: usize,
+    /// Transaction count in current state
+    pub current_count: usize,
+    /// Difference
+    pub difference: i64,
+    /// Whether counts match
+    pub counts_match: bool,
+}
+
+/// Statistics comparison between states
+#[derive(Debug, Clone, Serialize)]
+pub struct StatisticsComparison {
+    /// Spent UTXO count comparison
+    pub spent_count_comparison: CountComparison,
+    /// Unspent UTXO count comparison  
+    pub unspent_count_comparison: CountComparison,
+    /// Highest block comparison
+    pub highest_block_comparison: CountComparison,
+}
+
+/// Generic count comparison
+#[derive(Debug, Clone, Serialize)]
+pub struct CountComparison {
+    /// Value in replayed state
+    pub replayed_value: u64,
+    /// Value in current state
+    pub current_value: u64,
+    /// Difference
+    pub difference: i64,
+    /// Whether values match
+    pub values_match: bool,
+}
+
+/// Types of state discrepancies
+#[derive(Debug, Clone, Serialize)]
+pub enum StateDiscrepancy {
+    /// Balance mismatch between states
+    BalanceMismatch {
+        replayed: u64,
+        current: u64,
+        difference: i64,
+    },
+    /// UTXO present in replayed state but missing in current state
+    MissingUtxoInCurrent {
+        utxo_id: String,
+        amount: u64,
+        block_height: u64,
+    },
+    /// UTXO present in current state but missing in replayed state
+    ExtraUtxoInCurrent {
+        utxo_id: String,
+        amount: u64,
+        block_height: u64,
+    },
+    /// UTXO has different values in the two states
+    UtxoValueMismatch {
+        utxo_id: String,
+        replayed_value: u64,
+        current_value: u64,
+    },
+    /// Transaction count mismatch
+    TransactionCountMismatch {
+        replayed_count: usize,
+        current_count: usize,
+    },
+    /// Different spent/unspent counts
+    SpentCountMismatch {
+        replayed_spent: usize,
+        current_spent: usize,
+        replayed_unspent: usize,
+        current_unspent: usize,
+    },
+    /// Different highest block values
+    HighestBlockMismatch {
+        replayed_block: u64,
+        current_block: u64,
+    },
+}
+
+/// Summary of verification results
+#[derive(Debug, Clone, Serialize)]
+pub struct VerificationSummary {
+    /// Total number of discrepancies found
+    pub total_discrepancies: usize,
+    /// Number of critical discrepancies (affect balance)
+    pub critical_discrepancies: usize,
+    /// Number of warning discrepancies (affect metadata)
+    pub warning_discrepancies: usize,
+    /// Overall verification status
+    pub verification_status: VerificationStatus,
+    /// Confidence level in the verification
+    pub confidence_level: ConfidenceLevel,
+}
+
+/// Overall verification status
+#[derive(Debug, Clone, Serialize)]
+pub enum VerificationStatus {
+    /// States match perfectly
+    Perfect,
+    /// Minor discrepancies that don't affect balance
+    MinorIssues,
+    /// Significant discrepancies affecting balance or core functionality
+    MajorIssues,
+    /// Critical discrepancies indicating data corruption
+    Critical,
+}
+
+/// Confidence level in verification results
+#[derive(Debug, Clone, Serialize)]
+pub enum ConfidenceLevel {
+    /// High confidence - comprehensive verification completed
+    High,
+    /// Medium confidence - some limitations in verification
+    Medium,
+    /// Low confidence - verification was incomplete or limited
+    Low,
 }
 
 /// Callback function type for progress reporting
@@ -776,6 +972,314 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
             callback(progress);
         }
     }
+
+    /// Verify replayed state against current wallet state
+    pub async fn verify_state_against_current(
+        &self,
+        replayed_state: &ReplayedWalletState,
+        current_state: &WalletState,
+    ) -> WalletEventResult<StateVerificationResult> {
+        let start_time = Instant::now();
+
+        // Convert replayed state to the same format for comparison
+        let mut discrepancies = Vec::new();
+
+        // Compare balances
+        let balance_comparison =
+            self.compare_balances(replayed_state, current_state, &mut discrepancies);
+
+        // Compare UTXOs
+        let utxo_comparison = self.compare_utxos(replayed_state, current_state, &mut discrepancies);
+
+        // Compare transaction counts
+        let transaction_comparison =
+            self.compare_transaction_counts(replayed_state, current_state, &mut discrepancies);
+
+        // Compare general statistics
+        let statistics_comparison =
+            self.compare_statistics(replayed_state, current_state, &mut discrepancies);
+
+        // Generate summary
+        let summary = self.generate_verification_summary(&discrepancies);
+
+        let states_match = discrepancies.is_empty();
+
+        Ok(StateVerificationResult {
+            states_match,
+            comparison: StateComparison {
+                balance_comparison,
+                utxo_comparison,
+                transaction_comparison,
+                statistics_comparison,
+            },
+            discrepancies,
+            summary,
+            verification_duration: start_time.elapsed(),
+        })
+    }
+
+    /// Compare balances between replayed and current states
+    fn compare_balances(
+        &self,
+        replayed_state: &ReplayedWalletState,
+        current_state: &WalletState,
+        discrepancies: &mut Vec<StateDiscrepancy>,
+    ) -> BalanceComparison {
+        let replayed_balance = replayed_state.total_balance;
+        let current_balance = current_state.get_unspent_value(); // Use unspent value for comparison
+        let difference = replayed_balance as i64 - current_balance as i64;
+        let balances_match = replayed_balance == current_balance;
+
+        if !balances_match {
+            discrepancies.push(StateDiscrepancy::BalanceMismatch {
+                replayed: replayed_balance,
+                current: current_balance,
+                difference,
+            });
+        }
+
+        BalanceComparison {
+            replayed_balance,
+            current_balance,
+            difference,
+            balances_match,
+        }
+    }
+
+    /// Compare UTXOs between replayed and current states
+    fn compare_utxos(
+        &self,
+        replayed_state: &ReplayedWalletState,
+        current_state: &WalletState,
+        discrepancies: &mut Vec<StateDiscrepancy>,
+    ) -> UtxoComparison {
+        // Get current state unspent transactions
+        let current_utxos = current_state.get_unspent_transactions();
+        let mut current_utxo_map: HashMap<String, &WalletTransaction> = HashMap::new();
+
+        // Build a map of current UTXOs by commitment (hex format)
+        for tx in &current_utxos {
+            let commitment_hex = tx.commitment_hex();
+            current_utxo_map.insert(commitment_hex, tx);
+        }
+
+        let mut only_in_replayed = Vec::new();
+        let mut only_in_current = Vec::new();
+        let mut value_mismatches = Vec::new();
+
+        // Check replayed UTXOs against current
+        for (utxo_id, replayed_utxo) in &replayed_state.utxos {
+            if let Some(current_utxo) = current_utxo_map.get(utxo_id) {
+                // UTXO exists in both - check values
+                if replayed_utxo.amount != current_utxo.value {
+                    let mismatch = UtxoValueMismatch {
+                        utxo_id: utxo_id.clone(),
+                        replayed_value: replayed_utxo.amount,
+                        current_value: current_utxo.value,
+                        difference: replayed_utxo.amount as i64 - current_utxo.value as i64,
+                    };
+                    value_mismatches.push(mismatch.clone());
+
+                    discrepancies.push(StateDiscrepancy::UtxoValueMismatch {
+                        utxo_id: utxo_id.clone(),
+                        replayed_value: replayed_utxo.amount,
+                        current_value: current_utxo.value,
+                    });
+                }
+                // Remove from current map to track what's left
+                current_utxo_map.remove(utxo_id);
+            } else {
+                // UTXO only in replayed state
+                only_in_replayed.push(utxo_id.clone());
+                discrepancies.push(StateDiscrepancy::MissingUtxoInCurrent {
+                    utxo_id: utxo_id.clone(),
+                    amount: replayed_utxo.amount,
+                    block_height: replayed_utxo.block_height,
+                });
+            }
+        }
+
+        // Remaining UTXOs in current_utxo_map are only in current state
+        for (utxo_id, current_utxo) in current_utxo_map {
+            only_in_current.push(utxo_id.clone());
+            discrepancies.push(StateDiscrepancy::ExtraUtxoInCurrent {
+                utxo_id,
+                amount: current_utxo.value,
+                block_height: current_utxo.block_height,
+            });
+        }
+
+        let utxos_match = only_in_replayed.is_empty()
+            && only_in_current.is_empty()
+            && value_mismatches.is_empty();
+
+        UtxoComparison {
+            replayed_utxo_count: replayed_state.utxos.len(),
+            current_utxo_count: current_utxos.len(),
+            only_in_replayed,
+            only_in_current,
+            value_mismatches,
+            utxos_match,
+        }
+    }
+
+    /// Compare transaction counts between states
+    fn compare_transaction_counts(
+        &self,
+        replayed_state: &ReplayedWalletState,
+        current_state: &WalletState,
+        discrepancies: &mut Vec<StateDiscrepancy>,
+    ) -> TransactionComparison {
+        let replayed_count = replayed_state.transaction_count;
+        let current_count = current_state.transaction_count();
+        let difference = replayed_count as i64 - current_count as i64;
+        let counts_match = replayed_count == current_count;
+
+        if !counts_match {
+            discrepancies.push(StateDiscrepancy::TransactionCountMismatch {
+                replayed_count,
+                current_count,
+            });
+        }
+
+        TransactionComparison {
+            replayed_count,
+            current_count,
+            difference,
+            counts_match,
+        }
+    }
+
+    /// Compare general statistics between states
+    fn compare_statistics(
+        &self,
+        replayed_state: &ReplayedWalletState,
+        current_state: &WalletState,
+        discrepancies: &mut Vec<StateDiscrepancy>,
+    ) -> StatisticsComparison {
+        let (_, _, _, current_unspent, current_spent) = current_state.get_summary();
+
+        let replayed_spent = replayed_state.spent_utxos.len() as u64;
+        let replayed_unspent = replayed_state.utxos.len() as u64;
+
+        let spent_match = replayed_spent == current_spent as u64;
+        let unspent_match = replayed_unspent == current_unspent as u64;
+
+        if !spent_match || !unspent_match {
+            discrepancies.push(StateDiscrepancy::SpentCountMismatch {
+                replayed_spent: replayed_spent as usize,
+                current_spent,
+                replayed_unspent: replayed_unspent as usize,
+                current_unspent,
+            });
+        }
+
+        // Compare highest block (we need to derive this from current state transactions)
+        let current_highest_block = current_state
+            .get_inbound_transactions()
+            .iter()
+            .map(|tx| tx.block_height)
+            .max()
+            .unwrap_or(0);
+
+        let block_match = replayed_state.highest_block == current_highest_block;
+        if !block_match {
+            discrepancies.push(StateDiscrepancy::HighestBlockMismatch {
+                replayed_block: replayed_state.highest_block,
+                current_block: current_highest_block,
+            });
+        }
+
+        StatisticsComparison {
+            spent_count_comparison: CountComparison {
+                replayed_value: replayed_spent,
+                current_value: current_spent as u64,
+                difference: replayed_spent as i64 - current_spent as i64,
+                values_match: spent_match,
+            },
+            unspent_count_comparison: CountComparison {
+                replayed_value: replayed_unspent,
+                current_value: current_unspent as u64,
+                difference: replayed_unspent as i64 - current_unspent as i64,
+                values_match: unspent_match,
+            },
+            highest_block_comparison: CountComparison {
+                replayed_value: replayed_state.highest_block,
+                current_value: current_highest_block,
+                difference: replayed_state.highest_block as i64 - current_highest_block as i64,
+                values_match: block_match,
+            },
+        }
+    }
+
+    /// Generate verification summary based on discrepancies
+    fn generate_verification_summary(
+        &self,
+        discrepancies: &[StateDiscrepancy],
+    ) -> VerificationSummary {
+        let total_discrepancies = discrepancies.len();
+        let mut critical_discrepancies = 0;
+        let mut warning_discrepancies = 0;
+
+        for discrepancy in discrepancies {
+            match discrepancy {
+                StateDiscrepancy::BalanceMismatch { .. }
+                | StateDiscrepancy::MissingUtxoInCurrent { .. }
+                | StateDiscrepancy::ExtraUtxoInCurrent { .. }
+                | StateDiscrepancy::UtxoValueMismatch { .. } => {
+                    critical_discrepancies += 1;
+                }
+                StateDiscrepancy::TransactionCountMismatch { .. }
+                | StateDiscrepancy::SpentCountMismatch { .. }
+                | StateDiscrepancy::HighestBlockMismatch { .. } => {
+                    warning_discrepancies += 1;
+                }
+            }
+        }
+
+        let verification_status = if total_discrepancies == 0 {
+            VerificationStatus::Perfect
+        } else if critical_discrepancies == 0 {
+            VerificationStatus::MinorIssues
+        } else if critical_discrepancies < 5 {
+            VerificationStatus::MajorIssues
+        } else {
+            VerificationStatus::Critical
+        };
+
+        let confidence_level = if total_discrepancies == 0 {
+            ConfidenceLevel::High
+        } else if critical_discrepancies == 0 {
+            ConfidenceLevel::Medium
+        } else {
+            ConfidenceLevel::Low
+        };
+
+        VerificationSummary {
+            total_discrepancies,
+            critical_discrepancies,
+            warning_discrepancies,
+            verification_status,
+            confidence_level,
+        }
+    }
+
+    /// Perform complete replay and verification against current state
+    pub async fn replay_and_verify_wallet(
+        &self,
+        wallet_id: &str,
+        current_state: &WalletState,
+    ) -> WalletEventResult<(ReplayResult, StateVerificationResult)> {
+        // First, replay the wallet state from events
+        let replay_result = self.replay_wallet(wallet_id).await?;
+
+        // Then verify the replayed state against current state
+        let verification_result = self
+            .verify_state_against_current(&replay_result.wallet_state, current_state)
+            .await?;
+
+        Ok((replay_result, verification_result))
+    }
 }
 
 /// Helper function to create a default replay engine for testing
@@ -850,5 +1354,145 @@ mod tests {
         ));
         assert_eq!(issue.sequence_number, Some(42));
         assert!(matches!(issue.severity, ValidationSeverity::Warning));
+    }
+
+    #[tokio::test]
+    async fn test_state_verification_with_discrepancies() {
+        let storage = create_test_storage().await;
+        let engine = EventReplayEngine::new(storage, ReplayConfig::default());
+
+        // Create mismatched states - replayed has content, current is empty
+        let replayed_state = ReplayedWalletState {
+            wallet_id: "test-wallet".to_string(),
+            total_balance: 1000,
+            transaction_count: 2,
+            highest_block: 100,
+            ..Default::default()
+        };
+
+        let current_state = WalletState::new();
+
+        let result = engine
+            .verify_state_against_current(&replayed_state, &current_state)
+            .await
+            .unwrap();
+
+        // Should detect differences since current_state is empty
+        assert!(!result.states_match);
+        assert!(!result.discrepancies.is_empty());
+
+        // Should have 1 critical discrepancy (balance mismatch) and 2 warning discrepancies
+        assert_eq!(result.summary.critical_discrepancies, 1);
+        assert_eq!(result.summary.warning_discrepancies, 2);
+        assert_eq!(result.summary.total_discrepancies, 3);
+        assert!(matches!(
+            result.summary.verification_status,
+            VerificationStatus::MajorIssues
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_state_verification_balance_mismatch() {
+        let storage = create_test_storage().await;
+        let engine = EventReplayEngine::new(storage, ReplayConfig::default());
+
+        let replayed_state = ReplayedWalletState {
+            wallet_id: "test-wallet".to_string(),
+            total_balance: 1000,
+            ..Default::default()
+        };
+
+        let current_state = WalletState::new();
+
+        let result = engine
+            .verify_state_against_current(&replayed_state, &current_state)
+            .await
+            .unwrap();
+
+        // Should detect balance mismatch
+        assert!(!result.comparison.balance_comparison.balances_match);
+        assert_eq!(result.comparison.balance_comparison.replayed_balance, 1000);
+        assert_eq!(result.comparison.balance_comparison.current_balance, 0);
+
+        // Should have at least one balance mismatch discrepancy
+        let has_balance_mismatch = result
+            .discrepancies
+            .iter()
+            .any(|d| matches!(d, StateDiscrepancy::BalanceMismatch { .. }));
+        assert!(has_balance_mismatch);
+    }
+
+    #[tokio::test]
+    async fn test_verification_summary_classification() {
+        let storage = create_test_storage().await;
+        let engine = EventReplayEngine::new(storage, ReplayConfig::default());
+
+        // Test different types of discrepancies
+        let balance_discrepancy = StateDiscrepancy::BalanceMismatch {
+            replayed: 1000,
+            current: 800,
+            difference: 200,
+        };
+
+        let block_discrepancy = StateDiscrepancy::HighestBlockMismatch {
+            replayed_block: 100,
+            current_block: 95,
+        };
+
+        // Test critical classification
+        let critical_discrepancies = vec![balance_discrepancy];
+        let summary = engine.generate_verification_summary(&critical_discrepancies);
+        assert_eq!(summary.critical_discrepancies, 1);
+        assert_eq!(summary.warning_discrepancies, 0);
+        assert!(matches!(
+            summary.verification_status,
+            VerificationStatus::MajorIssues
+        ));
+
+        // Test warning classification
+        let warning_discrepancies = vec![block_discrepancy];
+        let summary = engine.generate_verification_summary(&warning_discrepancies);
+        assert_eq!(summary.critical_discrepancies, 0);
+        assert_eq!(summary.warning_discrepancies, 1);
+        assert!(matches!(
+            summary.verification_status,
+            VerificationStatus::MinorIssues
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_state_discrepancy_types() {
+        // Test creation of different discrepancy types
+        let balance_mismatch = StateDiscrepancy::BalanceMismatch {
+            replayed: 1000,
+            current: 800,
+            difference: 200,
+        };
+
+        let missing_utxo = StateDiscrepancy::MissingUtxoInCurrent {
+            utxo_id: "utxo1".to_string(),
+            amount: 500,
+            block_height: 50,
+        };
+
+        let extra_utxo = StateDiscrepancy::ExtraUtxoInCurrent {
+            utxo_id: "utxo2".to_string(),
+            amount: 300,
+            block_height: 60,
+        };
+
+        // Test that they can be created and matched
+        assert!(matches!(
+            balance_mismatch,
+            StateDiscrepancy::BalanceMismatch { .. }
+        ));
+        assert!(matches!(
+            missing_utxo,
+            StateDiscrepancy::MissingUtxoInCurrent { .. }
+        ));
+        assert!(matches!(
+            extra_utxo,
+            StateDiscrepancy::ExtraUtxoInCurrent { .. }
+        ));
     }
 }
