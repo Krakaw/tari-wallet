@@ -765,7 +765,7 @@ impl WalletEventListener for AuditTrail {
 mod tests {
     use super::*;
     use crate::events::types::{EventMetadata, UtxoReceivedPayload, WalletEvent};
-    use std::sync::Arc;
+
     use tempfile::NamedTempFile;
 
     #[tokio::test]

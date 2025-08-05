@@ -595,6 +595,7 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         fn get_events(&self) -> Vec<String> {
             self.events_received.lock().unwrap().clone()
         }
@@ -833,5 +834,481 @@ mod tests {
         registry.shutdown().await;
         assert_eq!(registry.listener_count(), 0);
         assert!(registry.get_listener_names().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_empty_listener_name_validation() {
+        let mut registry = EventRegistry::new();
+
+        // Test with empty name
+        struct EmptyNameListener;
+
+        #[async_trait]
+        impl EventListener for EmptyNameListener {
+            async fn handle_event(
+                &mut self,
+                _event: &SharedWalletEvent,
+            ) -> Result<(), Box<dyn Error + Send + Sync>> {
+                Ok(())
+            }
+
+            fn name(&self) -> &'static str {
+                ""
+            }
+        }
+
+        let result = registry.register(Box::new(EmptyNameListener)).await;
+        assert!(result.is_err());
+        assert_eq!(registry.listener_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_listener_removal_nonexistent() {
+        let mut registry = EventRegistry::new();
+
+        let result = registry.remove("nonexistent_listener").await;
+        assert!(result.is_err());
+        assert_eq!(registry.listener_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_health_check() {
+        let mut registry = EventRegistry::new();
+
+        // Test healthy listener
+        struct HealthyListener;
+
+        #[async_trait]
+        impl EventListener for HealthyListener {
+            async fn handle_event(
+                &mut self,
+                _event: &SharedWalletEvent,
+            ) -> Result<(), Box<dyn Error + Send + Sync>> {
+                Ok(())
+            }
+
+            fn name(&self) -> &'static str {
+                "healthy_listener"
+            }
+
+            fn is_healthy(&self) -> bool {
+                true
+            }
+        }
+
+        // Test unhealthy listener
+        struct UnhealthyListener;
+
+        #[async_trait]
+        impl EventListener for UnhealthyListener {
+            async fn handle_event(
+                &mut self,
+                _event: &SharedWalletEvent,
+            ) -> Result<(), Box<dyn Error + Send + Sync>> {
+                Ok(())
+            }
+
+            fn name(&self) -> &'static str {
+                "unhealthy_listener"
+            }
+
+            fn is_healthy(&self) -> bool {
+                false
+            }
+        }
+
+        registry.register(Box::new(HealthyListener)).await.unwrap();
+        registry
+            .register(Box::new(UnhealthyListener))
+            .await
+            .unwrap();
+        assert_eq!(registry.listener_count(), 2);
+
+        let health_status = registry.health_check();
+        assert_eq!(health_status.len(), 2);
+        assert_eq!(health_status.get("healthy_listener"), Some(&true));
+        assert_eq!(health_status.get("unhealthy_listener"), Some(&false));
+    }
+
+    #[tokio::test]
+    async fn test_remove_unhealthy_listeners() {
+        let mut registry = EventRegistry::new();
+
+        // Test healthy listener
+        struct HealthyListener;
+
+        #[async_trait]
+        impl EventListener for HealthyListener {
+            async fn handle_event(
+                &mut self,
+                _event: &SharedWalletEvent,
+            ) -> Result<(), Box<dyn Error + Send + Sync>> {
+                Ok(())
+            }
+
+            fn name(&self) -> &'static str {
+                "healthy_listener"
+            }
+
+            fn is_healthy(&self) -> bool {
+                true
+            }
+        }
+
+        // Test unhealthy listener
+        struct UnhealthyListener;
+
+        #[async_trait]
+        impl EventListener for UnhealthyListener {
+            async fn handle_event(
+                &mut self,
+                _event: &SharedWalletEvent,
+            ) -> Result<(), Box<dyn Error + Send + Sync>> {
+                Ok(())
+            }
+
+            fn name(&self) -> &'static str {
+                "unhealthy_listener"
+            }
+
+            fn is_healthy(&self) -> bool {
+                false
+            }
+        }
+
+        registry.register(Box::new(HealthyListener)).await.unwrap();
+        registry
+            .register(Box::new(UnhealthyListener))
+            .await
+            .unwrap();
+        assert_eq!(registry.listener_count(), 2);
+
+        let removed = registry.remove_unhealthy_listeners().await;
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0], "unhealthy_listener");
+        assert_eq!(registry.listener_count(), 1);
+        assert!(registry.has_listener("healthy_listener"));
+        assert!(!registry.has_listener("unhealthy_listener"));
+    }
+
+    #[tokio::test]
+    async fn test_statistics_tracking() {
+        let mut registry = EventRegistry::new();
+        let listener = TestListener::new("stats_listener");
+        let events_received = listener.events_received.clone();
+
+        registry.register(Box::new(listener)).await.unwrap();
+
+        // Initial stats
+        let stats = registry.get_stats();
+        assert_eq!(stats.listeners_registered, 1);
+        assert_eq!(stats.total_events_dispatched, 0);
+        assert_eq!(stats.total_listener_calls, 0);
+
+        // Create and dispatch events
+        let metadata1 = EventMetadata::new("test", "test_wallet");
+        let payload1 = UtxoReceivedPayload::new(
+            "test_utxo1".to_string(),
+            1000,
+            100,
+            "block_hash".to_string(),
+            1234567890,
+            "tx_hash".to_string(),
+            0,
+            "address".to_string(),
+            0,
+            "commitment".to_string(),
+            0,
+            "mainnet".to_string(),
+        );
+        let event1 = SharedWalletEvent::new(WalletEvent::UtxoReceived {
+            metadata: metadata1,
+            payload: payload1,
+        });
+
+        let metadata2 = EventMetadata::new("test", "test_wallet");
+        let payload2 = UtxoReceivedPayload::new(
+            "test_utxo2".to_string(),
+            2000,
+            101,
+            "block_hash2".to_string(),
+            1234567891,
+            "tx_hash2".to_string(),
+            0,
+            "address2".to_string(),
+            0,
+            "commitment2".to_string(),
+            0,
+            "mainnet".to_string(),
+        );
+        let event2 = SharedWalletEvent::new(WalletEvent::UtxoReceived {
+            metadata: metadata2,
+            payload: payload2,
+        });
+
+        registry.dispatch(event1).await;
+        registry.dispatch(event2).await;
+
+        // Check updated stats
+        let stats = registry.get_stats();
+        assert_eq!(stats.total_events_dispatched, 2);
+        assert_eq!(stats.total_listener_calls, 2);
+        assert_eq!(stats.total_listener_errors, 0);
+        assert_eq!(stats.events_by_type.get("UtxoReceived"), Some(&2));
+
+        // Verify events were received
+        let events = events_received.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0], "UtxoReceived");
+        assert_eq!(events[1], "UtxoReceived");
+    }
+
+    #[tokio::test]
+    async fn test_statistics_clearing() {
+        let mut registry = EventRegistry::new();
+        let listener = TestListener::new("stats_listener");
+
+        registry.register(Box::new(listener)).await.unwrap();
+
+        // Dispatch an event to generate stats
+        let metadata = EventMetadata::new("test", "test_wallet");
+        let payload = UtxoReceivedPayload::new(
+            "test_utxo".to_string(),
+            1000,
+            100,
+            "block_hash".to_string(),
+            1234567890,
+            "tx_hash".to_string(),
+            0,
+            "address".to_string(),
+            0,
+            "commitment".to_string(),
+            0,
+            "mainnet".to_string(),
+        );
+        let event = SharedWalletEvent::new(WalletEvent::UtxoReceived { metadata, payload });
+
+        registry.dispatch(event).await;
+
+        let stats = registry.get_stats();
+        assert_eq!(stats.total_events_dispatched, 1);
+        assert_eq!(stats.listeners_registered, 1);
+
+        // Clear stats
+        registry.clear_stats();
+
+        let stats = registry.get_stats();
+        assert_eq!(stats.total_events_dispatched, 0);
+        assert_eq!(stats.total_listener_calls, 0);
+        assert_eq!(stats.listeners_registered, 0); // This is cleared too
+        assert!(stats.events_by_type.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_listener_initialization_failure() {
+        let mut registry = EventRegistry::new();
+
+        // Test listener that fails initialization
+        struct FailingInitListener;
+
+        #[async_trait]
+        impl EventListener for FailingInitListener {
+            async fn handle_event(
+                &mut self,
+                _event: &SharedWalletEvent,
+            ) -> Result<(), Box<dyn Error + Send + Sync>> {
+                Ok(())
+            }
+
+            fn name(&self) -> &'static str {
+                "failing_init_listener"
+            }
+
+            async fn initialize(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+                Err("Initialization failed".into())
+            }
+        }
+
+        let result = registry.register(Box::new(FailingInitListener)).await;
+        assert!(result.is_err());
+        assert_eq!(registry.listener_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_event_filtering_by_wants_event() {
+        let mut registry = EventRegistry::new();
+
+        // Listener that only wants UTXO spent events
+        struct SpentOnlyListener {
+            events_received: Arc<Mutex<Vec<String>>>,
+        }
+
+        impl SpentOnlyListener {
+            fn new() -> Self {
+                Self {
+                    events_received: Arc::new(Mutex::new(Vec::new())),
+                }
+            }
+        }
+
+        #[async_trait]
+        impl EventListener for SpentOnlyListener {
+            async fn handle_event(
+                &mut self,
+                event: &SharedWalletEvent,
+            ) -> Result<(), Box<dyn Error + Send + Sync>> {
+                let event_type = match &**event {
+                    WalletEvent::UtxoReceived { .. } => "UtxoReceived",
+                    WalletEvent::UtxoSpent { .. } => "UtxoSpent",
+                    WalletEvent::Reorg { .. } => "Reorg",
+                };
+
+                self.events_received
+                    .lock()
+                    .unwrap()
+                    .push(event_type.to_string());
+                Ok(())
+            }
+
+            fn name(&self) -> &'static str {
+                "spent_only_listener"
+            }
+
+            fn wants_event(&self, event: &SharedWalletEvent) -> bool {
+                matches!(&**event, WalletEvent::UtxoSpent { .. })
+            }
+        }
+
+        let spent_listener = SpentOnlyListener::new();
+        let events_received = spent_listener.events_received.clone();
+
+        registry.register(Box::new(spent_listener)).await.unwrap();
+
+        // Create UtxoReceived event (should be filtered out)
+        let metadata1 = EventMetadata::new("test", "test_wallet");
+        let payload1 = UtxoReceivedPayload::new(
+            "test_utxo".to_string(),
+            1000,
+            100,
+            "block_hash".to_string(),
+            1234567890,
+            "tx_hash".to_string(),
+            0,
+            "address".to_string(),
+            0,
+            "commitment".to_string(),
+            0,
+            "mainnet".to_string(),
+        );
+        let received_event = SharedWalletEvent::new(WalletEvent::UtxoReceived {
+            metadata: metadata1,
+            payload: payload1,
+        });
+
+        registry.dispatch(received_event).await;
+
+        // Listener should not have received the event
+        let events = events_received.lock().unwrap();
+        assert_eq!(events.len(), 0);
+
+        // Check that no listener calls were made due to filtering
+        let stats = registry.get_stats();
+        assert_eq!(stats.total_events_dispatched, 1);
+        assert_eq!(stats.total_listener_calls, 0); // No calls because of filtering
+    }
+
+    #[tokio::test]
+    async fn test_multiple_event_types() {
+        let mut registry = EventRegistry::new();
+        let listener = TestListener::new("multi_event_listener");
+        let events_received = listener.events_received.clone();
+
+        registry.register(Box::new(listener)).await.unwrap();
+
+        // Create different types of events
+        use crate::events::types::{ReorgPayload, UtxoSpentPayload};
+
+        // UtxoReceived event
+        let metadata1 = EventMetadata::new("test", "test_wallet");
+        let payload1 = UtxoReceivedPayload::new(
+            "test_utxo".to_string(),
+            1000,
+            100,
+            "block_hash".to_string(),
+            1234567890,
+            "tx_hash".to_string(),
+            0,
+            "address".to_string(),
+            0,
+            "commitment".to_string(),
+            0,
+            "mainnet".to_string(),
+        );
+        let received_event = SharedWalletEvent::new(WalletEvent::UtxoReceived {
+            metadata: metadata1,
+            payload: payload1,
+        });
+
+        // UtxoSpent event
+        let metadata2 = EventMetadata::new("test", "test_wallet");
+        let payload2 = UtxoSpentPayload::new(
+            "spent_utxo".to_string(),
+            2000,
+            50,
+            200,
+            "spending_block_hash".to_string(),
+            1234567892,
+            "spending_tx_hash".to_string(),
+            1,
+            "spending_address".to_string(),
+            1,
+            "spent_commitment".to_string(),
+            "commitment".to_string(),
+            false,
+            "mainnet".to_string(),
+        );
+        let spent_event = SharedWalletEvent::new(WalletEvent::UtxoSpent {
+            metadata: metadata2,
+            payload: payload2,
+        });
+
+        // Reorg event
+        let metadata3 = EventMetadata::new("test", "test_wallet");
+        let payload3 = ReorgPayload::new(
+            150,
+            "old_block_hash".to_string(),
+            "new_block_hash".to_string(),
+            5,
+            3,
+            vec!["tx1".to_string(), "tx2".to_string()],
+            vec!["utxo1".to_string()],
+            -1000,
+            "mainnet".to_string(),
+            1234567893,
+        );
+        let reorg_event = SharedWalletEvent::new(WalletEvent::Reorg {
+            metadata: metadata3,
+            payload: payload3,
+        });
+
+        // Dispatch all events
+        registry.dispatch(received_event).await;
+        registry.dispatch(spent_event).await;
+        registry.dispatch(reorg_event).await;
+
+        // Verify all events were received
+        let events = events_received.lock().unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0], "UtxoReceived");
+        assert_eq!(events[1], "UtxoSpent");
+        assert_eq!(events[2], "Reorg");
+
+        // Check statistics
+        let stats = registry.get_stats();
+        assert_eq!(stats.total_events_dispatched, 3);
+        assert_eq!(stats.total_listener_calls, 3);
+        assert_eq!(stats.events_by_type.get("UtxoReceived"), Some(&1));
+        assert_eq!(stats.events_by_type.get("UtxoSpent"), Some(&1));
+        assert_eq!(stats.events_by_type.get("Reorg"), Some(&1));
     }
 }

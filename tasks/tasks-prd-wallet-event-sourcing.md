@@ -30,14 +30,14 @@
   - [x] 1.6 Create event metadata structure (ID, timestamp, sequence number, wallet_id)
   - [x] 1.7 Write unit tests for event type serialization and deserialization
 
-- [ ] 2.0 Implement Event Listener Interface and Registry
+- [x] 2.0 Implement Event Listener Interface and Registry
   - [x] 2.1 Define `EventListener` trait with async event handling method
   - [x] 2.2 Create `EventRegistry` to manage multiple registered listeners
   - [x] 2.3 Implement async event dispatch to all registered listeners
   - [x] 2.4 Add error handling to prevent listener failures from breaking wallet operations
   - [x] 2.5 Create concrete listener implementations (EventLogger, AuditTrail)
   - [x] 2.6 Add listener registration/deregistration methods
-  - [ ] 2.7 Write unit tests for event listener interface and registry
+  - [x] 2.7 Write unit tests for event listener interface and registry
 
 - [ ] 3.0 Integrate Event System with Wallet Builder
   - [ ] 3.1 Modify wallet builder to accept event listeners via `with_event_listener()` method
