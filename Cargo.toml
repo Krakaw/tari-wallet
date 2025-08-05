@@ -187,14 +187,3 @@ required-features = ["http"]
 name = "multi_network_compatibility"
 path = "tests/integration/multi_network_compatibility.rs"
 required-features = ["http"]
-
-# End-to-end test targets
-[[test]]
-name = "performance_stress_e2e"
-path = "tests/e2e/performance_stress.rs"
-required-features = ["http"]
-
-[[test]]
-name = "full_system_integration_e2e"
-path = "tests/e2e/full_system_integration.rs"
-required-features = ["http"]

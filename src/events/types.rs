@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use thiserror::Error;
+use zeroize::Zeroize;
 
 /// Shared event metadata present in all events
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,6 +204,23 @@ impl OutputData {
     }
 }
 
+impl Zeroize for OutputData {
+    fn zeroize(&mut self) {
+        // Zeroize sensitive fields
+        if let Some(ref mut encrypted_data) = self.encrypted_value {
+            encrypted_data.zeroize();
+        }
+        // Note: Other fields like commitment and range_proof contain cryptographic data
+        // but are considered public information in the context of blockchain outputs
+    }
+}
+
+impl Drop for OutputData {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 /// Block information associated with an output
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockInfo {
@@ -353,6 +371,29 @@ impl AddressInfo {
     pub fn with_view_key(mut self, key: String) -> Self {
         self.view_key = Some(key);
         self
+    }
+}
+
+impl Zeroize for AddressInfo {
+    fn zeroize(&mut self) {
+        // Zeroize sensitive key material
+        if let Some(ref mut key) = self.public_spend_key {
+            key.zeroize();
+        }
+        if let Some(ref mut key) = self.view_key {
+            key.zeroize();
+        }
+        // Note: derivation_path is also sensitive but we don't zeroize address
+        // as it's meant to be shared
+        if let Some(ref mut path) = self.derivation_path {
+            path.zeroize();
+        }
+    }
+}
+
+impl Drop for AddressInfo {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -811,6 +852,25 @@ impl UtxoReceivedPayload {
     }
 }
 
+impl Zeroize for UtxoReceivedPayload {
+    fn zeroize(&mut self) {
+        // Zeroize sensitive fields that could reveal wallet information
+        self.receiving_address.zeroize();
+        self.commitment.zeroize();
+        if let Some(ref mut script_hash) = self.script_hash {
+            script_hash.zeroize();
+        }
+        // Note: We don't zeroize publicly available blockchain data like
+        // block_hash, transaction_hash as these are meant to be public
+    }
+}
+
+impl Drop for UtxoReceivedPayload {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 /// Payload for UTXO spent events - captures the essential data about a spent UTXO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UtxoSpentPayload {
@@ -887,6 +947,22 @@ impl UtxoSpentPayload {
     pub fn with_transaction_fee(mut self, fee: u64) -> Self {
         self.transaction_fee = Some(fee);
         self
+    }
+}
+
+impl Zeroize for UtxoSpentPayload {
+    fn zeroize(&mut self) {
+        // Zeroize sensitive fields that could reveal wallet information
+        self.spending_address.zeroize();
+        self.commitment.zeroize();
+        // Note: We don't zeroize publicly available blockchain data like
+        // block_hash, transaction_hash as these are meant to be public
+    }
+}
+
+impl Drop for UtxoSpentPayload {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -968,6 +1044,30 @@ impl ReorgPayload {
     pub fn with_recovery_info(mut self, key: String, value: String) -> Self {
         self.recovery_info.insert(key, value);
         self
+    }
+}
+
+impl Zeroize for ReorgPayload {
+    fn zeroize(&mut self) {
+        // Zeroize sensitive wallet-related data
+        self.affected_utxo_ids
+            .iter_mut()
+            .for_each(|id| id.zeroize());
+        self.invalidated_utxos
+            .iter_mut()
+            .for_each(|id| id.zeroize());
+        self.restored_utxos.iter_mut().for_each(|id| id.zeroize());
+        // Zeroize recovery info that might contain sensitive debugging data
+        // Note: We need to clear the HashMap entirely since we can't mutably borrow keys
+        self.recovery_info.clear();
+        // Note: We don't zeroize publicly available blockchain data like
+        // block hashes and transaction hashes as these are meant to be public
+    }
+}
+
+impl Drop for ReorgPayload {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -1181,6 +1281,29 @@ impl EventType for WalletScanEvent {
     }
 }
 
+impl Zeroize for WalletScanEvent {
+    fn zeroize(&mut self) {
+        match self {
+            WalletScanEvent::OutputFound {
+                output_data,
+                address_info,
+                ..
+            } => {
+                output_data.zeroize();
+                address_info.zeroize();
+            }
+            WalletScanEvent::SpentOutputFound {
+                original_output_info,
+                ..
+            } => {
+                original_output_info.zeroize();
+            }
+            // For other variants, we only zeroize if they contain sensitive data
+            _ => {}
+        }
+    }
+}
+
 impl SerializableEvent for WalletScanEvent {
     fn to_debug_json(&self) -> Result<String, String> {
         // Use serde_json for proper JSON serialization (pretty-printed for debugging)
@@ -1385,6 +1508,28 @@ impl EventType for WalletEvent {
                 payload.affected_transaction_hashes.len()
             )),
         }
+    }
+}
+
+impl Zeroize for WalletEvent {
+    fn zeroize(&mut self) {
+        match self {
+            WalletEvent::UtxoReceived { payload, .. } => {
+                payload.zeroize();
+            }
+            WalletEvent::UtxoSpent { payload, .. } => {
+                payload.zeroize();
+            }
+            WalletEvent::Reorg { payload, .. } => {
+                payload.zeroize();
+            }
+        }
+    }
+}
+
+impl Drop for WalletEvent {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -1822,6 +1967,128 @@ mod tests {
         assert_eq!(config.filters.get("output_type"), Some(&"utxo".to_string()));
         assert_eq!(config.filters.get("min_value"), Some(&"1000".to_string()));
         assert_eq!(config.filters.len(), 2);
+    }
+
+    #[test]
+    fn test_output_data_zeroize() {
+        let mut output_data = OutputData::new(
+            "commitment_test".to_string(),
+            "proof_test".to_string(),
+            1,
+            true,
+        )
+        .with_encrypted_value(vec![1, 2, 3, 4, 5]);
+
+        // Verify initial state
+        assert_eq!(output_data.encrypted_value, Some(vec![1, 2, 3, 4, 5]));
+        assert_eq!(output_data.commitment, "commitment_test");
+
+        // Zeroize sensitive data
+        output_data.zeroize();
+
+        // Verify encrypted_value is zeroized (cleared) but other fields remain
+        assert_eq!(output_data.encrypted_value, Some(vec![])); // Vec::zeroize() clears the vector
+        assert_eq!(output_data.commitment, "commitment_test"); // Public data unchanged
+    }
+
+    #[test]
+    fn test_address_info_zeroize() {
+        let mut address_info = AddressInfo::new(
+            "tari1xyz123...".to_string(),
+            "stealth".to_string(),
+            "mainnet".to_string(),
+        )
+        .with_public_spend_key("public_key_123".to_string())
+        .with_view_key("view_key_456".to_string())
+        .with_derivation_path("m/44'/0'/0'/0/5".to_string());
+
+        // Verify initial state
+        assert_eq!(
+            address_info.public_spend_key,
+            Some("public_key_123".to_string())
+        );
+        assert_eq!(address_info.view_key, Some("view_key_456".to_string()));
+        assert_eq!(
+            address_info.derivation_path,
+            Some("m/44'/0'/0'/0/5".to_string())
+        );
+
+        // Zeroize sensitive data
+        address_info.zeroize();
+
+        // Verify sensitive fields are zeroized
+        assert_eq!(address_info.public_spend_key, Some(String::new()));
+        assert_eq!(address_info.view_key, Some(String::new()));
+        assert_eq!(address_info.derivation_path, Some(String::new()));
+        // Address should remain unchanged as it's meant to be shared
+        assert_eq!(address_info.address, "tari1xyz123...");
+    }
+
+    #[test]
+    fn test_utxo_received_payload_zeroize() {
+        let mut payload = UtxoReceivedPayload::new(
+            "utxo_123".to_string(),
+            1000,
+            12345,
+            "block_hash_abc".to_string(),
+            1697123456,
+            "tx_hash_def".to_string(),
+            2,
+            "tari1abc123...".to_string(),
+            5,
+            "commitment_789".to_string(),
+            1,
+            "mainnet".to_string(),
+        )
+        .with_script_hash("script_hash_xyz".to_string());
+
+        // Verify initial state
+        assert_eq!(payload.receiving_address, "tari1abc123...");
+        assert_eq!(payload.commitment, "commitment_789");
+        assert_eq!(payload.script_hash, Some("script_hash_xyz".to_string()));
+
+        // Zeroize sensitive data
+        payload.zeroize();
+
+        // Verify sensitive fields are zeroized
+        assert_eq!(payload.receiving_address, "");
+        assert_eq!(payload.commitment, "");
+        assert_eq!(payload.script_hash, Some(String::new()));
+        // Public blockchain data should remain unchanged
+        assert_eq!(payload.block_hash, "block_hash_abc");
+        assert_eq!(payload.transaction_hash, "tx_hash_def");
+    }
+
+    #[test]
+    fn test_wallet_event_zeroize() {
+        let payload = UtxoReceivedPayload::new(
+            "utxo_456".to_string(),
+            2000,
+            54321,
+            "block_hash_xyz".to_string(),
+            1697987654,
+            "tx_hash_abc".to_string(),
+            1,
+            "tari1def456...".to_string(),
+            10,
+            "commitment_abc".to_string(),
+            1,
+            "testnet".to_string(),
+        );
+
+        let mut event = WalletEvent::utxo_received(payload);
+
+        // Verify event can be zeroized
+        event.zeroize();
+
+        // Verify payload inside event is zeroized
+        match &event {
+            WalletEvent::UtxoReceived { payload, .. } => {
+                assert_eq!(payload.receiving_address, "");
+                assert_eq!(payload.commitment, "");
+            }
+            _ => panic!("Expected UtxoReceived event"),
+        }
     }
 
     #[test]
@@ -2789,7 +3056,7 @@ mod tests {
 
         // Test roundtrip
         let deserialized = WalletEvent::from_json(&json).unwrap();
-        match deserialized {
+        match &deserialized {
             WalletEvent::UtxoReceived { payload, .. } => {
                 assert_eq!(payload.utxo_id, "test_utxo");
                 assert_eq!(payload.amount, 2000000);
@@ -2836,7 +3103,7 @@ mod tests {
 
         // Test roundtrip
         let deserialized = WalletEvent::from_json(&json).unwrap();
-        match deserialized {
+        match &deserialized {
             WalletEvent::UtxoSpent { payload, .. } => {
                 assert_eq!(payload.utxo_id, "spent_utxo");
                 assert_eq!(payload.amount, 1500000);
@@ -2881,7 +3148,7 @@ mod tests {
 
         // Test roundtrip
         let deserialized = WalletEvent::from_json(&json).unwrap();
-        match deserialized {
+        match &deserialized {
             WalletEvent::Reorg { payload, .. } => {
                 assert_eq!(payload.fork_height, 20000);
                 assert_eq!(payload.rollback_depth, 3);
