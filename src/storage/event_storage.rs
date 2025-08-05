@@ -262,6 +262,45 @@ pub trait EventStorage {
 
     /// Check sequence number continuity for a wallet (detect gaps)
     async fn validate_sequence_continuity(&self, wallet_id: &str) -> WalletEventResult<Vec<u64>>; // Returns missing sequence numbers
+
+    // Enhanced automatic assignment methods for task 4.3
+
+    /// Create a new event with automatic ID, timestamp, and sequence assignment
+    /// This is the primary method for creating events with full automation
+    async fn create_event(
+        &self,
+        wallet_id: &str,
+        event_type: &str,
+        payload_json: String,
+        source: &str,
+    ) -> WalletEventResult<StoredEvent>;
+
+    /// Create a new event with automatic assignment and optional correlation
+    async fn create_event_with_correlation(
+        &self,
+        wallet_id: &str,
+        event_type: &str,
+        payload_json: String,
+        source: &str,
+        correlation_id: String,
+    ) -> WalletEventResult<StoredEvent>;
+
+    /// Create multiple events with automatic assignment in a single transaction
+    async fn create_events_batch(
+        &self,
+        wallet_id: &str,
+        events: &[(String, String, String)], // (event_type, payload_json, source)
+    ) -> WalletEventResult<Vec<StoredEvent>>;
+
+    /// Get the next sequence number that would be assigned for a wallet
+    async fn get_next_sequence_number(&self, wallet_id: &str) -> WalletEventResult<u64>;
+
+    /// Validate that a sequence number is available for a wallet
+    async fn is_sequence_available(
+        &self,
+        wallet_id: &str,
+        sequence: u64,
+    ) -> WalletEventResult<bool>;
 }
 
 /// Statistics about event storage
@@ -1047,6 +1086,312 @@ impl EventStorage for SqliteEventStorage {
             .await
             .map_err(|e| {
                 WalletEventError::storage("validate_sequence_continuity", format!("Failed to validate sequence continuity: {e}"))
+            })
+    }
+
+    // Enhanced automatic assignment methods implementation for task 4.3
+
+    async fn create_event(
+        &self,
+        wallet_id: &str,
+        event_type: &str,
+        payload_json: String,
+        source: &str,
+    ) -> WalletEventResult<StoredEvent> {
+        let wallet_id_owned = wallet_id.to_string();
+        let event_type_owned = event_type.to_string();
+        let source_owned = source.to_string();
+
+        self.connection
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+
+                // Get next sequence number atomically
+                let sequence_number: u64 = {
+                    let mut stmt = tx.prepare(
+                        "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM wallet_events WHERE wallet_id = ?",
+                    )?;
+                    stmt.query_row(params![&wallet_id_owned], |row| {
+                        let seq: i64 = row.get(0)?;
+                        Ok(seq as u64)
+                    })?
+                };
+
+                // Generate automatic values
+                let event_id = uuid::Uuid::new_v4().to_string();
+                let timestamp = SystemTime::now();
+                let timestamp_secs = timestamp
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+
+                // Create basic metadata automatically
+                let metadata_json = serde_json::json!({
+                    "created_at": timestamp_secs,
+                    "auto_generated": true,
+                    "wallet_id": wallet_id_owned,
+                    "sequence": sequence_number
+                }).to_string();
+
+                // Insert event
+                tx.execute(
+                    r#"
+                    INSERT INTO wallet_events 
+                    (event_id, wallet_id, event_type, sequence_number, payload_json, 
+                     metadata_json, source, correlation_id, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                    params![
+                        event_id,
+                        wallet_id_owned,
+                        event_type_owned,
+                        sequence_number as i64,
+                        payload_json,
+                        metadata_json,
+                        source_owned,
+                        None::<String>, // No correlation_id for basic create
+                        timestamp_secs,
+                    ],
+                )?;
+
+                let db_id = tx.last_insert_rowid() as u64;
+                tx.commit()?;
+
+                // Return the created event
+                Ok(StoredEvent {
+                    id: Some(db_id),
+                    event_id,
+                    wallet_id: wallet_id_owned,
+                    event_type: event_type_owned,
+                    sequence_number,
+                    payload_json,
+                    metadata_json,
+                    source: source_owned,
+                    correlation_id: None,
+                    timestamp,
+                    stored_at: SystemTime::now(), // Approximate, DB will have exact value
+                })
+            })
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("create_event", format!("Failed to create event: {e}"))
+            })
+    }
+
+    async fn create_event_with_correlation(
+        &self,
+        wallet_id: &str,
+        event_type: &str,
+        payload_json: String,
+        source: &str,
+        correlation_id: String,
+    ) -> WalletEventResult<StoredEvent> {
+        let wallet_id_owned = wallet_id.to_string();
+        let event_type_owned = event_type.to_string();
+        let source_owned = source.to_string();
+
+        self.connection
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+
+                // Get next sequence number atomically
+                let sequence_number: u64 = {
+                    let mut stmt = tx.prepare(
+                        "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM wallet_events WHERE wallet_id = ?",
+                    )?;
+                    stmt.query_row(params![&wallet_id_owned], |row| {
+                        let seq: i64 = row.get(0)?;
+                        Ok(seq as u64)
+                    })?
+                };
+
+                // Generate automatic values
+                let event_id = uuid::Uuid::new_v4().to_string();
+                let timestamp = SystemTime::now();
+                let timestamp_secs = timestamp
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+
+                // Create enhanced metadata with correlation info
+                let metadata_json = serde_json::json!({
+                    "created_at": timestamp_secs,
+                    "auto_generated": true,
+                    "wallet_id": wallet_id_owned,
+                    "sequence": sequence_number,
+                    "correlation_id": correlation_id
+                }).to_string();
+
+                // Insert event
+                tx.execute(
+                    r#"
+                    INSERT INTO wallet_events 
+                    (event_id, wallet_id, event_type, sequence_number, payload_json, 
+                     metadata_json, source, correlation_id, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                    params![
+                        event_id,
+                        wallet_id_owned,
+                        event_type_owned,
+                        sequence_number as i64,
+                        payload_json,
+                        metadata_json,
+                        source_owned,
+                        Some(correlation_id.clone()),
+                        timestamp_secs,
+                    ],
+                )?;
+
+                let db_id = tx.last_insert_rowid() as u64;
+                tx.commit()?;
+
+                // Return the created event
+                Ok(StoredEvent {
+                    id: Some(db_id),
+                    event_id,
+                    wallet_id: wallet_id_owned,
+                    event_type: event_type_owned,
+                    sequence_number,
+                    payload_json,
+                    metadata_json,
+                    source: source_owned,
+                    correlation_id: Some(correlation_id),
+                    timestamp,
+                    stored_at: SystemTime::now(), // Approximate, DB will have exact value
+                })
+            })
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("create_event_with_correlation", format!("Failed to create event with correlation: {e}"))
+            })
+    }
+
+    async fn create_events_batch(
+        &self,
+        wallet_id: &str,
+        events: &[(String, String, String)], // (event_type, payload_json, source)
+    ) -> WalletEventResult<Vec<StoredEvent>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let wallet_id_owned = wallet_id.to_string();
+        let events_owned = events.to_vec();
+
+        self.connection
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                let mut results = Vec::new();
+
+                // Get current max sequence number
+                let mut current_sequence: u64 = {
+                    let mut stmt = tx.prepare(
+                        "SELECT COALESCE(MAX(sequence_number), 0) FROM wallet_events WHERE wallet_id = ?",
+                    )?;
+                    stmt.query_row(params![&wallet_id_owned], |row| {
+                        let seq: i64 = row.get(0)?;
+                        Ok(seq as u64)
+                    })?
+                };
+
+                let batch_timestamp = SystemTime::now();
+                let batch_timestamp_secs = batch_timestamp
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+
+                for (event_type, payload_json, source) in events_owned {
+                    current_sequence += 1;
+                    let event_id = uuid::Uuid::new_v4().to_string();
+
+                    // Create metadata for each event in batch
+                    let metadata_json = serde_json::json!({
+                        "created_at": batch_timestamp_secs,
+                        "auto_generated": true,
+                        "wallet_id": wallet_id_owned,
+                        "sequence": current_sequence,
+                        "batch_operation": true
+                    }).to_string();
+
+                    tx.execute(
+                        r#"
+                        INSERT INTO wallet_events 
+                        (event_id, wallet_id, event_type, sequence_number, payload_json, 
+                         metadata_json, source, correlation_id, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        "#,
+                        params![
+                            event_id,
+                            wallet_id_owned,
+                            event_type,
+                            current_sequence as i64,
+                            payload_json,
+                            metadata_json,
+                            source,
+                            None::<String>, // No correlation for batch operations
+                            batch_timestamp_secs,
+                        ],
+                    )?;
+
+                    let db_id = tx.last_insert_rowid() as u64;
+                    results.push(StoredEvent {
+                        id: Some(db_id),
+                        event_id,
+                        wallet_id: wallet_id_owned.clone(),
+                        event_type,
+                        sequence_number: current_sequence,
+                        payload_json,
+                        metadata_json,
+                        source,
+                        correlation_id: None,
+                        timestamp: batch_timestamp,
+                        stored_at: SystemTime::now(), // Approximate, DB will have exact value
+                    });
+                }
+
+                tx.commit()?;
+                Ok(results)
+            })
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("create_events_batch", format!("Failed to create events batch: {e}"))
+            })
+    }
+
+    async fn get_next_sequence_number(&self, wallet_id: &str) -> WalletEventResult<u64> {
+        let wallet_id_owned = wallet_id.to_string();
+        self.connection
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM wallet_events WHERE wallet_id = ?",
+                )?;
+                let sequence: i64 = stmt.query_row(params![wallet_id_owned], |row| row.get(0))?;
+                Ok(sequence as u64)
+            })
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("get_next_sequence_number", format!("Failed to get next sequence number: {e}"))
+            })
+    }
+
+    async fn is_sequence_available(
+        &self,
+        wallet_id: &str,
+        sequence: u64,
+    ) -> WalletEventResult<bool> {
+        let wallet_id_owned = wallet_id.to_string();
+        self.connection
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT 1 FROM wallet_events WHERE wallet_id = ? AND sequence_number = ? LIMIT 1",
+                )?;
+                let exists = stmt.exists(params![wallet_id_owned, sequence as i64])?;
+                Ok(!exists) // Available if it doesn't exist
+            })
+            .await
+            .map_err(|e| {
+                WalletEventError::storage("is_sequence_available", format!("Failed to check sequence availability: {e}"))
             })
     }
 }
