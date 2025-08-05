@@ -24,6 +24,7 @@
 - `tests/connection_pool_tests.rs` - Tests for connection pooling functionality (Task 4.6)
 - `tests/event_replay_methods_tests.rs` - Tests for specialized event retrieval methods for replay functionality (Task 4.7)
 - `tests/event_storage_comprehensive_tests.rs` - Comprehensive unit tests for event storage operations covering automatic assignment, batch operations, sequence validation, and edge cases (Task 4.8)
+- `tests/database_integrity_tests.rs` - Database integrity tests to verify append-only behavior, schema constraints, transaction atomicity, and corruption detection (Task 4.9)
 - `tests/storage/event_storage_tests.rs` - Unit tests for event storage implementation
 - `tests/storage/mod.rs` - Storage test module organization
 
@@ -63,7 +64,7 @@
   - [x] 3.6 Update wallet builder tests to verify event listener registration
   - [x] 3.7 Write integration tests for builder pattern with event listeners
 
-- [ ] 4.0 Implement Event Storage in SQLite
+- [x] 4.0 Implement Event Storage in SQLite
   - [x] 4.1 Create database migration for `wallet_events` table with required schema
   - [x] 4.2 Implement event storage operations (insert, query by wallet_id, query by sequence)
   - [x] 4.3 Add automatic timestamping and sequence number assignment
@@ -72,7 +73,7 @@
   - [x] 4.6 Add connection pooling support for concurrent event writes
   - [x] 4.7 Implement event retrieval methods for replay functionality
   - [x] 4.8 Write unit tests for event storage operations
-  - [ ] 4.9 Add database integrity tests to verify append-only behavior
+  - [x] 4.9 Add database integrity tests to verify append-only behavior
 
 - [ ] 5.0 Implement Event Replay and Verification System
   - [ ] 5.1 Create event replay engine that processes events in chronological order
