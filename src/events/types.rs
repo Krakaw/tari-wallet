@@ -2267,4 +2267,375 @@ mod tests {
         assert!(WalletScanEvent::from_json(invalid_json).is_err());
         assert!(WalletScanEvent::shared_from_json(invalid_json).is_err());
     }
+
+    // Tests for new WalletEvent serialization
+
+    #[test]
+    fn test_utxo_received_payload_serialization() {
+        let payload = UtxoReceivedPayload::new(
+            "utxo_123".to_string(),
+            1000000, // 1 Tari
+            12345,
+            "block_hash_abc".to_string(),
+            1697123456,
+            "tx_hash_def".to_string(),
+            0,
+            "tari1xyz123...".to_string(),
+            42,
+            "commitment_ghi".to_string(),
+            0,
+            "mainnet".to_string(),
+        )
+        .with_maturity_height(12400)
+        .with_script_hash("script_hash_jkl".to_string())
+        .with_unlock_conditions();
+
+        // Test JSON serialization
+        let json = serde_json::to_string_pretty(&payload).unwrap();
+        assert!(json.contains("utxo_123"));
+        assert!(json.contains("1000000"));
+        assert!(json.contains("tari1xyz123..."));
+        assert!(json.contains("12345"));
+        assert!(json.contains("true")); // has_unlock_conditions
+
+        // Test roundtrip
+        let deserialized: UtxoReceivedPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.utxo_id, "utxo_123");
+        assert_eq!(deserialized.amount, 1000000);
+        assert_eq!(deserialized.block_height, 12345);
+        assert_eq!(deserialized.receiving_address, "tari1xyz123...");
+        assert_eq!(deserialized.maturity_height, Some(12400));
+        assert!(deserialized.has_unlock_conditions);
+    }
+
+    #[test]
+    fn test_utxo_spent_payload_serialization() {
+        let payload = UtxoSpentPayload::new(
+            "utxo_456".to_string(),
+            500000, // 0.5 Tari
+            12345,  // original height
+            12400,  // spending height
+            "spending_block_hash".to_string(),
+            1697123500,
+            "spending_tx_hash".to_string(),
+            1,
+            "tari1abc456...".to_string(),
+            25,
+            "commitment_xyz".to_string(),
+            "commitment".to_string(),
+            true, // self spend
+            "mainnet".to_string(),
+        )
+        .with_transaction_fee(1000);
+
+        // Test JSON serialization
+        let json = serde_json::to_string_pretty(&payload).unwrap();
+        assert!(json.contains("utxo_456"));
+        assert!(json.contains("500000"));
+        assert!(json.contains("12400"));
+        assert!(json.contains("true")); // is_self_spend
+        assert!(json.contains("1000")); // transaction_fee
+
+        // Test roundtrip
+        let deserialized: UtxoSpentPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.utxo_id, "utxo_456");
+        assert_eq!(deserialized.amount, 500000);
+        assert_eq!(deserialized.spending_block_height, 12400);
+        assert_eq!(deserialized.is_self_spend, true);
+        assert_eq!(deserialized.transaction_fee, Some(1000));
+    }
+
+    #[test]
+    fn test_reorg_payload_serialization() {
+        let affected_txs = vec!["tx1".to_string(), "tx2".to_string()];
+        let affected_utxos = vec!["utxo1".to_string(), "utxo2".to_string()];
+
+        let payload = ReorgPayload::new(
+            12300, // fork height
+            "old_block_hash".to_string(),
+            "new_block_hash".to_string(),
+            5, // rollback depth
+            3, // new blocks count
+            affected_txs.clone(),
+            affected_utxos.clone(),
+            -250000, // balance change (loss)
+            "mainnet".to_string(),
+            1697123600,
+        )
+        .with_invalidated_utxos(vec!["utxo3".to_string()])
+        .with_restored_utxos(vec!["utxo4".to_string()])
+        .with_recovery_info("reason".to_string(), "chain_split".to_string());
+
+        // Test JSON serialization
+        let json = serde_json::to_string_pretty(&payload).unwrap();
+        assert!(json.contains("12300"));
+        assert!(json.contains("old_block_hash"));
+        assert!(json.contains("new_block_hash"));
+        assert!(json.contains("-250000"));
+        assert!(json.contains("tx1"));
+        assert!(json.contains("utxo3"));
+        assert!(json.contains("chain_split"));
+
+        // Test roundtrip
+        let deserialized: ReorgPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.fork_height, 12300);
+        assert_eq!(deserialized.rollback_depth, 5);
+        assert_eq!(deserialized.new_blocks_count, 3);
+        assert_eq!(deserialized.balance_change, -250000);
+        assert_eq!(deserialized.affected_transaction_hashes, affected_txs);
+        assert_eq!(deserialized.invalidated_utxos, vec!["utxo3".to_string()]);
+        assert_eq!(
+            deserialized.recovery_info.get("reason"),
+            Some(&"chain_split".to_string())
+        );
+    }
+
+    #[test]
+    fn test_wallet_event_utxo_received_serialization() {
+        let payload = UtxoReceivedPayload::new(
+            "test_utxo".to_string(),
+            2000000,
+            15000,
+            "test_block".to_string(),
+            1697123700,
+            "test_tx".to_string(),
+            0,
+            "test_address".to_string(),
+            10,
+            "test_commitment".to_string(),
+            0,
+            "testnet".to_string(),
+        );
+
+        let event = WalletEvent::utxo_received(payload);
+
+        // Test JSON serialization
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("UtxoReceived"));
+        assert!(json.contains("test_utxo"));
+        assert!(json.contains("2000000"));
+        assert!(json.contains("15000"));
+        assert!(json.contains("test_address"));
+
+        // Test compact serialization
+        let compact_json = event.to_compact_json().unwrap();
+        assert!(compact_json.len() < json.len()); // Should be smaller
+        assert!(compact_json.contains("UtxoReceived"));
+
+        // Test roundtrip
+        let deserialized = WalletEvent::from_json(&json).unwrap();
+        match deserialized {
+            WalletEvent::UtxoReceived { payload, .. } => {
+                assert_eq!(payload.utxo_id, "test_utxo");
+                assert_eq!(payload.amount, 2000000);
+                assert_eq!(payload.block_height, 15000);
+            }
+            _ => panic!("Expected UtxoReceived event"),
+        }
+
+        // Test summary
+        let summary = event.summary();
+        assert!(summary.contains("UTXO received"));
+        assert!(summary.contains("15000"));
+        assert!(summary.contains("2000000 units"));
+    }
+
+    #[test]
+    fn test_wallet_event_utxo_spent_serialization() {
+        let payload = UtxoSpentPayload::new(
+            "spent_utxo".to_string(),
+            1500000,
+            14000, // original height
+            15500, // spending height
+            "spending_block".to_string(),
+            1697123800,
+            "spending_tx".to_string(),
+            2,
+            "spending_address".to_string(),
+            20,
+            "spent_commitment".to_string(),
+            "output_hash".to_string(),
+            false, // not self spend
+            "testnet".to_string(),
+        );
+
+        let event = WalletEvent::utxo_spent(payload);
+
+        // Test JSON serialization
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("UtxoSpent"));
+        assert!(json.contains("spent_utxo"));
+        assert!(json.contains("1500000"));
+        assert!(json.contains("15500"));
+        assert!(json.contains("false")); // is_self_spend
+
+        // Test roundtrip
+        let deserialized = WalletEvent::from_json(&json).unwrap();
+        match deserialized {
+            WalletEvent::UtxoSpent { payload, .. } => {
+                assert_eq!(payload.utxo_id, "spent_utxo");
+                assert_eq!(payload.amount, 1500000);
+                assert_eq!(payload.spending_block_height, 15500);
+                assert_eq!(payload.is_self_spend, false);
+            }
+            _ => panic!("Expected UtxoSpent event"),
+        }
+
+        // Test summary
+        let summary = event.summary();
+        assert!(summary.contains("UTXO spent"));
+        assert!(summary.contains("15500"));
+        assert!(summary.contains("1500000 units"));
+    }
+
+    #[test]
+    fn test_wallet_event_reorg_serialization() {
+        let payload = ReorgPayload::new(
+            20000,
+            "old_fork_block".to_string(),
+            "new_fork_block".to_string(),
+            3,
+            5,
+            vec!["reorg_tx1".to_string(), "reorg_tx2".to_string()],
+            vec!["reorg_utxo1".to_string()],
+            500000, // positive balance change
+            "mainnet".to_string(),
+            1697123900,
+        );
+
+        let event = WalletEvent::reorg(payload);
+
+        // Test JSON serialization
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("Reorg"));
+        assert!(json.contains("20000"));
+        assert!(json.contains("old_fork_block"));
+        assert!(json.contains("new_fork_block"));
+        assert!(json.contains("500000"));
+        assert!(json.contains("reorg_tx1"));
+
+        // Test roundtrip
+        let deserialized = WalletEvent::from_json(&json).unwrap();
+        match deserialized {
+            WalletEvent::Reorg { payload, .. } => {
+                assert_eq!(payload.fork_height, 20000);
+                assert_eq!(payload.rollback_depth, 3);
+                assert_eq!(payload.new_blocks_count, 5);
+                assert_eq!(payload.balance_change, 500000);
+                assert_eq!(payload.affected_transaction_hashes.len(), 2);
+            }
+            _ => panic!("Expected Reorg event"),
+        }
+
+        // Test summary
+        let summary = event.summary();
+        assert!(summary.contains("Blockchain reorg"));
+        assert!(summary.contains("20000"));
+        assert!(summary.contains("2 transactions affected"));
+    }
+
+    #[test]
+    fn test_wallet_event_metadata_serialization() {
+        let payload = UtxoReceivedPayload::new(
+            "metadata_test".to_string(),
+            100000,
+            1000,
+            "block".to_string(),
+            1697124000,
+            "tx".to_string(),
+            0,
+            "addr".to_string(),
+            5,
+            "commit".to_string(),
+            0,
+            "testnet".to_string(),
+        );
+
+        let event = WalletEvent::utxo_received(payload);
+
+        // Test that metadata is properly included
+        let json = event.to_debug_json().unwrap();
+        assert!(json.contains("metadata"));
+        assert!(json.contains("event_id"));
+        assert!(json.contains("timestamp"));
+        assert!(json.contains("source"));
+        assert!(json.contains("wallet")); // source should be "wallet"
+
+        // Verify metadata through EventType trait
+        assert_eq!(event.event_type(), "UtxoReceived");
+        let metadata = event.metadata();
+        assert!(!metadata.event_id.is_empty());
+        assert_eq!(metadata.source, "wallet");
+        assert!(metadata.correlation_id.is_none());
+    }
+
+    #[test]
+    fn test_wallet_event_serialization_completeness() {
+        // Test that all WalletEvent variants can be serialized and deserialized
+        let events = vec![
+            WalletEvent::utxo_received(UtxoReceivedPayload::new(
+                "test1".to_string(),
+                100,
+                1000,
+                "block1".to_string(),
+                1697124100,
+                "tx1".to_string(),
+                0,
+                "addr1".to_string(),
+                1,
+                "commit1".to_string(),
+                0,
+                "net".to_string(),
+            )),
+            WalletEvent::utxo_spent(UtxoSpentPayload::new(
+                "test2".to_string(),
+                200,
+                1000,
+                1100,
+                "block2".to_string(),
+                1697124200,
+                "tx2".to_string(),
+                1,
+                "addr2".to_string(),
+                2,
+                "commit2".to_string(),
+                "method".to_string(),
+                false,
+                "net".to_string(),
+            )),
+            WalletEvent::reorg(ReorgPayload::new(
+                1000,
+                "old".to_string(),
+                "new".to_string(),
+                2,
+                3,
+                vec!["tx3".to_string()],
+                vec!["utxo3".to_string()],
+                0,
+                "net".to_string(),
+                1697124300,
+            )),
+        ];
+
+        for event in events {
+            // Test serialization doesn't fail
+            let json = event.to_debug_json().unwrap();
+            let _compact = event.to_compact_json().unwrap();
+
+            // Test deserialization doesn't fail
+            let deserialized = WalletEvent::from_json(&json).unwrap();
+
+            // Test event types match
+            assert_eq!(event.event_type(), deserialized.event_type());
+
+            // Test summary doesn't fail
+            let summary = event.summary();
+            assert!(!summary.is_empty());
+
+            // Test debug data doesn't fail
+            let debug = event.debug_data();
+            assert!(debug.is_some());
+            assert!(!debug.unwrap().is_empty());
+        }
+    }
 }

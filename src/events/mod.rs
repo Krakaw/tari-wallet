@@ -95,7 +95,9 @@ pub use error_recovery::{
     ErrorRecord, ErrorRecoveryConfig, ErrorRecoveryManager, ErrorStats, RetryableOperation,
 };
 pub use test_utils::{EventCapture, EventPattern, PerformanceAssertion, TestScenario};
-pub use types::{SharedWalletEvent, WalletEvent, *};
+pub use types::{
+    ReorgPayload, SharedWalletEvent, UtxoReceivedPayload, UtxoSpentPayload, WalletEvent, *,
+};
 
 /// Errors that can occur during event dispatcher operations
 #[derive(Debug, Clone)]
