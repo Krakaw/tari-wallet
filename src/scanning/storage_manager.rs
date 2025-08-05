@@ -11,7 +11,7 @@
 use crate::{
     data_structures::{types::CompressedCommitment, wallet_transaction::WalletTransaction},
     errors::{WalletError, WalletResult},
-    storage::{SqliteStorage, StoredOutput, StoredWallet, WalletStorage},
+    storage::{BatchOperations, SqliteStorage, StoredOutput, StoredWallet, WalletStorage},
 };
 
 #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
@@ -83,10 +83,21 @@ impl ScannerStorage {
     /// Create a new scanner storage instance with database
     #[cfg(feature = "storage")]
     pub async fn new_with_database(database_path: &str) -> WalletResult<Self> {
+        Self::new_with_performance_database(database_path, "production").await
+    }
+
+    /// Create a new scanner storage instance with high-performance database configuration
+    #[cfg(feature = "storage")]
+    pub async fn new_with_performance_database(
+        database_path: &str,
+        workload_type: &str,
+    ) -> WalletResult<Self> {
+        let (_batch_size, perf_config) = BatchOperations::recommend_batch_config(workload_type);
+
         let storage: Box<dyn WalletStorage> = if database_path == ":memory:" {
-            Box::new(SqliteStorage::new_in_memory().await?)
+            Box::new(SqliteStorage::new_in_memory_with_config(perf_config).await?)
         } else {
-            Box::new(SqliteStorage::new(database_path).await?)
+            Box::new(SqliteStorage::new_with_config(database_path, perf_config).await?)
         };
 
         storage.initialize().await?;

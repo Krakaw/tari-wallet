@@ -22,8 +22,8 @@ use crate::{
     },
     errors::{WalletError, WalletResult},
     storage::{
-        OutputFilter, OutputStatus, StorageStats, StoredOutput, StoredWallet, TransactionFilter,
-        WalletStorage,
+        OutputFilter, OutputStatus, SqlitePerformanceConfig, StorageStats, StoredOutput,
+        StoredWallet, TransactionFilter, WalletStorage,
     },
 };
 
@@ -31,26 +31,68 @@ use crate::{
 #[cfg(feature = "storage")]
 pub struct SqliteStorage {
     connection: Connection,
+    performance_config: SqlitePerformanceConfig,
 }
 
 #[cfg(feature = "storage")]
 impl SqliteStorage {
     /// Create a new SQLite storage instance
     pub async fn new<P: AsRef<Path>>(database_path: P) -> WalletResult<Self> {
+        Self::new_with_config(
+            database_path,
+            SqlitePerformanceConfig::production_optimized(),
+        )
+        .await
+    }
+
+    /// Create a new SQLite storage instance with custom performance configuration
+    pub async fn new_with_config<P: AsRef<Path>>(
+        database_path: P,
+        performance_config: SqlitePerformanceConfig,
+    ) -> WalletResult<Self> {
         let connection = Connection::open(database_path).await.map_err(|e| {
             WalletError::StorageError(format!("Failed to open SQLite database: {e}"))
         })?;
 
-        Ok(Self { connection })
+        let storage = Self {
+            connection,
+            performance_config,
+        };
+
+        // Apply performance optimizations before any other operations
+        storage
+            .performance_config
+            .apply_to_connection(&storage.connection)
+            .await?;
+
+        Ok(storage)
     }
 
     /// Create an in-memory SQLite storage instance (useful for testing)
     pub async fn new_in_memory() -> WalletResult<Self> {
+        Self::new_in_memory_with_config(SqlitePerformanceConfig::ultra_fast()).await
+    }
+
+    /// Create an in-memory SQLite storage instance with custom performance configuration
+    pub async fn new_in_memory_with_config(
+        performance_config: SqlitePerformanceConfig,
+    ) -> WalletResult<Self> {
         let connection = Connection::open(":memory:").await.map_err(|e| {
             WalletError::StorageError(format!("Failed to create in-memory database: {e}"))
         })?;
 
-        Ok(Self { connection })
+        let storage = Self {
+            connection,
+            performance_config,
+        };
+
+        // Apply performance optimizations
+        storage
+            .performance_config
+            .apply_to_connection(&storage.connection)
+            .await?;
+
+        Ok(storage)
     }
 
     /// Create the database schema
@@ -206,6 +248,11 @@ impl SqliteStorage {
             .call(move |conn| Ok(conn.execute_batch(sql)?))
             .await
             .map_err(|e| WalletError::StorageError(format!("Failed to create schema: {e}")))?;
+
+        // Apply scanning-specific optimizations after schema creation
+        self.performance_config
+            .apply_scanning_optimizations(&self.connection)
+            .await?;
 
         Ok(())
     }
@@ -1691,6 +1738,28 @@ mod storage_tests {
         wallet_transaction::WalletTransaction,
     };
 
+    /// Helper function to create a test wallet for foreign key compliance
+    async fn create_test_wallet(storage: &SqliteStorage) -> u32 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let test_wallet = StoredWallet {
+            id: None,
+            name: format!("test_wallet_{}_{}", std::process::id(), timestamp),
+            seed_phrase: None,
+            view_key_hex: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+                .to_string(),
+            spend_key_hex: None,
+            birthday_block: 0,
+            latest_scanned_block: None,
+            created_at: None,
+            updated_at: None,
+        };
+        storage.save_wallet(&test_wallet).await.unwrap()
+    }
+
     #[tokio::test]
     async fn test_sqlite_storage_initialization() {
         let storage = SqliteStorage::new_in_memory().await.unwrap();
@@ -1709,6 +1778,9 @@ mod storage_tests {
         let storage = SqliteStorage::new_in_memory().await.unwrap();
         storage.initialize().await.unwrap();
 
+        // Create a test wallet first to satisfy foreign key constraints
+        let wallet_id = create_test_wallet(&storage).await;
+
         let commitment = CompressedCommitment::new([1u8; 32]);
         let transaction = WalletTransaction::new(
             12345,
@@ -1723,8 +1795,11 @@ mod storage_tests {
             true,
         );
 
-        // Save transaction
-        storage.save_transaction(0, &transaction).await.unwrap();
+        // Save transaction with the correct wallet_id
+        storage
+            .save_transaction(wallet_id, &transaction)
+            .await
+            .unwrap();
 
         // Retrieve by commitment
         let retrieved = storage
@@ -1745,6 +1820,9 @@ mod storage_tests {
     async fn test_batch_save_transactions() {
         let storage = SqliteStorage::new_in_memory().await.unwrap();
         storage.initialize().await.unwrap();
+
+        // Create a test wallet first to satisfy foreign key constraints
+        let wallet_id = create_test_wallet(&storage).await;
 
         let transactions = vec![
             WalletTransaction::new(
@@ -1785,7 +1863,10 @@ mod storage_tests {
             ),
         ];
 
-        storage.save_transactions(0, &transactions).await.unwrap();
+        storage
+            .save_transactions(wallet_id, &transactions)
+            .await
+            .unwrap();
 
         let all_transactions = storage.get_transactions(None).await.unwrap();
         assert_eq!(all_transactions.len(), 3);
@@ -1801,6 +1882,9 @@ mod storage_tests {
         let storage = SqliteStorage::new_in_memory().await.unwrap();
         storage.initialize().await.unwrap();
 
+        // Create a test wallet first to satisfy foreign key constraints
+        let wallet_id = create_test_wallet(&storage).await;
+
         let commitment = CompressedCommitment::new([1u8; 32]);
         let transaction = WalletTransaction::new(
             100,
@@ -1815,7 +1899,10 @@ mod storage_tests {
             true,
         );
 
-        storage.save_transaction(0, &transaction).await.unwrap();
+        storage
+            .save_transaction(wallet_id, &transaction)
+            .await
+            .unwrap();
 
         // Mark as spent
         let marked = storage
@@ -1846,6 +1933,9 @@ mod storage_tests {
     async fn test_filtered_queries() {
         let storage = SqliteStorage::new_in_memory().await.unwrap();
         storage.initialize().await.unwrap();
+
+        // Create a test wallet first to satisfy foreign key constraints
+        let wallet_id = create_test_wallet(&storage).await;
 
         // Add test transactions
         let transactions = vec![
@@ -1887,7 +1977,10 @@ mod storage_tests {
             ),
         ];
 
-        storage.save_transactions(0, &transactions).await.unwrap();
+        storage
+            .save_transactions(wallet_id, &transactions)
+            .await
+            .unwrap();
 
         // Test filter by direction
         let inbound_filter = TransactionFilter::new().with_direction(TransactionDirection::Inbound);
@@ -1930,6 +2023,9 @@ mod storage_tests {
         let storage = SqliteStorage::new_in_memory().await.unwrap();
         storage.initialize().await.unwrap();
 
+        // Create a test wallet first to satisfy foreign key constraints
+        let wallet_id = create_test_wallet(&storage).await;
+
         let commitment1 = CompressedCommitment::new([1u8; 32]);
         let commitment2 = CompressedCommitment::new([2u8; 32]);
 
@@ -1959,8 +2055,14 @@ mod storage_tests {
             true,
         );
 
-        storage.save_transaction(0, &inbound_tx1).await.unwrap();
-        storage.save_transaction(0, &inbound_tx2).await.unwrap();
+        storage
+            .save_transaction(wallet_id, &inbound_tx1)
+            .await
+            .unwrap();
+        storage
+            .save_transaction(wallet_id, &inbound_tx2)
+            .await
+            .unwrap();
 
         // Mark one as spent
         storage
@@ -1969,7 +2071,7 @@ mod storage_tests {
             .unwrap();
 
         // Load wallet state
-        let wallet_state = storage.load_wallet_state(0).await.unwrap();
+        let wallet_state = storage.load_wallet_state(wallet_id).await.unwrap();
 
         // Verify the state
         let (total_received, total_spent, balance, unspent_count, spent_count) =
@@ -1993,6 +2095,9 @@ mod storage_tests {
     async fn test_block_range_queries() {
         let storage = SqliteStorage::new_in_memory().await.unwrap();
         storage.initialize().await.unwrap();
+
+        // Create a test wallet first to satisfy foreign key constraints
+        let wallet_id = create_test_wallet(&storage).await;
 
         // Add transactions across different blocks
         let transactions = vec![
@@ -2034,7 +2139,10 @@ mod storage_tests {
             ),
         ];
 
-        storage.save_transactions(0, &transactions).await.unwrap();
+        storage
+            .save_transactions(wallet_id, &transactions)
+            .await
+            .unwrap();
 
         // Test block range queries
         let range_txs = storage
@@ -2056,6 +2164,9 @@ mod storage_tests {
         let storage = SqliteStorage::new_in_memory().await.unwrap();
         storage.initialize().await.unwrap();
 
+        // Create a test wallet first to satisfy foreign key constraints
+        let wallet_id = create_test_wallet(&storage).await;
+
         // Add some transactions
         let transaction = WalletTransaction::new(
             100,
@@ -2069,7 +2180,10 @@ mod storage_tests {
             TransactionDirection::Inbound,
             true,
         );
-        storage.save_transaction(0, &transaction).await.unwrap();
+        storage
+            .save_transaction(wallet_id, &transaction)
+            .await
+            .unwrap();
 
         // Verify they exist
         let count = storage.get_transaction_count().await.unwrap();

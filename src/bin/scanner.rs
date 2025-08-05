@@ -568,8 +568,8 @@ async fn main_unified() -> WalletResult<()> {
         // Keys provided - use memory-only storage
         ScannerStorage::new_memory()
     } else {
-        // No keys provided - use database storage
-        ScannerStorage::new_with_database(&args.database).await?
+        // No keys provided - use high-performance database storage optimized for scanning
+        ScannerStorage::new_with_performance_database(&args.database, "scanning").await?
     };
 
     #[cfg(not(feature = "storage"))]
@@ -727,12 +727,19 @@ async fn main_unified() -> WalletResult<()> {
     if !storage_backend.is_memory_only {
         use lightweight_wallet_libs::events::listeners::DatabaseStorageListener;
         if let Some(db_path) = &config.database_path {
-            match DatabaseStorageListener::new(db_path).await {
+            // Use high-performance database configuration for scanning workloads
+            match DatabaseStorageListener::builder()
+                .performance_preset() // High-performance settings optimized for scanning
+                .database_path(db_path)
+                .auto_start_background_writer(true)
+                .build()
+                .await
+            {
                 Ok(mut db_listener) => {
                     db_listener.set_wallet_id(storage_backend.wallet_id);
                     if !args.quiet && storage_backend.wallet_id.is_some() {
                         println!(
-                            "🔗 Database event listener configured for wallet ID: {:?}",
+                            "🔗 High-performance database event listener configured for wallet ID: {:?}",
                             storage_backend.wallet_id
                         );
                     }
@@ -748,9 +755,10 @@ async fn main_unified() -> WalletResult<()> {
         }
     }
 
-    // Create event emitter and wallet scanner
+    // Create event emitter and wallet scanner with optimized fire_and_forget setting
+    // fire_and_forget(true) is FASTER for database writes as it doesn't block on event processing
     let event_emitter = ScanEventEmitter::new(event_dispatcher, "wallet_scanner".to_string())
-        .with_fire_and_forget(false);
+        .with_fire_and_forget(true);
     let mut wallet_scanner =
         WalletScannerStruct::from_config(scanner_config).with_event_emitter(event_emitter);
 

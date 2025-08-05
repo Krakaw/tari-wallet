@@ -7,12 +7,16 @@
 
 pub mod output_status;
 #[cfg(feature = "storage")]
+pub mod performance_optimizations;
+#[cfg(feature = "storage")]
 pub mod sqlite;
 #[cfg(feature = "storage")]
 pub mod storage_trait;
 pub mod stored_output;
 
 pub use output_status::*;
+#[cfg(feature = "storage")]
+pub use performance_optimizations::*;
 #[cfg(feature = "storage")]
 pub use sqlite::*;
 
