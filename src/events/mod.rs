@@ -90,6 +90,9 @@ pub mod listeners;
 pub mod test_utils;
 pub mod types;
 
+#[cfg(test)]
+mod serialization_tests;
+
 // Re-export core types for convenience
 pub use error_recovery::{
     ErrorRecord, ErrorRecoveryConfig, ErrorRecoveryManager, ErrorStats, RetryableOperation,
