@@ -483,6 +483,254 @@ impl Wallet {
     pub fn master_key_bytes(&self) -> [u8; 32] {
         *self.master_key.as_bytes()
     }
+
+    // UTXO Event Emission Methods
+
+    /// Emit a UTXO received event
+    ///
+    /// This method should be called when the wallet detects that it has received a new UTXO.
+    /// It creates a UtxoReceived event with the provided details and dispatches it to all
+    /// registered event listeners.
+    ///
+    /// # Arguments
+    ///
+    /// * `amount` - The amount received in microTari
+    /// * `block_height` - Block height where the UTXO was confirmed
+    /// * `block_hash` - Block hash where the UTXO was confirmed
+    /// * `block_timestamp` - Block timestamp
+    /// * `transaction_hash` - Transaction hash containing this output
+    /// * `output_index` - Output index within the transaction
+    /// * `commitment` - The commitment value of the output
+    /// * `features` - Features flags for this output
+    /// * `key_index` - Key index used for this output
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the event was successfully dispatched, or an error if dispatch fails.
+    pub async fn emit_utxo_received(
+        &mut self,
+        amount: u64,
+        block_height: u64,
+        block_hash: String,
+        block_timestamp: u64,
+        transaction_hash: String,
+        output_index: usize,
+        commitment: String,
+        features: u32,
+        key_index: u64,
+    ) -> Result<(), crate::events::types::WalletEventError> {
+        // Check if we have an event registry first
+        if self.event_registry.is_none() {
+            return Ok(());
+        }
+
+        // Generate a UTXO ID from commitment
+        let utxo_id = format!("utxo_{}", &commitment[..16]); // Use first 16 chars of commitment as ID
+
+        // Get wallet ID from metadata or use default
+        let wallet_id = self.metadata.label.as_deref().unwrap_or("default");
+
+        // Generate receiving address for display (simplified)
+        let receiving_address = match self.get_dual_address(
+            crate::data_structures::address::TariAddressFeatures::default(),
+            None,
+        ) {
+            Ok(addr) => addr.to_base58(),
+            Err(_) => "unknown".to_string(),
+        };
+
+        // Create the UTXO received payload
+        let payload = crate::events::types::UtxoReceivedPayload::new(
+            utxo_id,
+            amount,
+            block_height,
+            block_hash,
+            block_timestamp,
+            transaction_hash,
+            output_index,
+            receiving_address,
+            key_index,
+            commitment,
+            features,
+            self.metadata.network.clone(),
+        );
+
+        // Create the wallet event
+        let event = crate::events::types::WalletEvent::utxo_received(wallet_id, payload);
+
+        // Dispatch the event (now we can safely get mutable reference)
+        if let Some(registry) = self.event_registry.as_mut() {
+            registry.dispatch(std::sync::Arc::new(event)).await;
+        }
+
+        Ok(())
+    }
+
+    /// Emit a UTXO spent event
+    ///
+    /// This method should be called when the wallet detects that one of its UTXOs has been spent.
+    /// It creates a UtxoSpent event with the provided details and dispatches it to all
+    /// registered event listeners.
+    ///
+    /// # Arguments
+    ///
+    /// * `amount` - The amount that was spent in microTari
+    /// * `original_block_height` - Block height where the UTXO was originally received
+    /// * `spending_block_height` - Block height where the UTXO was spent
+    /// * `spending_block_hash` - Block hash where the spending occurred
+    /// * `spending_block_timestamp` - Block timestamp when spent
+    /// * `spending_transaction_hash` - Transaction hash that spent this UTXO
+    /// * `input_index` - Input index within the spending transaction
+    /// * `commitment` - Commitment value of the spent output
+    /// * `key_index` - Key index used for this output
+    /// * `is_self_spend` - Whether this was an intentional spend by our wallet
+    /// * `transaction_fee` - Optional fee paid for the transaction
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the event was successfully dispatched, or an error if dispatch fails.
+    pub async fn emit_utxo_spent(
+        &mut self,
+        amount: u64,
+        original_block_height: u64,
+        spending_block_height: u64,
+        spending_block_hash: String,
+        spending_block_timestamp: u64,
+        spending_transaction_hash: String,
+        input_index: usize,
+        commitment: String,
+        key_index: u64,
+        is_self_spend: bool,
+        transaction_fee: Option<u64>,
+    ) -> Result<(), crate::events::types::WalletEventError> {
+        // Check if we have an event registry first
+        if self.event_registry.is_none() {
+            return Ok(());
+        }
+
+        // Generate a UTXO ID from commitment
+        let utxo_id = format!("utxo_{}", &commitment[..16]); // Use first 16 chars of commitment as ID
+
+        // Get wallet ID from metadata or use default
+        let wallet_id = self.metadata.label.as_deref().unwrap_or("default");
+
+        // Generate spending address for display (simplified)
+        let spending_address = match self.get_dual_address(
+            crate::data_structures::address::TariAddressFeatures::default(),
+            None,
+        ) {
+            Ok(addr) => addr.to_base58(),
+            Err(_) => "unknown".to_string(),
+        };
+
+        // Create the UTXO spent payload
+        let mut payload = crate::events::types::UtxoSpentPayload::new(
+            utxo_id,
+            amount,
+            original_block_height,
+            spending_block_height,
+            spending_block_hash,
+            spending_block_timestamp,
+            spending_transaction_hash,
+            input_index,
+            spending_address,
+            key_index,
+            commitment,
+            "commitment".to_string(), // match method
+            is_self_spend,
+            self.metadata.network.clone(),
+        );
+
+        // Add transaction fee if provided
+        if let Some(fee) = transaction_fee {
+            payload = payload.with_transaction_fee(fee);
+        }
+
+        // Create the wallet event
+        let event = crate::events::types::WalletEvent::utxo_spent(wallet_id, payload);
+
+        // Dispatch the event (now we can safely get mutable reference)
+        if let Some(registry) = self.event_registry.as_mut() {
+            registry.dispatch(std::sync::Arc::new(event)).await;
+        }
+
+        Ok(())
+    }
+
+    /// Emit a blockchain reorganization event
+    ///
+    /// This method should be called when the wallet detects a blockchain reorganization
+    /// that affects its state. It creates a Reorg event with the provided details and
+    /// dispatches it to all registered event listeners.
+    ///
+    /// # Arguments
+    ///
+    /// * `fork_height` - The block height where the reorg diverged
+    /// * `old_block_hash` - The old block hash at the fork point
+    /// * `new_block_hash` - The new block hash at the fork point
+    /// * `rollback_depth` - How many blocks were rolled back
+    /// * `new_blocks_count` - How many new blocks were added
+    /// * `affected_utxo_ids` - List of UTXO IDs affected by the reorg
+    /// * `balance_change` - Balance change due to the reorg
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the event was successfully dispatched, or an error if dispatch fails.
+    pub async fn emit_reorg(
+        &mut self,
+        fork_height: u64,
+        old_block_hash: String,
+        new_block_hash: String,
+        rollback_depth: u64,
+        new_blocks_count: u64,
+        affected_utxo_ids: Vec<String>,
+        balance_change: i64,
+    ) -> Result<(), crate::events::types::WalletEventError> {
+        if let Some(registry) = self.event_registry.as_mut() {
+            // Get wallet ID from metadata or use default
+            let wallet_id = self.metadata.label.as_deref().unwrap_or("default");
+
+            // Create the reorg payload
+            let payload = crate::events::types::ReorgPayload::new(
+                fork_height,
+                old_block_hash,
+                new_block_hash,
+                rollback_depth,
+                new_blocks_count,
+                Vec::new(), // affected_transaction_hashes - would be provided by caller
+                affected_utxo_ids,
+                balance_change,
+                self.metadata.network.clone(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            );
+
+            // Create the wallet event
+            let event = crate::events::types::WalletEvent::reorg(wallet_id, payload);
+
+            // Dispatch the event
+            registry.dispatch(std::sync::Arc::new(event)).await;
+        }
+
+        Ok(())
+    }
+
+    /// Generate a unique wallet ID for event purposes
+    ///
+    /// This method generates a consistent wallet ID that can be used for event correlation.
+    /// It uses the wallet's metadata label if available, or generates one from the master key.
+    pub fn get_wallet_id(&self) -> String {
+        if let Some(label) = &self.metadata.label {
+            format!("wallet_{}", label)
+        } else {
+            // Generate ID from master key hash (first 8 chars)
+            let master_key_bytes = self.master_key.as_bytes();
+            let hash = blake2b_simd::blake2b(master_key_bytes);
+            format!("wallet_{}", hex::encode(&hash.as_bytes()[..4]))
+        }
+    }
 }
 
 impl Zeroize for Wallet {
@@ -1241,5 +1489,157 @@ mod tests {
         assert!(TariAddress::from_emoji_string(&emoji).is_ok());
         assert!(TariAddress::from_base58(&base58).is_ok());
         assert!(TariAddress::from_hex(&hex).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_wallet_utxo_received_event_emission() {
+        use crate::events::listeners::event_logger::EventLogger;
+
+        // Create wallet with event system enabled
+        let mut wallet = Wallet::generate_new(None);
+        wallet.enable_events();
+
+        // Add event logger to capture events
+        let logger = EventLogger::console().unwrap();
+        wallet.add_event_listener(Box::new(logger)).await.unwrap();
+
+        // Emit a UTXO received event
+        let result = wallet
+            .emit_utxo_received(
+                1000000, // 1 Tari in microTari
+                12345,   // block height
+                "block_hash_123".to_string(),
+                1234567890, // timestamp
+                "tx_hash_abc".to_string(),
+                0,                                 // output index
+                "commitment_12345678".to_string(), // commitment
+                0,                                 // features
+                0,                                 // key index
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_wallet_utxo_spent_event_emission() {
+        use crate::events::listeners::event_logger::EventLogger;
+
+        // Create wallet with event system enabled
+        let mut wallet = Wallet::generate_new(None);
+        wallet.enable_events();
+
+        // Add event logger to capture events
+        let logger = EventLogger::console().unwrap();
+        wallet.add_event_listener(Box::new(logger)).await.unwrap();
+
+        // Emit a UTXO spent event
+        let result = wallet
+            .emit_utxo_spent(
+                1000000, // 1 Tari in microTari
+                12340,   // original block height
+                12350,   // spending block height
+                "spending_block_hash_456".to_string(),
+                1234567900, // spending timestamp
+                "spending_tx_hash_def".to_string(),
+                1,                                 // input index
+                "commitment_12345678".to_string(), // commitment
+                0,                                 // key index
+                true,                              // is self spend
+                Some(1000),                        // transaction fee
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_wallet_reorg_event_emission() {
+        use crate::events::listeners::event_logger::EventLogger;
+
+        // Create wallet with event system enabled
+        let mut wallet = Wallet::generate_new(None);
+        wallet.enable_events();
+
+        // Add event logger to capture events
+        let logger = EventLogger::console().unwrap();
+        wallet.add_event_listener(Box::new(logger)).await.unwrap();
+
+        // Emit a reorg event
+        let result = wallet
+            .emit_reorg(
+                12340, // fork height
+                "old_block_hash".to_string(),
+                "new_block_hash".to_string(),
+                3,                                                // rollback depth
+                5,                                                // new blocks count
+                vec!["utxo_1".to_string(), "utxo_2".to_string()], // affected UTXOs
+                -500000,                                          // balance change (lost 0.5 Tari)
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_wallet_id_generation() {
+        // Test with label
+        let mut wallet_with_label = Wallet::generate_new(None);
+        wallet_with_label.set_label(Some("test_wallet".to_string()));
+        let id_with_label = wallet_with_label.get_wallet_id();
+        assert_eq!(id_with_label, "wallet_test_wallet");
+
+        // Test without label (should generate from master key)
+        let wallet_without_label = Wallet::generate_new(None);
+        let id_without_label = wallet_without_label.get_wallet_id();
+        assert!(id_without_label.starts_with("wallet_"));
+        assert_eq!(id_without_label.len(), 15); // "wallet_" + 8 hex chars
+
+        // Test that same master key produces same ID
+        let master_key = [42u8; 32];
+        let wallet1 = Wallet::new(master_key, 123);
+        let wallet2 = Wallet::new(master_key, 456); // different birthday, same key
+        assert_eq!(wallet1.get_wallet_id(), wallet2.get_wallet_id());
+    }
+
+    #[tokio::test]
+    async fn test_wallet_event_emission_without_listeners() {
+        // Create wallet without event system enabled
+        let mut wallet = Wallet::generate_new(None);
+        assert!(!wallet.events_enabled());
+
+        // Emit events should succeed but do nothing
+        let result1 = wallet
+            .emit_utxo_received(
+                1000000,
+                12345,
+                "block_hash".to_string(),
+                1234567890,
+                "tx_hash".to_string(),
+                0,
+                "commitment".to_string(),
+                0,
+                0,
+            )
+            .await;
+
+        let result2 = wallet
+            .emit_utxo_spent(
+                1000000,
+                12340,
+                12350,
+                "spending_block_hash".to_string(),
+                1234567900,
+                "spending_tx_hash".to_string(),
+                1,
+                "commitment".to_string(),
+                0,
+                true,
+                None,
+            )
+            .await;
+
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
     }
 }
