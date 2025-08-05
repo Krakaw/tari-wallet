@@ -1051,6 +1051,7 @@ mod native_tests {
         let event2 = WalletScanEvent::scan_progress(
             50,
             100,
+            1050,
             50.0,
             10.0,
             Some(std::time::Duration::from_secs(5)),
@@ -1266,6 +1267,7 @@ mod native_tests {
                 2 => WalletScanEvent::scan_progress(
                     i,
                     100,
+                    1000 + i,
                     i as f64,
                     10.0,
                     Some(std::time::Duration::from_secs(5)),

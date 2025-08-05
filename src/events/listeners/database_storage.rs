@@ -508,19 +508,12 @@ impl DatabaseStorageListener {
     /// Handle ScanProgress event
     async fn handle_scan_progress(
         &mut self,
-        current_block: u64,
+        _current_block: u64,
         _total_blocks: u64,
         _percentage: f64,
         _speed_blocks_per_second: f64,
         _estimated_time_remaining: Option<std::time::Duration>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        // Optionally update wallet scanned block on progress events
-        // This provides more frequent updates than waiting for each block
-        if let Some(wallet_id) = self.wallet_id {
-            self.update_wallet_scanned_block(wallet_id, current_block)
-                .await?;
-        }
-
         Ok(())
     }
 

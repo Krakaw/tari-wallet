@@ -320,7 +320,7 @@ impl ScanEventEmitter {
         &mut self,
         blocks_processed: u64,
         total_blocks: u64,
-        _current_block_height: u64,
+        current_block_height: u64,
         _outputs_found: usize,
         processing_rate: Option<f64>,
         estimated_completion: Option<SystemTime>,
@@ -335,14 +335,12 @@ impl ScanEventEmitter {
         let estimated_time_remaining = estimated_completion
             .and_then(|completion| SystemTime::now().duration_since(completion).ok());
 
-        // Note: We use blocks_processed as current_block for progress display,
-        // even though current_block_height is the actual block height.
-        // This is because the progress calculation and display expects
-        // current_block to represent the count of blocks processed, not the block height.
+        // Include both blocks_processed (for percentage calculation) and current_block_height (for display)
         let event = WalletScanEvent::ScanProgress {
             metadata,
             current_block: blocks_processed,
             total_blocks,
+            current_block_height,
             percentage,
             speed_blocks_per_second: processing_rate.unwrap_or(0.0),
             estimated_time_remaining,
@@ -683,7 +681,7 @@ mod tests {
         emitter.scan_start_time = Some(SystemTime::now() - Duration::from_secs(10));
 
         let result = emitter
-            .emit_scan_progress(1500, 2000, 500, 10, Some(50.0), None)
+            .emit_scan_progress(1500, 2000, 16500, 10, Some(50.0), None)
             .await;
         assert!(result.is_ok());
     }

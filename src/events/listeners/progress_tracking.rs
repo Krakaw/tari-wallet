@@ -1201,6 +1201,7 @@ mod tests {
         let progress_event = Arc::new(WalletScanEvent::scan_progress(
             1050,
             101,
+            2050,
             50.0,
             10.5,
             Some(Duration::from_secs(30)),

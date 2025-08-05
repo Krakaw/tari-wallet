@@ -750,7 +750,7 @@ async fn main_unified() -> WalletResult<()> {
 
     // Create event emitter and wallet scanner
     let event_emitter = ScanEventEmitter::new(event_dispatcher, "wallet_scanner".to_string())
-        .with_fire_and_forget(true);
+        .with_fire_and_forget(false);
     let mut wallet_scanner =
         WalletScannerStruct::from_config(scanner_config).with_event_emitter(event_emitter);
 

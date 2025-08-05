@@ -657,6 +657,7 @@ impl ConsoleLoggingListener {
                 metadata: crate::events::types::EventMetadata::new("console_logger"),
                 current_block,
                 total_blocks,
+                current_block_height: current_block, // Use current_block as fallback
                 percentage,
                 speed_blocks_per_second,
                 estimated_time_remaining: *estimated_time_remaining,
@@ -1331,6 +1332,7 @@ mod tests {
             metadata: EventMetadata::new("test"),
             current_block: 100,
             total_blocks: 1000,
+            current_block_height: 1100,
             percentage: 10.0,
             speed_blocks_per_second: 5.0,
             estimated_time_remaining: None,
@@ -1476,6 +1478,7 @@ mod tests {
             metadata: EventMetadata::new("test"),
             current_block: 100,
             total_blocks: 1000,
+            current_block_height: 1100,
             percentage: 10.0,
             speed_blocks_per_second: 5.0,
             estimated_time_remaining: None,

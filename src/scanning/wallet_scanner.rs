@@ -2055,10 +2055,6 @@ async fn scan_wallet_across_blocks_with_cancellation(
                         )
                         .await?;
 
-                    if !config.quiet && found_outputs > 0 {
-                        println!("Block {}: found {} outputs", block.height, found_outputs);
-                    }
-
                     // Emit individual OutputFound events for database storage and detailed logging
                     // (Progress counting is handled by BlockProcessed events to avoid double counting)
                     if found_outputs > 0 {
@@ -2842,7 +2838,7 @@ mod tests {
         for i in 0..3 {
             // This should return quickly in fire-and-forget mode, not waiting for slow listeners
             emitter
-                .emit_scan_progress(i, 10, 0, 0, Some(5.0), None)
+                .emit_scan_progress(i, 10, 1000 + i, 0, Some(5.0), None)
                 .await
                 .unwrap();
             println!("Emitted event {} at {:?}", i, start.elapsed());
@@ -2883,7 +2879,7 @@ mod tests {
 
         // Emit a single event
         emitter
-            .emit_scan_progress(1, 10, 0, 0, Some(5.0), None)
+            .emit_scan_progress(1, 10, 1001, 0, Some(5.0), None)
             .await
             .unwrap();
 

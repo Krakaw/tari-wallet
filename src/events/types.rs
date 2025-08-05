@@ -427,6 +427,7 @@ pub enum WalletScanEvent {
         metadata: EventMetadata,
         current_block: u64,
         total_blocks: u64,
+        current_block_height: u64,
         percentage: f64,
         speed_blocks_per_second: f64,
         estimated_time_remaining: Option<Duration>,
@@ -800,6 +801,7 @@ impl WalletScanEvent {
     pub fn scan_progress(
         current_block: u64,
         total_blocks: u64,
+        current_block_height: u64,
         percentage: f64,
         speed_blocks_per_second: f64,
         estimated_time_remaining: Option<Duration>,
@@ -808,6 +810,7 @@ impl WalletScanEvent {
             metadata: EventMetadata::new("wallet_scanner"),
             current_block,
             total_blocks,
+            current_block_height,
             percentage,
             speed_blocks_per_second,
             estimated_time_remaining,
@@ -1367,14 +1370,21 @@ mod tests {
 
     #[test]
     fn test_scan_progress_event_creation() {
-        let event =
-            WalletScanEvent::scan_progress(750, 1000, 75.0, 5.5, Some(Duration::from_secs(45)));
+        let event = WalletScanEvent::scan_progress(
+            750,
+            1000,
+            1750,
+            75.0,
+            5.5,
+            Some(Duration::from_secs(45)),
+        );
 
         match &event {
             WalletScanEvent::ScanProgress {
                 metadata,
                 current_block,
                 total_blocks,
+                current_block_height: _,
                 percentage,
                 speed_blocks_per_second,
                 estimated_time_remaining,
@@ -1393,8 +1403,14 @@ mod tests {
 
     #[test]
     fn test_scan_progress_event_traits() {
-        let event =
-            WalletScanEvent::scan_progress(500, 2000, 25.0, 10.0, Some(Duration::from_secs(150)));
+        let event = WalletScanEvent::scan_progress(
+            500,
+            2000,
+            1500,
+            25.0,
+            10.0,
+            Some(Duration::from_secs(150)),
+        );
 
         // Test EventType trait
         assert_eq!(event.event_type(), "ScanProgress");
@@ -1423,7 +1439,7 @@ mod tests {
 
     #[test]
     fn test_scan_progress_no_eta() {
-        let event = WalletScanEvent::scan_progress(100, 500, 20.0, 2.0, None);
+        let event = WalletScanEvent::scan_progress(100, 500, 1100, 20.0, 2.0, None);
 
         match &event {
             WalletScanEvent::ScanProgress {
@@ -1457,7 +1473,7 @@ mod tests {
         ];
 
         for (duration, expected_format) in test_cases {
-            let event = WalletScanEvent::scan_progress(100, 200, 50.0, 1.0, Some(duration));
+            let event = WalletScanEvent::scan_progress(100, 200, 1100, 50.0, 1.0, Some(duration));
             let summary = event.summary();
             assert!(
                 summary.contains(expected_format),
@@ -1469,7 +1485,7 @@ mod tests {
     #[test]
     fn test_scan_progress_edge_cases() {
         // Test 0% progress
-        let event = WalletScanEvent::scan_progress(0, 1000, 0.0, 0.0, None);
+        let event = WalletScanEvent::scan_progress(0, 1000, 1000, 0.0, 0.0, None);
         match &event {
             WalletScanEvent::ScanProgress {
                 current_block,
@@ -1485,7 +1501,8 @@ mod tests {
         }
 
         // Test 100% progress
-        let event = WalletScanEvent::scan_progress(1000, 1000, 100.0, 5.0, Some(Duration::ZERO));
+        let event =
+            WalletScanEvent::scan_progress(1000, 1000, 2000, 100.0, 5.0, Some(Duration::ZERO));
         match &event {
             WalletScanEvent::ScanProgress {
                 current_block,
@@ -1511,6 +1528,7 @@ mod tests {
             metadata,
             current_block: 300,
             total_blocks: 600,
+            current_block_height: 1300,
             percentage: 50.0,
             speed_blocks_per_second: 8.0,
             estimated_time_remaining: Some(Duration::from_secs(37)),

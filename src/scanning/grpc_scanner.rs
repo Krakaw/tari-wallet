@@ -16,8 +16,6 @@ use std::time::Duration;
 use tari_utilities::ByteArray;
 #[cfg(feature = "grpc")]
 use tonic::{transport::Channel, Request};
-#[cfg(feature = "grpc")]
-use tracing::{debug, info};
 
 #[cfg(feature = "grpc")]
 use crate::{
@@ -678,7 +676,6 @@ impl GrpcBlockchainScanner {
 
         // Get all outputs from the block
         let outputs = self.get_outputs_from_block(block_height).await?;
-        info!("Found {} outputs in block {}", outputs.len(), block_height);
 
         if outputs.is_empty() {
             return Ok(wallet_outputs);
@@ -691,21 +688,10 @@ impl GrpcBlockchainScanner {
         for output in outputs {
             // Try to extract wallet output using reference-compatible approach
             if let Some(wallet_output) = scanning_logic.extract_wallet_output(&output)? {
-                info!(
-                    "Found wallet output in block {}: value={}, payment_id={:?}",
-                    block_height,
-                    wallet_output.value().as_u64(),
-                    wallet_output.payment_id()
-                );
                 wallet_outputs.push(wallet_output);
             }
         }
 
-        info!(
-            "Extracted {} wallet outputs from block {}",
-            wallet_outputs.len(),
-            block_height
-        );
         Ok(wallet_outputs)
     }
 
@@ -753,11 +739,6 @@ impl GrpcBlockchainScanner {
 #[async_trait(?Send)]
 impl BlockchainScanner for GrpcBlockchainScanner {
     async fn scan_blocks(&mut self, config: ScanConfig) -> WalletResult<Vec<BlockScanResult>> {
-        debug!(
-            "Starting GRPC block scan from height {} to {:?}",
-            config.start_height, config.end_height
-        );
-
         // Get tip info to determine end height
         let tip_info = self.get_tip_info().await?;
         let end_height = config.end_height.unwrap_or(tip_info.best_block_height);
@@ -852,10 +833,6 @@ impl BlockchainScanner for GrpcBlockchainScanner {
             current_height = batch_end + 1;
         }
 
-        debug!(
-            "GRPC scan completed, found {} blocks with wallet outputs",
-            results.len()
-        );
         Ok(results)
     }
 
@@ -914,9 +891,8 @@ impl BlockchainScanner for GrpcBlockchainScanner {
                     match extract_wallet_output(output, &ExtractionConfig::default()) {
                         Ok(wallet_output) => wallet_outputs.push(wallet_output),
                         Err(e) => {
-                            debug!(
-                                "Failed to extract wallet output during commitment search: {}",
-                                e
+                            println!(
+                                "Failed to extract wallet output during commitment search: {e}"
                             );
                         }
                     }

@@ -294,13 +294,22 @@ impl AsciiProgressBarListener {
             String::new()
         };
 
+        // Calculate the to_block from current block height and remaining blocks
+        // For range scanning: to_block = current_block_height + (total_blocks - blocks_processed)
+        let to_block = if state.total_blocks > 0 && state.blocks_processed > 0 {
+            state.current_block_height + (state.total_blocks - state.blocks_processed)
+        } else {
+            // Fallback: assume we're starting from the current block
+            state.current_block_height + state.total_blocks.saturating_sub(1)
+        };
+
         // Print the progress line using carriage return for real-time updates
         print!(
             "\r🔍 [{}] {:.1}% ({}/{}) | Block {}{}{}{}   ",
             progress_bar,
             state.progress_percent,
-            format_number(state.blocks_processed), // Show blocks processed
-            format_number(state.total_blocks),
+            format_number(state.current_block_height), // Show current block height
+            format_number(to_block),                   // Show calculated to_block
             format_number(state.current_block_height),
             speed_display,
             outputs_display,
@@ -385,17 +394,17 @@ impl EventListener for AsciiProgressBarListener {
             WalletScanEvent::ScanProgress {
                 current_block,
                 total_blocks,
+                current_block_height,
                 percentage,
                 speed_blocks_per_second,
                 estimated_time_remaining,
                 ..
             } => {
-                // Note: current_block now contains blocks_processed, not block height
-                // We'll use it for both values since we don't have access to the actual block height
+                // Now we have both blocks_processed and actual current block height
                 self.update_progress(
                     *current_block, // blocks_processed
                     *total_blocks,
-                    *current_block, // using same value for current_block_height (not ideal but functional)
+                    *current_block_height, // actual current block height
                     *percentage,
                     *speed_blocks_per_second,
                     *estimated_time_remaining,
@@ -511,11 +520,12 @@ mod tests {
         // Wait a bit to ensure the rate limiting allows the next update
         tokio::time::sleep(tokio::time::Duration::from_millis(60)).await;
 
-        // Test progress event (current_block now contains blocks_processed)
+        // Test progress event (current_block contains blocks_processed, current_block_height contains actual height)
         let progress_event = SharedEvent::new(WalletScanEvent::ScanProgress {
             metadata: EventMetadata::new("test"),
-            current_block: 500, // This is blocks_processed now
+            current_block: 500, // This is blocks_processed
             total_blocks: 2000,
+            current_block_height: 1500, // This is the actual current block height
             percentage: 50.0,
             speed_blocks_per_second: 10.5,
             estimated_time_remaining: Some(Duration::from_secs(60)),
@@ -527,7 +537,7 @@ mod tests {
         {
             let state = listener.state.lock().unwrap();
             assert_eq!(state.blocks_processed, 500);
-            assert_eq!(state.current_block_height, 500); // Same value since we don't have separate height
+            assert_eq!(state.current_block_height, 1500); // Now properly set to actual block height
             assert_eq!(state.total_blocks, 2000);
             assert_eq!(state.progress_percent, 50.0);
             assert!((state.blocks_per_sec - 10.5).abs() < 0.1);
@@ -578,8 +588,9 @@ mod tests {
 
         let progress_event = SharedEvent::new(WalletScanEvent::ScanProgress {
             metadata: EventMetadata::new("test"),
-            current_block: 500, // This is blocks_processed now
+            current_block: 500, // This is blocks_processed
             total_blocks: 2000,
+            current_block_height: 1500, // This is the actual current block height
             percentage: 50.0,
             speed_blocks_per_second: 10.5,
             estimated_time_remaining: Some(Duration::from_secs(60)),
