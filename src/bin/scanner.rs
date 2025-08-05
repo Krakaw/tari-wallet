@@ -228,6 +228,13 @@ pub struct CliArgs {
         help = "Wallet name to use for scanning. If not provided with database, will prompt for selection or creation"
     )]
     wallet_name: Option<String>,
+
+    /// Disable wallet event sourcing (enabled by default)
+    #[arg(
+        long,
+        help = "Disable wallet event sourcing and storage. Events are captured by default for audit trail and state reconstruction"
+    )]
+    no_wallet_events: bool,
 }
 
 // CLI-focused display helpers using library components

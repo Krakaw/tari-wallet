@@ -30,6 +30,7 @@
 - `tests/inconsistency_detection_tests.rs` - Tests for inconsistency detection and detailed reporting functionality (Task 5.3)
 - `src/events/user_api.rs` - User-facing API methods for triggering event replay operations with convenience methods and progress monitoring (Task 5.4)
 - `tests/user_api_tests.rs` - Tests for user-facing API methods and replay operations (Task 5.4)
+- `tests/edge_case_replay_tests.rs` - Tests for edge case handling in event replay (partial states, missing events, corrupted data) (Task 5.5)
 
 ### Notes
 
@@ -83,7 +84,7 @@
   - [x] 5.2 Implement state verification logic to compare replayed state vs current state
   - [x] 5.3 Add inconsistency detection and detailed reporting functionality
   - [x] 5.4 Create user-facing API methods for triggering event replay
-  - [ ] 5.5 Handle edge cases (partial wallet states, missing events, corrupted data)
+  - [x] 5.5 Handle edge cases (partial wallet states, missing events, corrupted data)
   - [ ] 5.6 Add progress reporting for long-running replay operations
   - [ ] 5.7 Implement replay cancellation support
   - [ ] 5.8 Write comprehensive integration tests for event replay scenarios

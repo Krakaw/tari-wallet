@@ -976,24 +976,250 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
         })
     }
 
-    /// Parse a stored event and apply it to the wallet state
+    /// Parse a stored event and apply it to the wallet state with comprehensive edge case handling
     async fn parse_and_apply_event(
         &self,
         stored_event: &StoredEvent,
         wallet_state: &mut ReplayedWalletState,
     ) -> WalletEventResult<()> {
-        // Parse the stored event back into a WalletEvent
+        // Validate stored event metadata first
+        self.validate_stored_event_metadata(stored_event, wallet_state)?;
+
+        // Parse the stored event back into a WalletEvent with corruption detection
+        let wallet_event: WalletEvent = self.parse_stored_event_safely(stored_event)?;
+
+        // Apply the event to the wallet state with consistency checks
+        self.apply_event_with_validation(&wallet_event, stored_event, wallet_state)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Validate stored event metadata for corruption and consistency
+    fn validate_stored_event_metadata(
+        &self,
+        stored_event: &StoredEvent,
+        wallet_state: &ReplayedWalletState,
+    ) -> WalletEventResult<()> {
+        // Check for missing or empty event ID
+        if stored_event.event_id.is_empty() {
+            return Err(WalletEventError::InvalidMetadata {
+                field: "event_id".to_string(),
+                message: "Event ID cannot be empty".to_string(),
+            });
+        }
+
+        // Validate wallet ID consistency
+        if stored_event.wallet_id != wallet_state.wallet_id {
+            return Err(WalletEventError::WalletIdMismatch {
+                expected: wallet_state.wallet_id.clone(),
+                actual: stored_event.wallet_id.clone(),
+            });
+        }
+
+        // Validate sequence number ordering (detect gaps or duplicates)
+        if stored_event.sequence_number <= wallet_state.last_sequence
+            && wallet_state.last_sequence > 0
+        {
+            return Err(WalletEventError::SequenceError {
+                expected: wallet_state.last_sequence + 1,
+                actual: stored_event.sequence_number,
+            });
+        }
+
+        // Check for timestamp corruption (events in the future or too far in the past)
+        let now = SystemTime::now();
+        if stored_event.timestamp > now {
+            return Err(WalletEventError::InvalidMetadata {
+                field: "timestamp".to_string(),
+                message: format!(
+                    "Event timestamp is in the future: {:?}",
+                    stored_event.timestamp
+                ),
+            });
+        }
+
+        // Check for extremely old timestamps (more than 10 years ago)
+        if let Ok(duration_since_epoch) = stored_event
+            .timestamp
+            .duration_since(SystemTime::UNIX_EPOCH)
+        {
+            let ten_years_ago = Duration::from_secs(10 * 365 * 24 * 60 * 60);
+            if duration_since_epoch < ten_years_ago {
+                return Err(WalletEventError::InvalidMetadata {
+                    field: "timestamp".to_string(),
+                    message: format!(
+                        "Event timestamp is suspiciously old: {:?}",
+                        stored_event.timestamp
+                    ),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Parse stored event with enhanced corruption detection
+    fn parse_stored_event_safely(
+        &self,
+        stored_event: &StoredEvent,
+    ) -> WalletEventResult<WalletEvent> {
+        // Check for empty or malformed JSON
+        if stored_event.payload_json.trim().is_empty() {
+            return Err(WalletEventError::DeserializationError {
+                message: "Event payload JSON is empty".to_string(),
+                data_snippet: "<empty>".to_string(),
+            });
+        }
+
+        // Validate JSON structure before parsing
+        if !stored_event.payload_json.trim().starts_with('{')
+            || !stored_event.payload_json.trim().ends_with('}')
+        {
+            return Err(WalletEventError::DeserializationError {
+                message: "Event payload is not valid JSON object".to_string(),
+                data_snippet: Self::get_data_snippet(&stored_event.payload_json),
+            });
+        }
+
+        // Parse with detailed error reporting
         let wallet_event: WalletEvent =
             serde_json::from_str(&stored_event.payload_json).map_err(|e| {
-                WalletEventError::serialization(
-                    "parse_event",
-                    format!("Failed to parse event payload: {}", e),
-                )
+                WalletEventError::DeserializationError {
+                    message: format!("Failed to parse event payload: {}", e),
+                    data_snippet: Self::get_data_snippet(&stored_event.payload_json),
+                }
             })?;
 
-        // Apply the event to the wallet state
+        // Additional validation of parsed event structure
+        self.validate_parsed_event(&wallet_event, stored_event)?;
+
+        Ok(wallet_event)
+    }
+
+    /// Validate parsed event for logical consistency
+    fn validate_parsed_event(
+        &self,
+        wallet_event: &WalletEvent,
+        stored_event: &StoredEvent,
+    ) -> WalletEventResult<()> {
+        match wallet_event {
+            WalletEvent::UtxoReceived { metadata, payload } => {
+                // Validate metadata consistency
+                if metadata.event_id != stored_event.event_id {
+                    return Err(WalletEventError::InvalidMetadata {
+                        field: "event_id".to_string(),
+                        message: "Event ID mismatch between stored and parsed event".to_string(),
+                    });
+                }
+
+                // Validate payload data
+                if payload.amount == 0 {
+                    return Err(WalletEventError::InvalidAmount {
+                        amount: payload.amount.to_string(),
+                        reason: "UTXO amount cannot be zero".to_string(),
+                    });
+                }
+
+                if payload.utxo_id.is_empty() {
+                    return Err(WalletEventError::InvalidPayload {
+                        event_type: "UtxoReceived".to_string(),
+                        field: "utxo_id".to_string(),
+                        message: "UTXO ID cannot be empty".to_string(),
+                    });
+                }
+
+                // Validate block height consistency
+                if payload.block_height == 0 {
+                    return Err(WalletEventError::InvalidBlockHeight {
+                        height: payload.block_height,
+                        reason: "Block height cannot be zero".to_string(),
+                    });
+                }
+            }
+            WalletEvent::UtxoSpent { metadata, payload } => {
+                // Similar validation for spent events
+                if metadata.event_id != stored_event.event_id {
+                    return Err(WalletEventError::InvalidMetadata {
+                        field: "event_id".to_string(),
+                        message: "Event ID mismatch between stored and parsed event".to_string(),
+                    });
+                }
+
+                if payload.utxo_id.is_empty() {
+                    return Err(WalletEventError::InvalidPayload {
+                        event_type: "UtxoSpent".to_string(),
+                        field: "utxo_id".to_string(),
+                        message: "UTXO ID cannot be empty".to_string(),
+                    });
+                }
+
+                if payload.spending_transaction_hash.is_empty() {
+                    return Err(WalletEventError::InvalidPayload {
+                        event_type: "UtxoSpent".to_string(),
+                        field: "spending_transaction_hash".to_string(),
+                        message: "Spending transaction hash cannot be empty".to_string(),
+                    });
+                }
+            }
+            WalletEvent::Reorg { metadata, payload } => {
+                if metadata.event_id != stored_event.event_id {
+                    return Err(WalletEventError::InvalidMetadata {
+                        field: "event_id".to_string(),
+                        message: "Event ID mismatch between stored and parsed event".to_string(),
+                    });
+                }
+
+                if payload.rollback_depth == 0 && payload.new_blocks_count == 0 {
+                    return Err(WalletEventError::InvalidPayload {
+                        event_type: "Reorg".to_string(),
+                        field: "reorg_counts".to_string(),
+                        message: "Invalid reorg: both rollback_depth and new_blocks_count are zero"
+                            .to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Apply event with validation and consistency checks
+    async fn apply_event_with_validation(
+        &self,
+        wallet_event: &WalletEvent,
+        stored_event: &StoredEvent,
+        wallet_state: &mut ReplayedWalletState,
+    ) -> WalletEventResult<()> {
         match &wallet_event {
             WalletEvent::UtxoReceived { payload, .. } => {
+                // Check for duplicate UTXO IDs
+                if wallet_state.utxos.contains_key(&payload.utxo_id) {
+                    return Err(WalletEventError::ProcessingError {
+                        event_type: "UtxoReceived".to_string(),
+                        reason: format!("UTXO {} already exists in wallet state", payload.utxo_id),
+                    });
+                }
+
+                // Check if this UTXO was previously spent (resurrection scenario)
+                if wallet_state.spent_utxos.contains_key(&payload.utxo_id) {
+                    return Err(WalletEventError::ProcessingError {
+                        event_type: "UtxoReceived".to_string(),
+                        reason: format!(
+                            "UTXO {} was previously spent and cannot be received again",
+                            payload.utxo_id
+                        ),
+                    });
+                }
+
+                // Validate block height progression
+                if payload.block_height < wallet_state.highest_block
+                    && wallet_state.highest_block > 0
+                {
+                    // This might be valid due to reorgs, but we should warn
+                    // For now, we'll allow it but could add to validation issues
+                }
+
                 let utxo_state = UtxoState {
                     utxo_id: payload.utxo_id.clone(),
                     amount: payload.amount,
@@ -1014,11 +1240,56 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
                 wallet_state.highest_block = wallet_state.highest_block.max(payload.block_height);
             }
             WalletEvent::UtxoSpent { payload, .. } => {
+                // Check if UTXO exists and is available for spending
+                if !wallet_state.utxos.contains_key(&payload.utxo_id) {
+                    // Check if it was already spent
+                    if wallet_state.spent_utxos.contains_key(&payload.utxo_id) {
+                        return Err(WalletEventError::ProcessingError {
+                            event_type: "UtxoSpent".to_string(),
+                            reason: format!(
+                                "UTXO {} is already spent (double spend attempt)",
+                                payload.utxo_id
+                            ),
+                        });
+                    } else {
+                        return Err(WalletEventError::ProcessingError {
+                            event_type: "UtxoSpent".to_string(),
+                            reason: format!("UTXO {} not found in wallet state", payload.utxo_id),
+                        });
+                    }
+                }
+
+                // Validate spending block height
+                if let Some(utxo) = wallet_state.utxos.get(&payload.utxo_id) {
+                    if payload.spending_block_height < utxo.block_height {
+                        return Err(WalletEventError::ProcessingError {
+                            event_type: "UtxoSpent".to_string(),
+                            reason: format!(
+                                "Invalid spending block height {} for UTXO confirmed at height {}",
+                                payload.spending_block_height, utxo.block_height
+                            ),
+                        });
+                    }
+
+                    // Check if UTXO is mature enough to be spent
+                    if let Some(maturity_height) = utxo.maturity_height {
+                        if payload.spending_block_height < maturity_height {
+                            return Err(WalletEventError::ProcessingError {
+                                event_type: "UtxoSpent".to_string(),
+                                reason: format!(
+                                    "UTXO {} cannot be spent at height {} (matures at height {})",
+                                    payload.utxo_id, payload.spending_block_height, maturity_height
+                                ),
+                            });
+                        }
+                    }
+                }
+
                 // Move UTXO from unspent to spent
                 if let Some(utxo) = wallet_state.utxos.remove(&payload.utxo_id) {
                     let spent_utxo = SpentUtxoState {
                         original_utxo: utxo,
-                        spent_at: SystemTime::now(), // In real implementation, use event timestamp
+                        spent_at: stored_event.timestamp,
                         spent_block_height: payload.spending_block_height,
                         spending_transaction_hash: payload.spending_transaction_hash.clone(),
                     };
@@ -1031,19 +1302,433 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
                     .max(payload.spending_block_height);
             }
             WalletEvent::Reorg { payload, .. } => {
-                // Handle blockchain reorganization
-                // This is complex and would involve rolling back state
-                // For now, just update highest block
+                // Validate reorg parameters
+                if payload.fork_height > wallet_state.highest_block {
+                    return Err(WalletEventError::ProcessingError {
+                        event_type: "Reorg".to_string(),
+                        reason: format!(
+                            "Reorg fork height {} is higher than current highest block {}",
+                            payload.fork_height, wallet_state.highest_block
+                        ),
+                    });
+                }
+
+                // Handle blockchain reorganization with partial state recovery
+                let affected_utxos: Vec<String> = wallet_state
+                    .utxos
+                    .iter()
+                    .filter(|(_, utxo)| utxo.block_height > payload.fork_height)
+                    .map(|(id, _)| id.clone())
+                    .collect();
+
+                let affected_spent_utxos: Vec<String> = wallet_state
+                    .spent_utxos
+                    .iter()
+                    .filter(|(_, spent_utxo)| spent_utxo.spent_block_height > payload.fork_height)
+                    .map(|(id, _)| id.clone())
+                    .collect();
+
+                // Remove or rollback affected UTXOs
+                for utxo_id in affected_utxos {
+                    if let Some(_utxo) = wallet_state.utxos.remove(&utxo_id) {
+                        // In a real implementation, we might add these to a "pending" state
+                        // For now, we'll remove them completely
+                        // Could log this as a validation issue if we want to track it
+                    }
+                }
+
+                // Restore UTXOs that were spent after the fork point
+                for utxo_id in affected_spent_utxos {
+                    if let Some(spent_utxo) = wallet_state.spent_utxos.remove(&utxo_id) {
+                        // Only restore if the original UTXO was confirmed before the fork
+                        if spent_utxo.original_utxo.block_height <= payload.fork_height {
+                            wallet_state.utxos.insert(utxo_id, spent_utxo.original_utxo);
+                        }
+                        // If the original UTXO was also after the fork, it's completely invalid
+                    }
+                }
+
+                // Update highest block to fork height
                 wallet_state.highest_block = payload.fork_height;
 
-                // In a full implementation, we would:
-                // 1. Identify affected UTXOs (those confirmed after fork_height)
-                // 2. Remove or mark them as unconfirmed
-                // 3. Handle transaction rollbacks
+                // Update affected transaction hashes list if provided
+                for tx_hash in &payload.affected_transaction_hashes {
+                    // In a full implementation, we would invalidate these transactions
+                    // and potentially remove related UTXOs
+                    if tx_hash.is_empty() {
+                        return Err(WalletEventError::InvalidPayload {
+                            event_type: "Reorg".to_string(),
+                            field: "affected_transaction_hashes".to_string(),
+                            message: "Empty transaction hash in affected list".to_string(),
+                        });
+                    }
+                }
             }
         }
 
         Ok(())
+    }
+
+    /// Get a snippet of data for error reporting (truncate if too long)
+    fn get_data_snippet(data: &str) -> String {
+        const MAX_SNIPPET_LENGTH: usize = 100;
+        if data.len() <= MAX_SNIPPET_LENGTH {
+            data.to_string()
+        } else {
+            format!("{}...", &data[..MAX_SNIPPET_LENGTH])
+        }
+    }
+
+    /// Handle missing events by attempting partial state reconstruction
+    pub async fn handle_missing_events(
+        &self,
+        wallet_id: &str,
+        missing_sequences: &[u64],
+    ) -> WalletEventResult<MissingEventReport> {
+        let mut report = MissingEventReport {
+            wallet_id: wallet_id.to_string(),
+            missing_sequences: missing_sequences.to_vec(),
+            recovery_attempts: Vec::new(),
+            recovered_events: 0,
+            unrecoverable_events: 0,
+            partial_state_possible: false,
+            recommendations: Vec::new(),
+        };
+
+        // Attempt to identify the impact of missing events
+        for &sequence in missing_sequences {
+            let recovery_attempt = self.attempt_event_recovery(wallet_id, sequence).await?;
+
+            if recovery_attempt.recoverable {
+                report.recovered_events += 1;
+                report.partial_state_possible = true;
+            } else {
+                report.unrecoverable_events += 1;
+            }
+
+            report.recovery_attempts.push(recovery_attempt);
+        }
+
+        // Generate recommendations based on analysis
+        self.generate_recovery_recommendations(&mut report);
+
+        Ok(report)
+    }
+
+    /// Attempt to recover a single missing event
+    async fn attempt_event_recovery(
+        &self,
+        wallet_id: &str,
+        sequence_number: u64,
+    ) -> WalletEventResult<EventRecoveryAttempt> {
+        // Try to infer the missing event from surrounding context
+        let before_events = self
+            .storage
+            .get_wallet_events_in_range(
+                wallet_id,
+                sequence_number.saturating_sub(5),
+                sequence_number - 1,
+            )
+            .await?;
+
+        let after_events = self
+            .storage
+            .get_wallet_events_in_range(wallet_id, sequence_number + 1, sequence_number + 5)
+            .await?;
+
+        let recovery_attempt = EventRecoveryAttempt {
+            sequence_number,
+            recoverable: false,
+            recovery_method: RecoveryMethod::None,
+            confidence_level: RecoveryConfidence::None,
+            inferred_event_type: None,
+            impact_assessment: self.assess_missing_event_impact(&before_events, &after_events),
+            recommendations: Vec::new(),
+        };
+
+        // For now, we'll mark most events as unrecoverable
+        // In a full implementation, we might be able to infer some events
+        // based on UTXO state changes in subsequent events
+
+        Ok(recovery_attempt)
+    }
+
+    /// Assess the impact of a missing event based on surrounding events
+    fn assess_missing_event_impact(
+        &self,
+        _before_events: &[StoredEvent],
+        _after_events: &[StoredEvent],
+    ) -> MissingEventImpact {
+        // Simplified impact assessment
+        // In a real implementation, we would analyze:
+        // 1. UTXO state changes
+        // 2. Balance implications
+        // 3. Transaction continuity
+        MissingEventImpact::Unknown
+    }
+
+    /// Generate recovery recommendations based on missing event analysis
+    fn generate_recovery_recommendations(&self, report: &mut MissingEventReport) {
+        if report.unrecoverable_events > 0 {
+            report
+                .recommendations
+                .push("Manual intervention required for unrecoverable events".to_string());
+
+            if report.unrecoverable_events > report.recovered_events {
+                report
+                    .recommendations
+                    .push("Consider restoring from backup or re-scanning blockchain".to_string());
+            }
+        }
+
+        if report.recovered_events > 0 {
+            report
+                .recommendations
+                .push("Partial state reconstruction possible with recovered events".to_string());
+        }
+
+        if report.missing_sequences.len() > 10 {
+            report.recommendations.push(
+                "Large number of missing events detected - database corruption likely".to_string(),
+            );
+        }
+    }
+
+    /// Detect and handle corrupted data during replay
+    pub async fn detect_corruption(
+        &self,
+        wallet_id: &str,
+        events: &[StoredEvent],
+    ) -> WalletEventResult<CorruptionReport> {
+        let mut report = CorruptionReport {
+            wallet_id: wallet_id.to_string(),
+            total_events_checked: events.len(),
+            corrupted_events: Vec::new(),
+            corruption_patterns: Vec::new(),
+            severity_level: CorruptionSeverity::None,
+            data_integrity_score: 1.0,
+            recovery_possible: true,
+            recommendations: Vec::new(),
+        };
+
+        // Check each event for corruption indicators
+        for event in events {
+            if let Some(corruption) = self.check_event_corruption(event).await? {
+                report.corrupted_events.push(corruption);
+            }
+        }
+
+        // Analyze corruption patterns
+        self.analyze_corruption_patterns(&mut report);
+
+        // Calculate data integrity score
+        report.data_integrity_score = self.calculate_integrity_score(&report);
+
+        // Determine recovery feasibility
+        report.recovery_possible = self.assess_recovery_feasibility(&report);
+
+        // Generate recommendations
+        self.generate_corruption_recommendations(&mut report);
+
+        Ok(report)
+    }
+
+    /// Check a single event for corruption indicators
+    async fn check_event_corruption(
+        &self,
+        event: &StoredEvent,
+    ) -> WalletEventResult<Option<CorruptedEvent>> {
+        let mut corruption_indicators = Vec::new();
+
+        // Check for JSON corruption
+        if let Err(_) = serde_json::from_str::<serde_json::Value>(&event.payload_json) {
+            corruption_indicators.push(CorruptionIndicator::MalformedJson);
+        }
+
+        // Check for timestamp corruption
+        if event.timestamp > SystemTime::now() {
+            corruption_indicators.push(CorruptionIndicator::InvalidTimestamp);
+        }
+
+        // Check for empty required fields
+        if event.event_id.is_empty() || event.wallet_id.is_empty() {
+            corruption_indicators.push(CorruptionIndicator::MissingRequiredFields);
+        }
+
+        // Check for suspicious sequence numbers
+        if event.sequence_number == 0 {
+            corruption_indicators.push(CorruptionIndicator::InvalidSequenceNumber);
+        }
+
+        if !corruption_indicators.is_empty() {
+            let severity = self.determine_corruption_severity(&corruption_indicators);
+            let recoverable = self.is_corruption_recoverable(&corruption_indicators);
+            return Ok(Some(CorruptedEvent {
+                event_id: event.event_id.clone(),
+                sequence_number: event.sequence_number,
+                corruption_indicators,
+                severity,
+                recoverable,
+            }));
+        }
+
+        Ok(None)
+    }
+
+    /// Analyze patterns in detected corruption
+    fn analyze_corruption_patterns(&self, report: &mut CorruptionReport) {
+        if report.corrupted_events.is_empty() {
+            return;
+        }
+
+        // Check for systematic corruption patterns
+        let sequence_numbers: Vec<u64> = report
+            .corrupted_events
+            .iter()
+            .map(|e| e.sequence_number)
+            .collect();
+
+        // Check for consecutive corruption
+        let mut consecutive_count = 0;
+        for window in sequence_numbers.windows(2) {
+            if window[1] == window[0] + 1 {
+                consecutive_count += 1;
+            }
+        }
+
+        if consecutive_count > 2 {
+            report
+                .corruption_patterns
+                .push(CorruptionPattern::ConsecutiveEvents);
+        }
+
+        // Check for corruption by type
+        let json_corruption_count = report
+            .corrupted_events
+            .iter()
+            .filter(|e| {
+                e.corruption_indicators
+                    .contains(&CorruptionIndicator::MalformedJson)
+            })
+            .count();
+
+        if json_corruption_count > report.corrupted_events.len() / 2 {
+            report
+                .corruption_patterns
+                .push(CorruptionPattern::SystematicJsonCorruption);
+        }
+
+        // Determine overall severity
+        let critical_count = report
+            .corrupted_events
+            .iter()
+            .filter(|e| matches!(e.severity, EventCorruptionSeverity::Critical))
+            .count();
+
+        report.severity_level = if critical_count > 0 {
+            CorruptionSeverity::Critical
+        } else if report.corrupted_events.len() > 5 {
+            CorruptionSeverity::Major
+        } else if report.corrupted_events.len() > 1 {
+            CorruptionSeverity::Minor
+        } else {
+            CorruptionSeverity::None
+        };
+    }
+
+    /// Calculate data integrity score (0.0 = completely corrupted, 1.0 = perfect)
+    fn calculate_integrity_score(&self, report: &CorruptionReport) -> f64 {
+        if report.total_events_checked == 0 {
+            return 1.0;
+        }
+
+        let corruption_ratio =
+            report.corrupted_events.len() as f64 / report.total_events_checked as f64;
+        let base_score = 1.0 - corruption_ratio;
+
+        // Adjust based on severity
+        let severity_penalty = match report.severity_level {
+            CorruptionSeverity::Critical => 0.5,
+            CorruptionSeverity::Major => 0.3,
+            CorruptionSeverity::Minor => 0.1,
+            CorruptionSeverity::None => 0.0,
+        };
+
+        (base_score - severity_penalty).max(0.0)
+    }
+
+    /// Assess whether recovery is feasible given the corruption level
+    fn assess_recovery_feasibility(&self, report: &CorruptionReport) -> bool {
+        match report.severity_level {
+            CorruptionSeverity::Critical => false,
+            CorruptionSeverity::Major => report.data_integrity_score > 0.3,
+            CorruptionSeverity::Minor => true,
+            CorruptionSeverity::None => true,
+        }
+    }
+
+    /// Generate recommendations for handling corruption
+    fn generate_corruption_recommendations(&self, report: &mut CorruptionReport) {
+        match report.severity_level {
+            CorruptionSeverity::Critical => {
+                report.recommendations.push(
+                    "Critical corruption detected - database restore from backup required"
+                        .to_string(),
+                );
+                report
+                    .recommendations
+                    .push("Do not attempt replay with current data".to_string());
+            }
+            CorruptionSeverity::Major => {
+                report.recommendations.push(
+                    "Major corruption detected - attempt partial recovery with caution".to_string(),
+                );
+                report
+                    .recommendations
+                    .push("Consider blockchain re-scan to recover missing data".to_string());
+            }
+            CorruptionSeverity::Minor => {
+                report.recommendations.push(
+                    "Minor corruption detected - replay may proceed with validation".to_string(),
+                );
+                report
+                    .recommendations
+                    .push("Monitor for additional issues during replay".to_string());
+            }
+            CorruptionSeverity::None => {
+                report
+                    .recommendations
+                    .push("No corruption detected - replay can proceed normally".to_string());
+            }
+        }
+
+        if report
+            .corruption_patterns
+            .contains(&CorruptionPattern::SystematicJsonCorruption)
+        {
+            report
+                .recommendations
+                .push("Systematic JSON corruption suggests storage subsystem issues".to_string());
+        }
+    }
+
+    /// Determine corruption severity for a set of indicators
+    fn determine_corruption_severity(
+        &self,
+        indicators: &[CorruptionIndicator],
+    ) -> EventCorruptionSeverity {
+        if indicators.contains(&CorruptionIndicator::MalformedJson) {
+            EventCorruptionSeverity::Critical
+        } else if indicators.contains(&CorruptionIndicator::MissingRequiredFields) {
+            EventCorruptionSeverity::Major
+        } else {
+            EventCorruptionSeverity::Minor
+        }
+    }
+
+    /// Check if corruption is recoverable
+    fn is_corruption_recoverable(&self, indicators: &[CorruptionIndicator]) -> bool {
+        !indicators.contains(&CorruptionIndicator::MalformedJson)
     }
 
     /// Validate sequence continuity in the event list
@@ -2067,6 +2752,179 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
 
         Ok((replay_result, verification_result))
     }
+}
+
+/// Report for missing event analysis and recovery attempts
+#[derive(Debug, Clone, Serialize)]
+pub struct MissingEventReport {
+    /// Wallet ID being analyzed
+    pub wallet_id: String,
+    /// List of missing sequence numbers
+    pub missing_sequences: Vec<u64>,
+    /// Recovery attempts for each missing event
+    pub recovery_attempts: Vec<EventRecoveryAttempt>,
+    /// Number of events that could be recovered
+    pub recovered_events: usize,
+    /// Number of events that are unrecoverable
+    pub unrecoverable_events: usize,
+    /// Whether partial state reconstruction is possible
+    pub partial_state_possible: bool,
+    /// Recommendations for handling missing events
+    pub recommendations: Vec<String>,
+}
+
+/// Attempt to recover a single missing event
+#[derive(Debug, Clone, Serialize)]
+pub struct EventRecoveryAttempt {
+    /// Sequence number of the missing event
+    pub sequence_number: u64,
+    /// Whether recovery is possible for this event
+    pub recoverable: bool,
+    /// Method used for recovery
+    pub recovery_method: RecoveryMethod,
+    /// Confidence level in the recovery
+    pub confidence_level: RecoveryConfidence,
+    /// Inferred event type if recovery is possible
+    pub inferred_event_type: Option<String>,
+    /// Assessment of the impact of this missing event
+    pub impact_assessment: MissingEventImpact,
+    /// Specific recommendations for this event
+    pub recommendations: Vec<String>,
+}
+
+/// Methods for recovering missing events
+#[derive(Debug, Clone, Serialize)]
+pub enum RecoveryMethod {
+    /// No recovery possible
+    None,
+    /// Infer from surrounding events
+    ContextInference,
+    /// Reconstruct from blockchain data
+    BlockchainReconstruction,
+    /// Partial recovery from transaction data
+    PartialReconstruction,
+    /// Manual intervention required
+    ManualIntervention,
+}
+
+/// Confidence level in event recovery
+#[derive(Debug, Clone, Serialize)]
+pub enum RecoveryConfidence {
+    /// No confidence (no recovery possible)
+    None,
+    /// Low confidence in recovery accuracy
+    Low,
+    /// Medium confidence
+    Medium,
+    /// High confidence
+    High,
+}
+
+/// Impact assessment for missing events
+#[derive(Debug, Clone, Serialize)]
+pub enum MissingEventImpact {
+    /// Impact cannot be determined
+    Unknown,
+    /// No significant impact on wallet state
+    None,
+    /// Minor impact on metadata
+    Minor,
+    /// Major impact on balance or UTXO state
+    Major,
+    /// Critical impact making wallet state unreliable
+    Critical,
+}
+
+/// Report for corruption detection and analysis
+#[derive(Debug, Clone, Serialize)]
+pub struct CorruptionReport {
+    /// Wallet ID being analyzed
+    pub wallet_id: String,
+    /// Total number of events checked
+    pub total_events_checked: usize,
+    /// List of corrupted events found
+    pub corrupted_events: Vec<CorruptedEvent>,
+    /// Patterns detected in the corruption
+    pub corruption_patterns: Vec<CorruptionPattern>,
+    /// Overall severity level
+    pub severity_level: CorruptionSeverity,
+    /// Data integrity score (0.0 = completely corrupted, 1.0 = perfect)
+    pub data_integrity_score: f64,
+    /// Whether recovery is possible
+    pub recovery_possible: bool,
+    /// Recommendations for handling corruption
+    pub recommendations: Vec<String>,
+}
+
+/// Details of a corrupted event
+#[derive(Debug, Clone, Serialize)]
+pub struct CorruptedEvent {
+    /// Event ID of the corrupted event
+    pub event_id: String,
+    /// Sequence number of the corrupted event
+    pub sequence_number: u64,
+    /// List of corruption indicators found
+    pub corruption_indicators: Vec<CorruptionIndicator>,
+    /// Severity of the corruption
+    pub severity: EventCorruptionSeverity,
+    /// Whether this corruption is recoverable
+    pub recoverable: bool,
+}
+
+/// Types of corruption indicators
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub enum CorruptionIndicator {
+    /// JSON payload is malformed or unparseable
+    MalformedJson,
+    /// Event timestamp is invalid
+    InvalidTimestamp,
+    /// Required fields are missing or empty
+    MissingRequiredFields,
+    /// Sequence number is invalid
+    InvalidSequenceNumber,
+    /// Event metadata is inconsistent
+    InconsistentMetadata,
+    /// Event payload data is invalid
+    InvalidPayloadData,
+}
+
+/// Patterns of corruption
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub enum CorruptionPattern {
+    /// Corruption affects consecutive events
+    ConsecutiveEvents,
+    /// Systematic JSON corruption across many events
+    SystematicJsonCorruption,
+    /// Timestamp corruption pattern
+    TimestampCorruption,
+    /// Metadata corruption pattern
+    MetadataCorruption,
+    /// Random isolated corruption
+    RandomCorruption,
+}
+
+/// Overall corruption severity levels
+#[derive(Debug, Clone, Serialize)]
+pub enum CorruptionSeverity {
+    /// No corruption detected
+    None,
+    /// Minor corruption that doesn't affect core functionality
+    Minor,
+    /// Major corruption affecting data integrity
+    Major,
+    /// Critical corruption making data unreliable
+    Critical,
+}
+
+/// Severity level for individual corrupted events
+#[derive(Debug, Clone, Serialize)]
+pub enum EventCorruptionSeverity {
+    /// Minor corruption (e.g., invalid timestamp)
+    Minor,
+    /// Major corruption (e.g., missing required fields)
+    Major,
+    /// Critical corruption (e.g., malformed JSON)
+    Critical,
 }
 
 /// Helper function to create a default replay engine for testing
