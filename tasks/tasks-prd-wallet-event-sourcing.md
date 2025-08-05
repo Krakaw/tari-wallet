@@ -4,7 +4,7 @@
 - `src/events/types.rs` - Event type definitions and data structures (UTXO received, spent, reorg events)
 - `src/events/listener.rs` - Event listener trait and registry implementation
 - `src/events/storage.rs` - Event storage implementation for SQLite database
-- `src/events/replay.rs` - Event replay functionality and state verification
+- `src/events/replay.rs` - Event replay engine that processes events in chronological order for state reconstruction (Task 5.1)
 - `src/wallet/builder.rs` - Wallet builder implementation with event listener registration support
 - `src/wallet/mod.rs` - Updated wallet module with builder exports
 - `src/storage/event_storage.rs` - Database schema and operations for event persistence with SQLite implementation
@@ -76,7 +76,7 @@
   - [x] 4.9 Add database integrity tests to verify append-only behavior
 
 - [ ] 5.0 Implement Event Replay and Verification System
-  - [ ] 5.1 Create event replay engine that processes events in chronological order
+  - [x] 5.1 Create event replay engine that processes events in chronological order
   - [ ] 5.2 Implement state verification logic to compare replayed state vs current state
   - [ ] 5.3 Add inconsistency detection and detailed reporting functionality
   - [ ] 5.4 Create user-facing API methods for triggering event replay

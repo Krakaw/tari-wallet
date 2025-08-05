@@ -88,6 +88,7 @@ pub mod error_recovery;
 pub mod integration_test_examples;
 pub mod listener;
 pub mod listeners;
+pub mod replay;
 pub mod test_utils;
 pub mod types;
 
@@ -99,6 +100,11 @@ pub use error_recovery::{
     ErrorRecord, ErrorRecoveryConfig, ErrorRecoveryManager, ErrorStats, RetryableOperation,
 };
 pub use listener::{EventListener as WalletEventListener, EventRegistry, RegistryStats};
+#[cfg(feature = "storage")]
+pub use replay::{
+    EventReplayEngine, ReplayConfig, ReplayProgress, ReplayResult, ReplayedWalletState,
+    SpentUtxoState, UtxoState, ValidationIssue, ValidationIssueType, ValidationSeverity,
+};
 pub use test_utils::{EventCapture, EventPattern, PerformanceAssertion, TestScenario};
 pub use types::{
     EventListenerError, ReorgPayload, SharedWalletEvent, UtxoReceivedPayload, UtxoSpentPayload,
