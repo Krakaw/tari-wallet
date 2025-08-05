@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use thiserror::Error;
 
 /// Shared event metadata present in all events
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -354,6 +355,370 @@ impl AddressInfo {
         self
     }
 }
+
+/// Error types for wallet event processing failures
+#[derive(Debug, Error, Clone)]
+pub enum WalletEventError {
+    /// Event validation failed
+    #[error("Event validation failed: {message}")]
+    ValidationError { message: String, event_type: String },
+
+    /// Event serialization failed
+    #[error("Event serialization failed for {event_type}: {message}")]
+    SerializationError { message: String, event_type: String },
+
+    /// Event deserialization failed
+    #[error("Event deserialization failed: {message}")]
+    DeserializationError {
+        message: String,
+        data_snippet: String,
+    },
+
+    /// Event metadata is invalid or missing required fields
+    #[error("Invalid event metadata: {field} - {message}")]
+    InvalidMetadata { field: String, message: String },
+
+    /// Event payload is invalid or contains inconsistent data
+    #[error("Invalid event payload for {event_type}: {field} - {message}")]
+    InvalidPayload {
+        event_type: String,
+        field: String,
+        message: String,
+    },
+
+    /// Event processing failed due to business logic constraints
+    #[error("Event processing failed for {event_type}: {reason}")]
+    ProcessingError { event_type: String, reason: String },
+
+    /// Event listener encountered an error
+    #[error("Event listener '{listener_name}' failed: {error}")]
+    ListenerError {
+        listener_name: String,
+        error: String,
+    },
+
+    /// Event replay failed
+    #[error("Event replay failed at sequence {sequence}: {reason}")]
+    ReplayError { sequence: u64, reason: String },
+
+    /// Event storage operation failed
+    #[error("Event storage operation failed: {operation} - {reason}")]
+    StorageError { operation: String, reason: String },
+
+    /// Event sequence is invalid (out of order, duplicate, etc.)
+    #[error("Invalid event sequence: expected {expected}, got {actual}")]
+    SequenceError { expected: u64, actual: u64 },
+
+    /// Event already exists (duplicate event ID)
+    #[error("Event with ID '{event_id}' already exists")]
+    DuplicateEvent { event_id: String },
+
+    /// Event not found
+    #[error("Event with ID '{event_id}' not found")]
+    EventNotFound { event_id: String },
+
+    /// Wallet ID mismatch in event
+    #[error("Wallet ID mismatch: expected '{expected}', found '{actual}'")]
+    WalletIdMismatch { expected: String, actual: String },
+
+    /// Event type mismatch during processing
+    #[error("Event type mismatch: expected '{expected}', found '{actual}'")]
+    EventTypeMismatch { expected: String, actual: String },
+
+    /// Invalid block height in event
+    #[error("Invalid block height {height}: {reason}")]
+    InvalidBlockHeight { height: u64, reason: String },
+
+    /// Invalid amount in event
+    #[error("Invalid amount {amount}: {reason}")]
+    InvalidAmount { amount: String, reason: String },
+
+    /// Invalid UTXO state transition
+    #[error("Invalid UTXO state transition for {utxo_id}: {from_state} -> {to_state}")]
+    InvalidStateTransition {
+        utxo_id: String,
+        from_state: String,
+        to_state: String,
+    },
+
+    /// Concurrent modification detected
+    #[error("Concurrent modification detected for {resource}: {details}")]
+    ConcurrentModification { resource: String, details: String },
+
+    /// Event timeout during processing
+    #[error("Event processing timeout after {seconds}s for {event_type}")]
+    ProcessingTimeout { event_type: String, seconds: u64 },
+
+    /// Configuration error
+    #[error("Event system configuration error: {parameter} - {message}")]
+    ConfigurationError { parameter: String, message: String },
+
+    /// Network-related error during event processing
+    #[error("Network error during event processing: {operation} - {error}")]
+    NetworkError { operation: String, error: String },
+
+    /// Insufficient permissions for event operation
+    #[error("Insufficient permissions for {operation}: {reason}")]
+    PermissionDenied { operation: String, reason: String },
+
+    /// Generic internal error
+    #[error("Internal error during event processing: {details}")]
+    InternalError { details: String },
+}
+
+/// Validation-specific errors for wallet events
+#[derive(Debug, Error, Clone)]
+pub enum WalletEventValidationError {
+    /// Required field is missing
+    #[error("Required field '{field}' is missing")]
+    MissingField { field: String },
+
+    /// Field value is out of valid range
+    #[error("Field '{field}' value {value} is out of range: {constraint}")]
+    OutOfRange {
+        field: String,
+        value: String,
+        constraint: String,
+    },
+
+    /// Field format is invalid
+    #[error("Field '{field}' has invalid format: {value} (expected: {expected_format})")]
+    InvalidFormat {
+        field: String,
+        value: String,
+        expected_format: String,
+    },
+
+    /// Field contains invalid characters
+    #[error("Field '{field}' contains invalid characters: {value}")]
+    InvalidCharacters { field: String, value: String },
+
+    /// Field length exceeds maximum allowed
+    #[error("Field '{field}' length {actual} exceeds maximum {max}")]
+    FieldTooLong {
+        field: String,
+        actual: usize,
+        max: usize,
+    },
+
+    /// Field is too short
+    #[error("Field '{field}' length {actual} is below minimum {min}")]
+    FieldTooShort {
+        field: String,
+        actual: usize,
+        min: usize,
+    },
+
+    /// Cross-field validation failed
+    #[error("Cross-field validation failed: {field1} and {field2} - {reason}")]
+    CrossFieldValidation {
+        field1: String,
+        field2: String,
+        reason: String,
+    },
+
+    /// Business rule validation failed
+    #[error("Business rule validation failed: {rule} - {reason}")]
+    BusinessRuleViolation { rule: String, reason: String },
+
+    /// Duplicate value where uniqueness is required
+    #[error("Duplicate value for unique field '{field}': {value}")]
+    DuplicateValue { field: String, value: String },
+
+    /// Referenced entity does not exist
+    #[error("Referenced {entity_type} '{entity_id}' does not exist")]
+    ReferenceNotFound {
+        entity_type: String,
+        entity_id: String,
+    },
+}
+
+/// Event listener-specific errors
+#[derive(Debug, Error, Clone)]
+pub enum EventListenerError {
+    /// Listener initialization failed
+    #[error("Listener '{name}' initialization failed: {reason}")]
+    InitializationFailed { name: String, reason: String },
+
+    /// Listener is not in a valid state for operation
+    #[error("Listener '{name}' is in invalid state '{state}' for operation '{operation}'")]
+    InvalidState {
+        name: String,
+        state: String,
+        operation: String,
+    },
+
+    /// Listener configuration is invalid
+    #[error("Listener '{name}' has invalid configuration: {parameter} - {message}")]
+    InvalidConfiguration {
+        name: String,
+        parameter: String,
+        message: String,
+    },
+
+    /// Listener dependency is missing or unavailable
+    #[error("Listener '{name}' dependency '{dependency}' is unavailable: {reason}")]
+    DependencyUnavailable {
+        name: String,
+        dependency: String,
+        reason: String,
+    },
+
+    /// Resource limit exceeded
+    #[error("Listener '{name}' exceeded {resource} limit: {current}/{max}")]
+    ResourceLimitExceeded {
+        name: String,
+        resource: String,
+        current: u64,
+        max: u64,
+    },
+}
+
+impl WalletEventError {
+    /// Create a validation error
+    pub fn validation(message: impl Into<String>, event_type: impl Into<String>) -> Self {
+        Self::ValidationError {
+            message: message.into(),
+            event_type: event_type.into(),
+        }
+    }
+
+    /// Create a serialization error
+    pub fn serialization(message: impl Into<String>, event_type: impl Into<String>) -> Self {
+        Self::SerializationError {
+            message: message.into(),
+            event_type: event_type.into(),
+        }
+    }
+
+    /// Create a deserialization error
+    pub fn deserialization(message: impl Into<String>, data_snippet: impl Into<String>) -> Self {
+        Self::DeserializationError {
+            message: message.into(),
+            data_snippet: data_snippet.into(),
+        }
+    }
+
+    /// Create a processing error
+    pub fn processing(event_type: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::ProcessingError {
+            event_type: event_type.into(),
+            reason: reason.into(),
+        }
+    }
+
+    /// Create a storage error
+    pub fn storage(operation: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::StorageError {
+            operation: operation.into(),
+            reason: reason.into(),
+        }
+    }
+
+    /// Create an invalid payload error
+    pub fn invalid_payload(
+        event_type: impl Into<String>,
+        field: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::InvalidPayload {
+            event_type: event_type.into(),
+            field: field.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Check if this error is recoverable (can be retried)
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            // Transient errors that might succeed on retry
+            Self::NetworkError { .. }
+            | Self::ProcessingTimeout { .. }
+            | Self::StorageError { .. }
+            | Self::ConcurrentModification { .. } => true,
+
+            // Permanent errors that won't succeed on retry
+            Self::ValidationError { .. }
+            | Self::SerializationError { .. }
+            | Self::DeserializationError { .. }
+            | Self::InvalidMetadata { .. }
+            | Self::InvalidPayload { .. }
+            | Self::DuplicateEvent { .. }
+            | Self::EventNotFound { .. }
+            | Self::WalletIdMismatch { .. }
+            | Self::EventTypeMismatch { .. }
+            | Self::InvalidBlockHeight { .. }
+            | Self::InvalidAmount { .. }
+            | Self::InvalidStateTransition { .. }
+            | Self::ConfigurationError { .. }
+            | Self::PermissionDenied { .. } => false,
+
+            // Context-dependent errors
+            Self::ProcessingError { .. }
+            | Self::ListenerError { .. }
+            | Self::ReplayError { .. }
+            | Self::SequenceError { .. }
+            | Self::InternalError { .. } => false,
+        }
+    }
+
+    /// Get the error category for metrics/logging
+    pub fn category(&self) -> &'static str {
+        match self {
+            Self::ValidationError { .. }
+            | Self::InvalidMetadata { .. }
+            | Self::InvalidPayload { .. } => "validation",
+            Self::SerializationError { .. } | Self::DeserializationError { .. } => "serialization",
+            Self::ProcessingError { .. } | Self::ListenerError { .. } => "processing",
+            Self::ReplayError { .. } | Self::SequenceError { .. } => "replay",
+            Self::StorageError { .. }
+            | Self::DuplicateEvent { .. }
+            | Self::EventNotFound { .. } => "storage",
+            Self::WalletIdMismatch { .. } | Self::EventTypeMismatch { .. } => "consistency",
+            Self::InvalidBlockHeight { .. }
+            | Self::InvalidAmount { .. }
+            | Self::InvalidStateTransition { .. } => "business_logic",
+            Self::ConcurrentModification { .. } | Self::ProcessingTimeout { .. } => "concurrency",
+            Self::ConfigurationError { .. } => "configuration",
+            Self::NetworkError { .. } => "network",
+            Self::PermissionDenied { .. } => "security",
+            Self::InternalError { .. } => "internal",
+        }
+    }
+}
+
+/// Convert from validation errors
+impl From<WalletEventValidationError> for WalletEventError {
+    fn from(err: WalletEventValidationError) -> Self {
+        Self::ValidationError {
+            message: err.to_string(),
+            event_type: "unknown".to_string(),
+        }
+    }
+}
+
+/// Convert from listener errors
+impl From<EventListenerError> for WalletEventError {
+    fn from(err: EventListenerError) -> Self {
+        Self::ListenerError {
+            listener_name: "unknown".to_string(),
+            error: err.to_string(),
+        }
+    }
+}
+
+/// Convert from serde JSON errors
+impl From<serde_json::Error> for WalletEventError {
+    fn from(err: serde_json::Error) -> Self {
+        Self::SerializationError {
+            message: err.to_string(),
+            event_type: "unknown".to_string(),
+        }
+    }
+}
+
+/// Result type for wallet event operations
+pub type WalletEventResult<T> = Result<T, WalletEventError>;
 
 /// Specific payload structures for wallet events
 
@@ -2567,6 +2932,346 @@ mod tests {
         assert!(!metadata.event_id.is_empty());
         assert_eq!(metadata.source, "wallet");
         assert!(metadata.correlation_id.is_none());
+    }
+
+    // Tests for wallet event error handling
+
+    #[test]
+    fn test_wallet_event_error_creation() {
+        // Test validation error
+        let validation_err = WalletEventError::validation("Invalid amount", "UtxoReceived");
+        assert_eq!(validation_err.category(), "validation");
+        assert!(!validation_err.is_recoverable());
+        assert!(validation_err
+            .to_string()
+            .contains("Event validation failed"));
+        assert!(validation_err.to_string().contains("Invalid amount"));
+
+        // Test serialization error
+        let ser_err = WalletEventError::serialization("JSON parse error", "UtxoSpent");
+        assert_eq!(ser_err.category(), "serialization");
+        assert!(!ser_err.is_recoverable());
+
+        // Test processing error
+        let proc_err = WalletEventError::processing("Reorg", "Database constraint violation");
+        assert_eq!(proc_err.category(), "processing");
+        assert!(!proc_err.is_recoverable());
+
+        // Test storage error (recoverable)
+        let storage_err = WalletEventError::storage("insert", "Connection timeout");
+        assert_eq!(storage_err.category(), "storage");
+        assert!(storage_err.is_recoverable());
+    }
+
+    #[test]
+    fn test_wallet_event_validation_errors() {
+        // Test missing field error
+        let missing_field = WalletEventValidationError::MissingField {
+            field: "utxo_id".to_string(),
+        };
+        assert!(missing_field
+            .to_string()
+            .contains("Required field 'utxo_id' is missing"));
+
+        // Test out of range error
+        let out_of_range = WalletEventValidationError::OutOfRange {
+            field: "amount".to_string(),
+            value: "0".to_string(),
+            constraint: "must be positive".to_string(),
+        };
+        assert!(out_of_range.to_string().contains("out of range"));
+
+        // Test invalid format error
+        let invalid_format = WalletEventValidationError::InvalidFormat {
+            field: "block_hash".to_string(),
+            value: "invalid_hash".to_string(),
+            expected_format: "64-character hex string".to_string(),
+        };
+        assert!(invalid_format.to_string().contains("invalid format"));
+
+        // Test field too long error
+        let too_long = WalletEventValidationError::FieldTooLong {
+            field: "description".to_string(),
+            actual: 1000,
+            max: 500,
+        };
+        assert!(too_long.to_string().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn test_event_listener_errors() {
+        // Test initialization failed
+        let init_failed = EventListenerError::InitializationFailed {
+            name: "DatabaseListener".to_string(),
+            reason: "Connection refused".to_string(),
+        };
+        assert!(init_failed.to_string().contains("initialization failed"));
+
+        // Test invalid state
+        let invalid_state = EventListenerError::InvalidState {
+            name: "LoggingListener".to_string(),
+            state: "closed".to_string(),
+            operation: "handle_event".to_string(),
+        };
+        assert!(invalid_state.to_string().contains("invalid state"));
+
+        // Test resource limit exceeded
+        let limit_exceeded = EventListenerError::ResourceLimitExceeded {
+            name: "MemoryListener".to_string(),
+            resource: "memory".to_string(),
+            current: 1024,
+            max: 512,
+        };
+        assert!(limit_exceeded.to_string().contains("exceeded memory limit"));
+    }
+
+    #[test]
+    fn test_error_conversions() {
+        // Test conversion from validation error
+        let validation_err = WalletEventValidationError::MissingField {
+            field: "test_field".to_string(),
+        };
+        let wallet_err: WalletEventError = validation_err.into();
+        match wallet_err {
+            WalletEventError::ValidationError { message, .. } => {
+                assert!(message.contains("test_field"));
+            }
+            _ => panic!("Expected ValidationError"),
+        }
+
+        // Test conversion from listener error
+        let listener_err = EventListenerError::InitializationFailed {
+            name: "TestListener".to_string(),
+            reason: "Test reason".to_string(),
+        };
+        let wallet_err: WalletEventError = listener_err.into();
+        match wallet_err {
+            WalletEventError::ListenerError { error, .. } => {
+                assert!(error.contains("TestListener"));
+            }
+            _ => panic!("Expected ListenerError"),
+        }
+
+        // Test conversion from serde_json error
+        let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
+        let wallet_err: WalletEventError = json_err.into();
+        match wallet_err {
+            WalletEventError::SerializationError { message, .. } => {
+                assert!(message.contains("expected"));
+            }
+            _ => panic!("Expected SerializationError"),
+        }
+    }
+
+    #[test]
+    fn test_error_recoverability() {
+        // Recoverable errors
+        let recoverable_errors = vec![
+            WalletEventError::NetworkError {
+                operation: "send".to_string(),
+                error: "timeout".to_string(),
+            },
+            WalletEventError::ProcessingTimeout {
+                event_type: "UtxoReceived".to_string(),
+                seconds: 30,
+            },
+            WalletEventError::StorageError {
+                operation: "insert".to_string(),
+                reason: "deadlock".to_string(),
+            },
+            WalletEventError::ConcurrentModification {
+                resource: "utxo_state".to_string(),
+                details: "version mismatch".to_string(),
+            },
+        ];
+
+        for error in recoverable_errors {
+            assert!(
+                error.is_recoverable(),
+                "Error should be recoverable: {:?}",
+                error
+            );
+        }
+
+        // Non-recoverable errors
+        let non_recoverable_errors = vec![
+            WalletEventError::ValidationError {
+                message: "test".to_string(),
+                event_type: "test".to_string(),
+            },
+            WalletEventError::InvalidPayload {
+                event_type: "test".to_string(),
+                field: "test".to_string(),
+                message: "test".to_string(),
+            },
+            WalletEventError::DuplicateEvent {
+                event_id: "test".to_string(),
+            },
+            WalletEventError::PermissionDenied {
+                operation: "test".to_string(),
+                reason: "test".to_string(),
+            },
+        ];
+
+        for error in non_recoverable_errors {
+            assert!(
+                !error.is_recoverable(),
+                "Error should not be recoverable: {:?}",
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn test_error_categorization() {
+        let test_cases = vec![
+            (
+                WalletEventError::ValidationError {
+                    message: "test".to_string(),
+                    event_type: "test".to_string(),
+                },
+                "validation",
+            ),
+            (
+                WalletEventError::SerializationError {
+                    message: "test".to_string(),
+                    event_type: "test".to_string(),
+                },
+                "serialization",
+            ),
+            (
+                WalletEventError::ProcessingError {
+                    event_type: "test".to_string(),
+                    reason: "test".to_string(),
+                },
+                "processing",
+            ),
+            (
+                WalletEventError::ReplayError {
+                    sequence: 1,
+                    reason: "test".to_string(),
+                },
+                "replay",
+            ),
+            (
+                WalletEventError::StorageError {
+                    operation: "test".to_string(),
+                    reason: "test".to_string(),
+                },
+                "storage",
+            ),
+            (
+                WalletEventError::WalletIdMismatch {
+                    expected: "test".to_string(),
+                    actual: "test".to_string(),
+                },
+                "consistency",
+            ),
+            (
+                WalletEventError::InvalidBlockHeight {
+                    height: 0,
+                    reason: "test".to_string(),
+                },
+                "business_logic",
+            ),
+            (
+                WalletEventError::ConcurrentModification {
+                    resource: "test".to_string(),
+                    details: "test".to_string(),
+                },
+                "concurrency",
+            ),
+            (
+                WalletEventError::ConfigurationError {
+                    parameter: "test".to_string(),
+                    message: "test".to_string(),
+                },
+                "configuration",
+            ),
+            (
+                WalletEventError::NetworkError {
+                    operation: "test".to_string(),
+                    error: "test".to_string(),
+                },
+                "network",
+            ),
+            (
+                WalletEventError::PermissionDenied {
+                    operation: "test".to_string(),
+                    reason: "test".to_string(),
+                },
+                "security",
+            ),
+            (
+                WalletEventError::InternalError {
+                    details: "test".to_string(),
+                },
+                "internal",
+            ),
+        ];
+
+        for (error, expected_category) in test_cases {
+            assert_eq!(
+                error.category(),
+                expected_category,
+                "Error {:?} should have category {}",
+                error,
+                expected_category
+            );
+        }
+    }
+
+    #[test]
+    fn test_wallet_event_result_usage() {
+        // Test successful result
+        let success: WalletEventResult<String> = Ok("success".to_string());
+        assert!(success.is_ok());
+
+        // Test error result
+        let error: WalletEventResult<String> = Err(WalletEventError::validation("test", "test"));
+        assert!(error.is_err());
+
+        // Test error propagation
+        fn test_function() -> WalletEventResult<String> {
+            Err(WalletEventError::processing("TestEvent", "Test failure"))
+        }
+
+        let result = test_function();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.category(), "processing");
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_error_message_formatting() {
+        // Test that error messages are properly formatted and contain expected information
+        let validation_err = WalletEventError::ValidationError {
+            message: "Amount cannot be zero".to_string(),
+            event_type: "UtxoReceived".to_string(),
+        };
+        let message = validation_err.to_string();
+        assert!(message.contains("Event validation failed"));
+        assert!(message.contains("Amount cannot be zero"));
+
+        let sequence_err = WalletEventError::SequenceError {
+            expected: 5,
+            actual: 3,
+        };
+        let message = sequence_err.to_string();
+        assert!(message.contains("Invalid event sequence"));
+        assert!(message.contains("expected 5"));
+        assert!(message.contains("got 3"));
+
+        let state_transition_err = WalletEventError::InvalidStateTransition {
+            utxo_id: "utxo_123".to_string(),
+            from_state: "Unspent".to_string(),
+            to_state: "Invalid".to_string(),
+        };
+        let message = state_transition_err.to_string();
+        assert!(message.contains("Invalid UTXO state transition"));
+        assert!(message.contains("utxo_123"));
+        assert!(message.contains("Unspent -> Invalid"));
     }
 
     #[test]

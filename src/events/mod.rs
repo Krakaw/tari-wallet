@@ -96,7 +96,8 @@ pub use error_recovery::{
 };
 pub use test_utils::{EventCapture, EventPattern, PerformanceAssertion, TestScenario};
 pub use types::{
-    ReorgPayload, SharedWalletEvent, UtxoReceivedPayload, UtxoSpentPayload, WalletEvent, *,
+    EventListenerError, ReorgPayload, SharedWalletEvent, UtxoReceivedPayload, UtxoSpentPayload,
+    WalletEvent, WalletEventError, WalletEventResult, WalletEventValidationError, *,
 };
 
 /// Errors that can occur during event dispatcher operations
