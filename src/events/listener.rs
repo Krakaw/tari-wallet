@@ -555,6 +555,20 @@ impl Default for EventRegistry {
     }
 }
 
+impl std::fmt::Debug for EventRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventRegistry")
+            .field("listener_count", &self.listeners.len())
+            .field(
+                "listener_names",
+                &self.listener_names.keys().collect::<Vec<_>>(),
+            )
+            .field("max_listeners", &self.max_listeners)
+            .field("stats", &self.stats)
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -102,6 +102,10 @@ enum WalletCreationMethod {
 ///     .with_event_listener(Box::new(event_logger))
 ///     .with_label("Event-enabled Wallet")
 ///     .build_async().await?;
+///
+/// // The wallet now has an integrated event system
+/// assert!(wallet.events_enabled());
+/// assert_eq!(wallet.event_listener_count(), 1);
 /// # Ok(())
 /// # }
 /// ```
@@ -367,7 +371,7 @@ impl WalletBuilder {
     /// * `ConfigurationError` - If event listeners are configured (use `build_async` instead)
     pub fn build(self) -> Result<Wallet, WalletBuildError> {
         // Check if async build is required
-        if self.event_registry.is_some() {
+        if !self.listeners_to_register.is_empty() || self.event_registry.is_some() {
             return Err(WalletBuildError::ConfigurationError(
                 "Event listeners require async build - use build_async() instead".to_string(),
             ));
@@ -414,7 +418,7 @@ impl WalletBuilder {
     /// * `MissingParameter` - If no creation method was specified
     /// * `WalletCreation` - If wallet creation fails
     /// * `EventListenerError` - If event listener registration fails
-    pub async fn build_async(mut self) -> Result<WalletWithEvents, WalletBuildError> {
+    pub async fn build_async(mut self) -> Result<Wallet, WalletBuildError> {
         let creation_method = self.creation_method.ok_or_else(|| {
             WalletBuildError::MissingParameter(
                 "creation method (call generate_new, from_seed_phrase, etc.)".to_string(),
@@ -439,21 +443,24 @@ impl WalletBuilder {
         // Apply metadata
         wallet.metadata = self.metadata;
 
-        // Set up event registry
-        let mut event_registry = self.event_registry.unwrap_or_else(EventRegistry::new);
+        // Set up event system if listeners are configured
+        if !self.listeners_to_register.is_empty() || self.event_registry.is_some() {
+            // Set up event registry
+            let mut event_registry = self.event_registry.unwrap_or_else(EventRegistry::new);
 
-        // Register any listeners that were added
-        for listener in self.listeners_to_register {
-            event_registry
-                .register(listener)
-                .await
-                .map_err(|e| WalletBuildError::EventListenerError(e.to_string()))?;
+            // Register any listeners that were added
+            for listener in self.listeners_to_register {
+                event_registry
+                    .register(listener)
+                    .await
+                    .map_err(|e| WalletBuildError::EventListenerError(e.to_string()))?;
+            }
+
+            // Set the event registry on the wallet
+            wallet.set_event_registry(event_registry).await;
         }
 
-        Ok(WalletWithEvents {
-            wallet,
-            event_registry,
-        })
+        Ok(wallet)
     }
 }
 
@@ -465,9 +472,16 @@ impl Default for WalletBuilder {
 
 /// A wallet combined with an event registry for event-driven operations
 ///
+/// **DEPRECATED**: This struct is now deprecated. Use the `Wallet` struct directly,
+/// which now has built-in event system support. This struct is kept for backward compatibility.
+///
 /// This struct wraps a regular wallet with an event registry to provide
 /// event-driven functionality. It maintains the same wallet interface while
 /// adding event emission capabilities.
+#[deprecated(
+    since = "0.3.0",
+    note = "Use Wallet directly with built-in event system"
+)]
 pub struct WalletWithEvents {
     /// The underlying wallet
     pub wallet: Wallet,
@@ -607,41 +621,64 @@ mod tests {
     #[tokio::test]
     async fn test_wallet_builder_async_with_events() {
         let listener = EventLogger::console().unwrap();
-        let wallet_with_events = WalletBuilder::new()
+        let wallet = WalletBuilder::new()
             .generate_new()
             .with_event_listener(Box::new(listener))
             .build_async()
             .await
             .unwrap();
 
-        assert_eq!(wallet_with_events.event_registry.listener_count(), 1);
-        assert!(wallet_with_events
-            .event_registry
-            .has_listener("EventLogger"));
+        assert!(wallet.events_enabled());
+        assert_eq!(wallet.event_listener_count(), 1);
+        // Check that the event registry has the expected listener
+        if let Some(registry) = wallet.event_registry() {
+            assert!(registry.has_listener("EventLogger"));
+        }
     }
 
     #[tokio::test]
     async fn test_wallet_with_events_operations() {
-        let mut wallet_with_events = WalletBuilder::new()
+        let mut wallet = WalletBuilder::new()
             .generate_new()
             .with_label("Event Wallet")
             .build_async()
             .await
             .unwrap();
 
-        // Test adding listener
+        // Wallet should not have events enabled by default when no listeners are configured
+        assert!(!wallet.events_enabled());
+
+        // Test adding listener (should auto-enable events)
         let listener = EventLogger::console().unwrap();
-        assert!(wallet_with_events
-            .add_event_listener(Box::new(listener))
-            .await
-            .is_ok());
-        assert_eq!(wallet_with_events.event_registry.listener_count(), 1);
+        assert!(wallet.add_event_listener(Box::new(listener)).await.is_ok());
+        assert!(wallet.events_enabled());
+        assert_eq!(wallet.event_listener_count(), 1);
 
         // Test removing listener
-        assert!(wallet_with_events
-            .remove_event_listener("EventLogger")
-            .await
-            .is_ok());
-        assert_eq!(wallet_with_events.event_registry.listener_count(), 0);
+        assert!(wallet.remove_event_listener("EventLogger").await.is_ok());
+        assert_eq!(wallet.event_listener_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_wallet_event_system_methods() {
+        let mut wallet = WalletBuilder::new().generate_new().build().unwrap();
+
+        // Initially no events
+        assert!(!wallet.events_enabled());
+        assert_eq!(wallet.event_listener_count(), 0);
+
+        // Enable events
+        assert!(wallet.enable_events());
+        assert!(wallet.events_enabled());
+
+        // Try to enable again (should return false)
+        assert!(!wallet.enable_events());
+
+        // Disable events
+        assert!(wallet.disable_events().await);
+        assert!(!wallet.events_enabled());
+
+        // Try to disable again (should return false)
+        assert!(!wallet.disable_events().await);
     }
 }

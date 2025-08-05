@@ -15,6 +15,7 @@ use crate::data_structures::address::{
 use crate::data_structures::types::{CompressedPublicKey, PrivateKey};
 use crate::data_structures::SafeArray;
 use crate::errors::KeyManagementError;
+use crate::events::EventRegistry;
 use crate::key_management::{bytes_to_mnemonic, mnemonic_to_master_key, CipherSeed};
 use rand_core::{OsRng, RngCore};
 use std::collections::HashMap;
@@ -26,7 +27,7 @@ const BIRTHDAY_GENESIS_FROM_UNIX_EPOCH: u64 = 1640995200; // seconds to 2022-01-
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 
 /// Core wallet struct containing master key, birthday, and metadata
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Wallet {
     /// Master key derived from seed phrase (32 bytes, securely stored)
     master_key: SafeArray<32>,
@@ -36,6 +37,8 @@ pub struct Wallet {
     metadata: WalletMetadata,
     /// Original seed phrase (stored only if wallet was created from a seed phrase)
     original_seed_phrase: Option<String>,
+    /// Optional event registry for event-driven operations
+    event_registry: Option<EventRegistry>,
 }
 
 /// Wallet metadata containing additional configuration and state information
@@ -59,6 +62,7 @@ impl Wallet {
             birthday,
             metadata: WalletMetadata::default(),
             original_seed_phrase: None,
+            event_registry: None,
         }
     }
 
@@ -78,6 +82,7 @@ impl Wallet {
             birthday,
             metadata: WalletMetadata::default(),
             original_seed_phrase: Some(phrase.to_string()),
+            event_registry: None,
         })
     }
 
@@ -100,6 +105,7 @@ impl Wallet {
             birthday,
             metadata: WalletMetadata::default(),
             original_seed_phrase: None,
+            event_registry: None,
         }
     }
 
@@ -316,6 +322,162 @@ impl Wallet {
         Ok((view_key, spend_key))
     }
 
+    // Event system methods
+
+    /// Enable event system by creating an internal event registry
+    ///
+    /// This method initializes the event system for the wallet. If an event registry
+    /// already exists, this method does nothing.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the event system was enabled, `false` if it was already enabled.
+    pub fn enable_events(&mut self) -> bool {
+        if self.event_registry.is_none() {
+            self.event_registry = Some(EventRegistry::new());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Disable event system by removing the internal event registry
+    ///
+    /// This method disables the event system and removes all registered listeners.
+    /// Any future wallet operations will not emit events until `enable_events()` is called again.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the event system was disabled, `false` if it was already disabled.
+    pub async fn disable_events(&mut self) -> bool {
+        if let Some(mut registry) = self.event_registry.take() {
+            registry.shutdown().await;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check if the event system is enabled
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the wallet has an event registry, `false` otherwise.
+    pub fn events_enabled(&self) -> bool {
+        self.event_registry.is_some()
+    }
+
+    /// Get a reference to the event registry
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(&EventRegistry)` if events are enabled, `None` otherwise.
+    pub fn event_registry(&self) -> Option<&EventRegistry> {
+        self.event_registry.as_ref()
+    }
+
+    /// Get a mutable reference to the event registry
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(&mut EventRegistry)` if events are enabled, `None` otherwise.
+    pub fn event_registry_mut(&mut self) -> Option<&mut EventRegistry> {
+        self.event_registry.as_mut()
+    }
+
+    /// Add an event listener to the wallet
+    ///
+    /// If the event system is not enabled, this method will enable it automatically.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener` - The event listener to register
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on successful registration, or an error if registration fails.
+    pub async fn add_event_listener(
+        &mut self,
+        listener: Box<dyn crate::events::WalletEventListener>,
+    ) -> Result<(), crate::events::types::WalletEventError> {
+        // Enable events if not already enabled
+        if self.event_registry.is_none() {
+            self.enable_events();
+        }
+
+        // Safe to unwrap since we just ensured it exists
+        self.event_registry
+            .as_mut()
+            .unwrap()
+            .register(listener)
+            .await
+    }
+
+    /// Remove an event listener from the wallet
+    ///
+    /// # Arguments
+    ///
+    /// * `listener_name` - Name of the listener to remove
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the listener was removed, or an error if not found or events disabled.
+    pub async fn remove_event_listener(
+        &mut self,
+        listener_name: &str,
+    ) -> Result<(), crate::events::types::WalletEventError> {
+        match self.event_registry.as_mut() {
+            Some(registry) => registry.remove(listener_name).await,
+            None => Err(crate::events::types::WalletEventError::ConfigurationError {
+                parameter: "event_registry".to_string(),
+                message: "Event system is not enabled".to_string(),
+            }),
+        }
+    }
+
+    /// Get the number of registered event listeners
+    ///
+    /// # Returns
+    ///
+    /// Returns the number of listeners, or 0 if events are disabled.
+    pub fn event_listener_count(&self) -> usize {
+        self.event_registry
+            .as_ref()
+            .map(|registry| registry.listener_count())
+            .unwrap_or(0)
+    }
+
+    /// Dispatch an event to all registered listeners
+    ///
+    /// This method is used internally by wallet operations to emit events.
+    /// If the event system is disabled, this method does nothing.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - The event to dispatch
+    pub async fn dispatch_event(&mut self, event: crate::events::types::SharedWalletEvent) {
+        if let Some(registry) = self.event_registry.as_mut() {
+            registry.dispatch(event).await;
+        }
+    }
+
+    /// Set the event registry for this wallet
+    ///
+    /// This method replaces the current event registry with a new one.
+    /// If an existing registry is present, it will be shut down first.
+    ///
+    /// # Arguments
+    ///
+    /// * `registry` - The new event registry to use
+    pub async fn set_event_registry(&mut self, registry: EventRegistry) {
+        // Shutdown existing registry if present
+        if let Some(mut existing_registry) = self.event_registry.take() {
+            existing_registry.shutdown().await;
+        }
+
+        self.event_registry = Some(registry);
+    }
+
     /// Get a copy of the master key bytes (for demonstration purposes)
     /// WARNING: This exposes sensitive cryptographic material. Use with caution.
     pub fn master_key_bytes(&self) -> [u8; 32] {
@@ -332,6 +494,8 @@ impl Zeroize for Wallet {
             seed_phrase.zeroize();
         }
         self.original_seed_phrase = None;
+        // Note: We don't need to zeroize the event registry as it doesn't contain sensitive data
+        self.event_registry = None;
     }
 }
 

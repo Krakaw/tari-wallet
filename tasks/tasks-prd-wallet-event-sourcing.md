@@ -42,7 +42,7 @@
 
 - [ ] 3.0 Integrate Event System with Wallet Builder
   - [x] 3.1 Modify wallet builder to accept event listeners via `with_event_listener()` method
-  - [ ] 3.2 Add internal event registry to wallet structure
+  - [x] 3.2 Add internal event registry to wallet structure
   - [ ] 3.3 Ensure event capture is opt-in (disabled by default)
   - [ ] 3.4 Wire up event emission from existing wallet operations (receive/spend UTXOs)
   - [ ] 3.5 Add feature flag integration for memory-only vs database-backed wallets
