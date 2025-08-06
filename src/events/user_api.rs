@@ -358,8 +358,8 @@ impl<S: EventStorage + Sync> WalletReplayManager<S> {
         if let Some(batch_size) = options.batch_size {
             config = config.with_batch_size(batch_size);
         }
-        config = config.with_stop_on_error(options.fail_fast);
-        config = config.with_progress_frequency(options.progress_frequency);
+        let _config = config.with_stop_on_error(options.fail_fast);
+        let _config = _config.with_progress_frequency(options.progress_frequency);
         // Note: with_validate_replayed_state method doesn't exist in current ReplayConfig
         // In a full implementation, you'd add this method or handle validation differently
 
@@ -392,8 +392,7 @@ impl<S: EventStorage + Sync> WalletReplayManager<S> {
                 // Generate detailed report if requested
                 let detailed_report = if options.generate_reports {
                     Some(format!(
-                        "Replay completed successfully for wallet: {}",
-                        wallet_id
+                        "Replay completed successfully for wallet: {wallet_id}"
                     ))
                 } else {
                     None
@@ -436,7 +435,7 @@ impl<S: EventStorage + Sync> WalletReplayManager<S> {
             }
             Err(e) => {
                 // Handle replay failure
-                let error_msg = format!("Replay failed: {}", e);
+                let error_msg = format!("Replay failed: {e}");
                 errors.push(error_msg.clone());
 
                 // Create minimal result indicating failure
@@ -446,7 +445,7 @@ impl<S: EventStorage + Sync> WalletReplayManager<S> {
                     health_status: WalletHealthStatus::Unknown,
                     replayed_state: Default::default(),
                     inconsistency_report: None,
-                    detailed_report: Some(format!("Replay operation failed: {}", e)),
+                    detailed_report: Some(format!("Replay operation failed: {e}")),
                     performance_metrics: ReplayPerformanceMetrics {
                         total_duration,
                         events_processed: 0,
@@ -486,7 +485,7 @@ impl<S: EventStorage + Sync> WalletReplayManager<S> {
         if let Some(batch_size) = options.batch_size {
             config = config.with_batch_size(batch_size);
         }
-        config = config.with_progress_frequency(options.progress_frequency);
+        let _config = config.with_progress_frequency(options.progress_frequency);
 
         let _progress_callback_inner = Arc::new(move |progress: &ReplayProgress| {
             let user_progress = UserReplayProgress {
@@ -774,7 +773,7 @@ impl<S: EventStorage + Sync> WalletReplayManager<S> {
                             health_status: WalletHealthStatus::Unknown,
                             replayed_state: Default::default(),
                             inconsistency_report: None,
-                            detailed_report: Some(format!("Health check failed: {}", e)),
+                            detailed_report: Some(format!("Health check failed: {e}")),
                             performance_metrics: ReplayPerformanceMetrics {
                                 total_duration: Duration::ZERO,
                                 events_processed: 0,

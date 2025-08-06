@@ -899,7 +899,7 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
 
                         validation_issues.push(ValidationIssue {
                             issue_type: ValidationIssueType::InvalidEventData,
-                            description: format!("Failed to apply event: {}", e),
+                            description: format!("Failed to apply event: {e}"),
                             sequence_number: Some(stored_event.sequence_number),
                             event_id: Some(stored_event.event_id.clone()),
                             severity: ValidationSeverity::Error,
@@ -1086,7 +1086,7 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
         let wallet_event: WalletEvent =
             serde_json::from_str(&stored_event.payload_json).map_err(|e| {
                 WalletEventError::DeserializationError {
-                    message: format!("Failed to parse event payload: {}", e),
+                    message: format!("Failed to parse event payload: {e}"),
                     data_snippet: Self::get_data_snippet(&stored_event.payload_json),
                 }
             })?;
@@ -1541,7 +1541,7 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
         let mut corruption_indicators = Vec::new();
 
         // Check for JSON corruption
-        if let Err(_) = serde_json::from_str::<serde_json::Value>(&event.payload_json) {
+        if serde_json::from_str::<serde_json::Value>(&event.payload_json).is_err() {
             corruption_indicators.push(CorruptionIndicator::MalformedJson);
         }
 
@@ -1748,7 +1748,7 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
             if seen_sequences.contains(&seq) {
                 issues.push(ValidationIssue {
                     issue_type: ValidationIssueType::DuplicateSequence,
-                    description: format!("Duplicate sequence number: {}", seq),
+                    description: format!("Duplicate sequence number: {seq}"),
                     sequence_number: Some(seq),
                     event_id: Some(event.event_id.clone()),
                     severity: ValidationSeverity::Error,
@@ -1760,7 +1760,7 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
                 for missing in expected_sequence..seq {
                     issues.push(ValidationIssue {
                         issue_type: ValidationIssueType::MissingSequence,
-                        description: format!("Missing sequence number: {}", missing),
+                        description: format!("Missing sequence number: {missing}"),
                         sequence_number: Some(missing),
                         event_id: None,
                         severity: ValidationSeverity::Warning,
@@ -1968,8 +1968,7 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
                     issue_type: InconsistencyType::LogicalInconsistency,
                     severity: InconsistencySeverity::Critical,
                     description: format!(
-                        "UTXO {} exists in both unspent and spent collections",
-                        utxo_id
+                        "UTXO {utxo_id} exists in both unspent and spent collections"
                     ),
                     affected_entity: Some(utxo_id.clone()),
                     expected: Some("UTXO should be in only one collection".to_string()),
@@ -2252,7 +2251,7 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
     pub fn generate_detailed_report(&self, report: &InconsistencyReport) -> String {
         let mut output = String::new();
 
-        output.push_str(&format!("# Wallet Event Replay Inconsistency Report\n\n"));
+        output.push_str("# Wallet Event Replay Inconsistency Report\n\n");
         output.push_str(&format!("**Wallet ID:** {}\n", report.wallet_id));
         output.push_str(&format!(
             "**Analysis Duration:** {:?}\n",
@@ -2340,19 +2339,19 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
                     output.push_str(&format!("**Description:** {}\n\n", issue.description));
 
                     if let Some(entity) = &issue.affected_entity {
-                        output.push_str(&format!("**Affected Entity:** {}\n", entity));
+                        output.push_str(&format!("**Affected Entity:** {entity}\n"));
                     }
 
                     if let Some(expected) = &issue.expected {
-                        output.push_str(&format!("**Expected:** {}\n", expected));
+                        output.push_str(&format!("**Expected:** {expected}\n"));
                     }
 
                     if let Some(actual) = &issue.actual {
-                        output.push_str(&format!("**Actual:** {}\n", actual));
+                        output.push_str(&format!("**Actual:** {actual}\n"));
                     }
 
                     if let Some(block_height) = issue.block_height {
-                        output.push_str(&format!("**Block Height:** {}\n", block_height));
+                        output.push_str(&format!("**Block Height:** {block_height}\n"));
                     }
 
                     output.push_str(&format!("**Impact:** {:?}\n", issue.impact));
@@ -2360,14 +2359,14 @@ impl<S: EventStorage + Sync> EventReplayEngine<S> {
                     if !issue.remediation.is_empty() {
                         output.push_str("**Recommended Actions:**\n");
                         for action in &issue.remediation {
-                            output.push_str(&format!("- {}\n", action));
+                            output.push_str(&format!("- {action}\n"));
                         }
                     }
 
                     if !issue.context.is_empty() {
                         output.push_str("**Additional Context:**\n");
                         for (key, value) in &issue.context {
-                            output.push_str(&format!("- {}: {}\n", key, value));
+                            output.push_str(&format!("- {key}: {value}\n"));
                         }
                     }
 

@@ -1320,7 +1320,7 @@ mod tests {
     #[test]
     fn test_log_level_filtering() {
         let error_event = WalletScanEvent::ScanError {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             error_message: "Test error".to_string(),
             error_code: None,
             block_height: None,
@@ -1329,7 +1329,7 @@ mod tests {
         };
 
         let progress_event = WalletScanEvent::ScanProgress {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             current_block: 100,
             total_blocks: 1000,
             current_block_height: 1100,
@@ -1371,7 +1371,7 @@ mod tests {
         let config = ScanConfig::new().with_batch_size(25);
 
         let event = Arc::new(WalletScanEvent::ScanStarted {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             config,
             block_range: (1000, 2000),
             wallet_context: "test_wallet".to_string(),
@@ -1415,7 +1415,7 @@ mod tests {
         );
 
         let event = Arc::new(WalletScanEvent::OutputFound {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             output_data,
             block_info,
             address_info,
@@ -1437,7 +1437,7 @@ mod tests {
         final_stats.insert("outputs_found".to_string(), 5);
 
         let event = Arc::new(WalletScanEvent::ScanCompleted {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             final_statistics: final_stats,
             success: true,
             total_duration: Duration::from_secs(120),
@@ -1452,7 +1452,7 @@ mod tests {
         let mut listener = ConsoleLoggingListener::new();
 
         let event = Arc::new(WalletScanEvent::ScanError {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             error_message: "Connection timeout".to_string(),
             error_code: Some("TIMEOUT".to_string()),
             block_height: Some(12345),
@@ -1475,7 +1475,7 @@ mod tests {
 
         // Progress event should be filtered out at minimal level
         let progress_event = Arc::new(WalletScanEvent::ScanProgress {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             current_block: 100,
             total_blocks: 1000,
             current_block_height: 1100,
@@ -1530,7 +1530,8 @@ mod tests {
             ConsoleLoggingConfig::new().with_correlation_ids(true),
         );
 
-        let metadata = EventMetadata::with_correlation("test", "scan_123".to_string());
+        let metadata =
+            EventMetadata::with_correlation("test", "test_wallet", "scan_123".to_string());
         let event = Arc::new(WalletScanEvent::ScanError {
             metadata,
             error_message: "Test error".to_string(),
