@@ -732,6 +732,7 @@ async fn main_unified() -> WalletResult<()> {
                 .performance_preset() // High-performance settings optimized for scanning
                 .database_path(db_path)
                 .auto_start_background_writer(true)
+                .batch_size(1000)
                 .event_auditing(true) // Enable event auditing for storing scan events
                 .build()
                 .await

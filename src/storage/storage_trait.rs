@@ -482,6 +482,14 @@ pub trait WalletStorage: Send + Sync {
 
     /// Get output count for a wallet
     async fn get_output_count(&self, wallet_id: u32) -> WalletResult<usize>;
+
+    /// Store a simple event for auditing (simplified, no trait complexity)
+    async fn store_simple_event(
+        &self,
+        wallet_id: u32,
+        event_type: &str,
+        event_data: &str,
+    ) -> WalletResult<()>;
 }
 
 impl TransactionFilter {

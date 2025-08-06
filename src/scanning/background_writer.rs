@@ -549,6 +549,16 @@ mod tests {
         async fn get_output_count(&self, _wallet_id: u32) -> WalletResult<usize> {
             Ok(0)
         }
+
+        async fn store_simple_event(
+            &self,
+            _wallet_id: u32,
+            _event_type: &str,
+            _event_data: &str,
+        ) -> WalletResult<()> {
+            Ok(()) // Mock implementation does nothing
+        }
+
         async fn mark_spent_outputs_from_inputs(
             &self,
             _wallet_id: u32,
