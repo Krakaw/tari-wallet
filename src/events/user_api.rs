@@ -18,13 +18,12 @@
 //! use lightweight_wallet_libs::events::user_api::WalletReplayManager;
 //! # #[cfg(feature = "storage")]
 //! use lightweight_wallet_libs::storage::event_storage::SqliteEventStorage;
-//! # #[cfg(feature = "storage")]
-//! use tokio_rusqlite::Connection;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! # #[cfg(feature = "storage")]
 //! # {
-//! let connection = Connection::open_in_memory().await?;
+//! // Use an in-memory database for this example  
+//! let connection = tokio_rusqlite::Connection::open_in_memory().await?;
 //! let storage = SqliteEventStorage::new(connection).await?;
 //! let manager = WalletReplayManager::new(storage);
 //!
