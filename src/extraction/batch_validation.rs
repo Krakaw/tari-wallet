@@ -84,61 +84,68 @@ impl Default for BatchValidationOptions {
     }
 }
 
+/// Validate a single transaction output and return the validation result
+fn validate_single_output(
+    index: usize,
+    output: &TransactionOutput,
+    options: &BatchValidationOptions,
+) -> OutputValidationResult {
+    let mut errors = Vec::new();
+    let mut is_valid = true;
+
+    // Validate commitment integrity
+    if options.validate_commitments {
+        if let Err(e) = validate_commitment_integrity(output) {
+            errors.push(e);
+            is_valid = false;
+            if !options.continue_on_error || errors.len() >= options.max_errors_per_output {
+                return OutputValidationResult {
+                    index,
+                    is_valid,
+                    errors,
+                };
+            }
+        }
+    }
+
+    // Validate range proofs
+    if options.validate_range_proofs {
+        if let Some(proof) = output.proof() {
+            if let Err(e) =
+                validate_range_proof(proof, output.commitment(), output.minimum_value_promise())
+            {
+                errors.push(e);
+                is_valid = false;
+                if !options.continue_on_error || errors.len() >= options.max_errors_per_output {
+                    return OutputValidationResult {
+                        index,
+                        is_valid,
+                        errors,
+                    };
+                }
+            }
+        }
+    }
+
+    // Note: Metadata signature validation removed - was providing false security
+
+    OutputValidationResult {
+        index,
+        is_valid,
+        errors,
+    }
+}
+
 /// Validate a batch of transaction outputs with optimized performance
 pub fn validate_output_batch(
     outputs: &[TransactionOutput],
     options: &BatchValidationOptions,
 ) -> BatchValidationResult {
-    let mut results = Vec::with_capacity(outputs.len());
-
-    for (index, output) in outputs.iter().enumerate() {
-        let mut errors = Vec::new();
-        let mut is_valid = true;
-
-        // Validate commitment integrity
-        if options.validate_commitments {
-            if let Err(e) = validate_commitment_integrity(output) {
-                errors.push(e);
-                is_valid = false;
-                if !options.continue_on_error || errors.len() >= options.max_errors_per_output {
-                    results.push(OutputValidationResult {
-                        index,
-                        is_valid,
-                        errors,
-                    });
-                    continue;
-                }
-            }
-        }
-
-        // Validate range proofs
-        if options.validate_range_proofs {
-            if let Some(proof) = output.proof() {
-                if let Err(e) =
-                    validate_range_proof(proof, output.commitment(), output.minimum_value_promise())
-                {
-                    errors.push(e);
-                    is_valid = false;
-                    if !options.continue_on_error || errors.len() >= options.max_errors_per_output {
-                        results.push(OutputValidationResult {
-                            index,
-                            is_valid,
-                            errors,
-                        });
-                        continue;
-                    }
-                }
-            }
-        }
-
-        // Note: Metadata signature validation removed - was providing false security
-
-        results.push(OutputValidationResult {
-            index,
-            is_valid,
-            errors,
-        });
-    }
+    let results: Vec<OutputValidationResult> = outputs
+        .iter()
+        .enumerate()
+        .map(|(index, output)| validate_single_output(index, output, options))
+        .collect();
 
     let summary = BatchValidationSummary::new(&results);
     let is_valid = summary.invalid_outputs == 0;
@@ -161,56 +168,7 @@ pub fn validate_output_batch_parallel(
     let results: Vec<OutputValidationResult> = outputs
         .par_iter()
         .enumerate()
-        .map(|(index, output)| {
-            let mut errors = Vec::new();
-            let mut is_valid = true;
-
-            // Validate commitment integrity
-            if options.validate_commitments {
-                if let Err(e) = validate_commitment_integrity(output) {
-                    errors.push(e);
-                    is_valid = false;
-                    if !options.continue_on_error || errors.len() >= options.max_errors_per_output {
-                        return OutputValidationResult {
-                            index,
-                            is_valid,
-                            errors,
-                        };
-                    }
-                }
-            }
-
-            // Validate range proofs
-            if options.validate_range_proofs {
-                if let Some(proof) = output.proof() {
-                    if let Err(e) = validate_range_proof(
-                        proof,
-                        output.commitment(),
-                        output.minimum_value_promise(),
-                    ) {
-                        errors.push(e);
-                        is_valid = false;
-                        if !options.continue_on_error
-                            || errors.len() >= options.max_errors_per_output
-                        {
-                            return OutputValidationResult {
-                                index,
-                                is_valid,
-                                errors,
-                            };
-                        }
-                    }
-                }
-            }
-
-            // Note: Metadata signature validation removed - was providing false security
-
-            OutputValidationResult {
-                index,
-                is_valid,
-                errors,
-            }
-        })
+        .map(|(index, output)| validate_single_output(index, output, options))
         .collect();
 
     let summary = BatchValidationSummary::new(&results);
