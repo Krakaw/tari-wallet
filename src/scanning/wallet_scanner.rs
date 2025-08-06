@@ -2385,13 +2385,13 @@ fn display_json_results(wallet_state: &WalletState) {
         "    \"total_transactions\": {},",
         wallet_state.transactions.len()
     );
-    println!("    \"inbound_count\": {},", inbound_count);
-    println!("    \"outbound_count\": {},", outbound_count);
-    println!("    \"total_received\": {},", total_received);
-    println!("    \"total_spent\": {},", total_spent);
-    println!("    \"current_balance\": {},", balance);
-    println!("    \"unspent_outputs\": {},", unspent_count);
-    println!("    \"spent_outputs\": {}", spent_count);
+    println!("    \"inbound_count\": {inbound_count},");
+    println!("    \"outbound_count\": {outbound_count},");
+    println!("    \"total_received\": {total_received},");
+    println!("    \"total_spent\": {total_spent},");
+    println!("    \"current_balance\": {balance},");
+    println!("    \"unspent_outputs\": {unspent_count},");
+    println!("    \"spent_outputs\": {spent_count}");
     println!("  }}");
     println!("}}");
 }
