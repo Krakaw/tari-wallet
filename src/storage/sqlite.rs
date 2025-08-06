@@ -257,12 +257,23 @@ impl SqliteStorage {
             .await
             .map_err(|e| WalletError::StorageError(format!("Failed to create schema: {e}")))?;
 
+        // Create event storage schema
+        self.create_event_schema().await?;
+
         // Apply scanning-specific optimizations after schema creation
         self.performance_config
             .apply_scanning_optimizations(&self.connection)
             .await?;
 
         Ok(())
+    }
+
+    /// Create the event storage schema
+    async fn create_event_schema(&self) -> WalletResult<()> {
+        use crate::storage::event_storage::EventStorage;
+        <Self as EventStorage>::initialize(self)
+            .await
+            .map_err(|e| WalletError::StorageError(format!("Failed to create event schema: {e}")))
     }
 
     /// Convert a database row to a StoredWallet
@@ -2216,7 +2227,46 @@ mod storage_tests {
 #[async_trait]
 impl EventStorage for SqliteStorage {
     async fn initialize(&self) -> WalletEventResult<()> {
-        // The schema is already created in create_schema(), so this is a no-op
+        // Create the event storage schema directly
+        let sql = r#"
+            -- Wallet events table (append-only event log)
+            CREATE TABLE IF NOT EXISTS wallet_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT UNIQUE NOT NULL,
+                wallet_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                sequence_number INTEGER NOT NULL,
+                payload_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                source TEXT NOT NULL,
+                correlation_id TEXT,
+                timestamp INTEGER NOT NULL, -- Unix timestamp in seconds
+                stored_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                
+                -- Ensure sequence numbers are unique per wallet
+                UNIQUE(wallet_id, sequence_number)
+            );
+
+            -- Indexes for efficient querying
+            CREATE INDEX IF NOT EXISTS idx_events_wallet_id ON wallet_events(wallet_id);
+            CREATE INDEX IF NOT EXISTS idx_events_event_type ON wallet_events(event_type);
+            CREATE INDEX IF NOT EXISTS idx_events_sequence ON wallet_events(wallet_id, sequence_number);
+            CREATE INDEX IF NOT EXISTS idx_events_timestamp ON wallet_events(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_events_stored_at ON wallet_events(stored_at);
+            CREATE INDEX IF NOT EXISTS idx_events_source ON wallet_events(source);
+            CREATE INDEX IF NOT EXISTS idx_events_correlation ON wallet_events(correlation_id);
+        "#;
+
+        self.connection
+            .call(move |conn| Ok(conn.execute_batch(sql)?))
+            .await
+            .map_err(|e| {
+                crate::events::types::WalletEventError::storage(
+                    "initialize",
+                    format!("Failed to create event schema: {e}"),
+                )
+            })?;
+
         Ok(())
     }
 

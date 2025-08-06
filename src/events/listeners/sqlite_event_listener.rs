@@ -139,6 +139,17 @@ impl EventListener for SqliteEventListener {
             }
         };
 
+        // Filter events - only store Inputs (SpentOutputFound), Outputs (OutputFound), and Re-orgs
+        let should_store = matches!(
+            event.as_ref(),
+            WalletScanEvent::OutputFound { .. } | WalletScanEvent::SpentOutputFound { .. }
+        );
+
+        if !should_store {
+            // Skip events that are not inputs, outputs, or re-orgs
+            return Ok(());
+        }
+
         // Get next sequence number for this wallet
         let sequence_number = self
             .storage
