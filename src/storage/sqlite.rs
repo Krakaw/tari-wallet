@@ -188,6 +188,7 @@ impl SqliteStorage {
                 -- Status and spending tracking
                 status INTEGER NOT NULL DEFAULT 0,
                 mined_height BIGINT,
+                block_hash TEXT,
                 spent_in_tx_id BIGINT,
 
                 -- Timestamps
@@ -369,6 +370,7 @@ impl SqliteStorage {
             rangeproof: row.get("rangeproof")?,
             status: row.get::<_, i64>("status")? as u32,
             mined_height: row.get::<_, Option<i64>>("mined_height")?.map(|h| h as u64),
+            block_hash: row.get("block_hash")?,
             spent_in_tx_id: row
                 .get::<_, Option<i64>>("spent_in_tx_id")?
                 .map(|id| id as u64),
@@ -1264,13 +1266,13 @@ impl WalletStorage for SqliteStorage {
                     r#"
                     UPDATE outputs
                     SET wallet_id = ?, commitment = ?, hash = ?, value = ?, spending_key = ?,
-                        script_private_key = ?, script = ?, input_data = ?, covenant = ?,
-                        output_type = ?, features_json = ?, maturity = ?, script_lock_height = ?,
-                        sender_offset_public_key = ?, metadata_signature_ephemeral_commitment = ?,
-                        metadata_signature_ephemeral_pubkey = ?, metadata_signature_u_a = ?,
-                        metadata_signature_u_x = ?, metadata_signature_u_y = ?, encrypted_data = ?,
-                        minimum_value_promise = ?, rangeproof = ?, status = ?, mined_height = ?,
-                        spent_in_tx_id = ?
+                    script_private_key = ?, script = ?, input_data = ?, covenant = ?,
+                    output_type = ?, features_json = ?, maturity = ?, script_lock_height = ?,
+                    sender_offset_public_key = ?, metadata_signature_ephemeral_commitment = ?,
+                    metadata_signature_ephemeral_pubkey = ?, metadata_signature_u_a = ?,
+                    metadata_signature_u_x = ?, metadata_signature_u_y = ?, encrypted_data = ?,
+                    minimum_value_promise = ?, rangeproof = ?, status = ?, mined_height = ?,
+                    block_hash = ?, spent_in_tx_id = ?
                     WHERE id = ?
                     "#,
                     params![
@@ -1298,8 +1300,9 @@ impl WalletStorage for SqliteStorage {
                         output_clone.rangeproof,
                         output_clone.status as i64,
                         output_clone.mined_height.map(|h| h as i64),
+                        output_clone.block_hash,
                         output_clone.spent_in_tx_id.map(|id| id as i64),
-                        output_id as i64,
+                         output_id as i64,
                     ],
                 )?;
 
@@ -1313,12 +1316,12 @@ impl WalletStorage for SqliteStorage {
                     r#"
                     INSERT INTO outputs
                     (wallet_id, commitment, hash, value, spending_key, script_private_key,
-                     script, input_data, covenant, output_type, features_json, maturity,
-                     script_lock_height, sender_offset_public_key, metadata_signature_ephemeral_commitment,
-                     metadata_signature_ephemeral_pubkey, metadata_signature_u_a, metadata_signature_u_x,
-                     metadata_signature_u_y, encrypted_data, minimum_value_promise, rangeproof,
-                     status, mined_height, spent_in_tx_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    script, input_data, covenant, output_type, features_json, maturity,
+                    script_lock_height, sender_offset_public_key, metadata_signature_ephemeral_commitment,
+                    metadata_signature_ephemeral_pubkey, metadata_signature_u_a, metadata_signature_u_x,
+                    metadata_signature_u_y, encrypted_data, minimum_value_promise, rangeproof,
+                    status, mined_height, block_hash, spent_in_tx_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                     params![
                         output_clone.wallet_id as i64,
@@ -1345,8 +1348,9 @@ impl WalletStorage for SqliteStorage {
                         output_clone.rangeproof,
                         output_clone.status as i64,
                         output_clone.mined_height.map(|h| h as i64),
-                        output_clone.spent_in_tx_id.map(|id| id as i64),
-                    ],
+                        output_clone.block_hash,
+                            output_clone.spent_in_tx_id.map(|id| id as i64),
+                     ],
                 )?;
 
                 Ok(conn.last_insert_rowid() as u32)
@@ -1419,8 +1423,8 @@ impl WalletStorage for SqliteStorage {
                          script_lock_height, sender_offset_public_key, metadata_signature_ephemeral_commitment,
                          metadata_signature_ephemeral_pubkey, metadata_signature_u_a, metadata_signature_u_x,
                          metadata_signature_u_y, encrypted_data, minimum_value_promise, rangeproof,
-                         status, mined_height, spent_in_tx_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         status, mined_height, block_hash, spent_in_tx_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(wallet_id, commitment) DO UPDATE SET
                             status = EXCLUDED.status,
                             mined_height = COALESCE(EXCLUDED.mined_height, mined_height),
@@ -1452,6 +1456,7 @@ impl WalletStorage for SqliteStorage {
                             output.rangeproof,
                             output.status as i64,
                             output.mined_height.map(|h| h as i64),
+                            output.block_hash,
                             output.spent_in_tx_id.map(|id| id as i64),
                         ],
                     )?;
@@ -1745,483 +1750,6 @@ impl SqliteStorage {
     }
 }
 
-#[cfg(feature = "storage")]
-// Tests removed due to API compatibility issues
-#[cfg(test)]
-mod storage_tests {
-    /*
-    use super::super::*;
-    use crate::data_structures::{
-        payment_id::PaymentId,
-        transaction::{TransactionDirection, TransactionStatus},
-        types::CompressedCommitment,
-        wallet_transaction::WalletTransaction,
-    };
-
-    /// Helper function to create a test wallet for foreign key compliance
-    async fn create_test_wallet(storage: &SqliteStorage) -> u32 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let test_wallet = StoredWallet {
-            id: None,
-            name: format!("test_wallet_{}_{}", std::process::id(), timestamp),
-            seed_phrase: None,
-            view_key_hex: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-                .to_string(),
-            spend_key_hex: None,
-            birthday_block: 0,
-            latest_scanned_block: None,
-            created_at: None,
-            updated_at: None,
-        };
-        storage.save_wallet(&test_wallet).await.unwrap()
-    }
-
-    #[tokio::test]
-    async fn test_sqlite_storage_initialization() {
-        let storage = SqliteStorage::new_in_memory().await.unwrap();
-        storage.initialize().await.unwrap();
-
-        // Test that we can get stats from empty storage
-        let stats = storage.get_statistics().await.unwrap();
-        assert_eq!(stats.total_transactions, 0);
-        assert_eq!(stats.current_balance, 0);
-        assert_eq!(stats.highest_block, None);
-        assert_eq!(stats.lowest_block, None);
-    }
-
-    #[tokio::test]
-    async fn test_save_and_retrieve_transaction() {
-        let storage = SqliteStorage::new_in_memory().await.unwrap();
-        storage.initialize().await.unwrap();
-
-        // Create a test wallet first to satisfy foreign key constraints
-        let wallet_id = create_test_wallet(&storage).await;
-
-        let commitment = CompressedCommitment::new([1u8; 32]);
-        let transaction = WalletTransaction::new(
-            12345,
-            Some(0),
-            None,
-            commitment.clone(),
-            None,
-            1000000,
-            PaymentId::Empty,
-            TransactionStatus::MinedConfirmed,
-            TransactionDirection::Inbound,
-            true,
-        );
-
-        // Save transaction with the correct wallet_id
-        storage
-            .save_transaction(wallet_id, &transaction)
-            .await
-            .unwrap();
-
-        // Retrieve by commitment
-        let retrieved = storage
-            .get_transaction_by_commitment(&commitment)
-            .await
-            .unwrap();
-        assert!(retrieved.is_some());
-        let retrieved_tx = retrieved.unwrap();
-        assert_eq!(retrieved_tx.block_height, 12345);
-        assert_eq!(retrieved_tx.value, 1000000);
-        assert_eq!(retrieved_tx.commitment, commitment);
-
-        // Test existence check
-        assert!(storage.has_commitment(&commitment).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_batch_save_transactions() {
-        let storage = SqliteStorage::new_in_memory().await.unwrap();
-        storage.initialize().await.unwrap();
-
-        // Create a test wallet first to satisfy foreign key constraints
-        let wallet_id = create_test_wallet(&storage).await;
-
-        let transactions = vec![
-            WalletTransaction::new(
-                100,
-                Some(0),
-                None,
-                CompressedCommitment::new([1u8; 32]),
-                None,
-                1000000,
-                PaymentId::Empty,
-                TransactionStatus::MinedConfirmed,
-                TransactionDirection::Inbound,
-                true,
-            ),
-            WalletTransaction::new(
-                200,
-                Some(1),
-                None,
-                CompressedCommitment::new([2u8; 32]),
-                None,
-                2000000,
-                PaymentId::Empty,
-                TransactionStatus::MinedConfirmed,
-                TransactionDirection::Inbound,
-                true,
-            ),
-            WalletTransaction::new(
-                300,
-                None,
-                Some(0),
-                CompressedCommitment::new([1u8; 32]),
-                None,
-                1000000,
-                PaymentId::Empty,
-                TransactionStatus::MinedConfirmed,
-                TransactionDirection::Outbound,
-                true,
-            ),
-        ];
-
-        storage
-            .save_transactions(wallet_id, &transactions)
-            .await
-            .unwrap();
-
-        let all_transactions = storage.get_transactions(None).await.unwrap();
-        assert_eq!(all_transactions.len(), 3);
-
-        let stats = storage.get_statistics().await.unwrap();
-        assert_eq!(stats.total_transactions, 3);
-        assert_eq!(stats.inbound_count, 2);
-        assert_eq!(stats.outbound_count, 1);
-    }
-
-    #[tokio::test]
-    async fn test_mark_transaction_spent() {
-        let storage = SqliteStorage::new_in_memory().await.unwrap();
-        storage.initialize().await.unwrap();
-
-        // Create a test wallet first to satisfy foreign key constraints
-        let wallet_id = create_test_wallet(&storage).await;
-
-        let commitment = CompressedCommitment::new([1u8; 32]);
-        let transaction = WalletTransaction::new(
-            100,
-            Some(0),
-            None,
-            commitment.clone(),
-            None,
-            1000000,
-            PaymentId::Empty,
-            TransactionStatus::MinedConfirmed,
-            TransactionDirection::Inbound,
-            true,
-        );
-
-        storage
-            .save_transaction(wallet_id, &transaction)
-            .await
-            .unwrap();
-
-        // Mark as spent
-        let marked = storage
-            .mark_transaction_spent(&commitment, 200, 5)
-            .await
-            .unwrap();
-        assert!(marked);
-
-        // Retrieve and verify spent status
-        let updated_tx = storage
-            .get_transaction_by_commitment(&commitment)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(updated_tx.is_spent);
-        assert_eq!(updated_tx.spent_in_block, Some(200));
-        assert_eq!(updated_tx.spent_in_input, Some(5));
-
-        // Try to mark again (should return false since already spent)
-        let marked_again = storage
-            .mark_transaction_spent(&commitment, 300, 10)
-            .await
-            .unwrap();
-        assert!(!marked_again);
-    }
-
-    #[tokio::test]
-    async fn test_filtered_queries() {
-        let storage = SqliteStorage::new_in_memory().await.unwrap();
-        storage.initialize().await.unwrap();
-
-        // Create a test wallet first to satisfy foreign key constraints
-        let wallet_id = create_test_wallet(&storage).await;
-
-        // Add test transactions
-        let transactions = vec![
-            WalletTransaction::new(
-                100,
-                Some(0),
-                None,
-                CompressedCommitment::new([1u8; 32]),
-                None,
-                1000000,
-                PaymentId::Empty,
-                TransactionStatus::MinedConfirmed,
-                TransactionDirection::Inbound,
-                true,
-            ),
-            WalletTransaction::new(
-                200,
-                Some(1),
-                None,
-                CompressedCommitment::new([2u8; 32]),
-                None,
-                2000000,
-                PaymentId::Empty,
-                TransactionStatus::CoinbaseConfirmed,
-                TransactionDirection::Inbound,
-                true,
-            ),
-            WalletTransaction::new(
-                300,
-                None,
-                Some(0),
-                CompressedCommitment::new([1u8; 32]),
-                None,
-                1000000,
-                PaymentId::Empty,
-                TransactionStatus::MinedConfirmed,
-                TransactionDirection::Outbound,
-                true,
-            ),
-        ];
-
-        storage
-            .save_transactions(wallet_id, &transactions)
-            .await
-            .unwrap();
-
-        // Test filter by direction
-        let inbound_filter = TransactionFilter::new().with_direction(TransactionDirection::Inbound);
-        let inbound_txs = storage
-            .get_transactions(Some(inbound_filter))
-            .await
-            .unwrap();
-        assert_eq!(inbound_txs.len(), 2);
-
-        // Test filter by block range
-        let block_filter = TransactionFilter::new().with_block_range(150, 250);
-        let block_txs = storage.get_transactions(Some(block_filter)).await.unwrap();
-        assert_eq!(block_txs.len(), 1);
-        assert_eq!(block_txs[0].block_height, 200);
-
-        // Test filter by status
-        let coinbase_filter =
-            TransactionFilter::new().with_status(TransactionStatus::CoinbaseConfirmed);
-        let coinbase_txs = storage
-            .get_transactions(Some(coinbase_filter))
-            .await
-            .unwrap();
-        assert_eq!(coinbase_txs.len(), 1);
-        assert_eq!(
-            coinbase_txs[0].transaction_status,
-            TransactionStatus::CoinbaseConfirmed
-        );
-
-        // Test limit
-        let limited_filter = TransactionFilter::new().with_limit(2);
-        let limited_txs = storage
-            .get_transactions(Some(limited_filter))
-            .await
-            .unwrap();
-        assert_eq!(limited_txs.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_wallet_state_reconstruction() {
-        let storage = SqliteStorage::new_in_memory().await.unwrap();
-        storage.initialize().await.unwrap();
-
-        // Create a test wallet first to satisfy foreign key constraints
-        let wallet_id = create_test_wallet(&storage).await;
-
-        let commitment1 = CompressedCommitment::new([1u8; 32]);
-        let commitment2 = CompressedCommitment::new([2u8; 32]);
-
-        // Add inbound transactions
-        let inbound_tx1 = WalletTransaction::new(
-            100,
-            Some(0),
-            None,
-            commitment1.clone(),
-            None,
-            1000000,
-            PaymentId::Empty,
-            TransactionStatus::MinedConfirmed,
-            TransactionDirection::Inbound,
-            true,
-        );
-        let inbound_tx2 = WalletTransaction::new(
-            200,
-            Some(1),
-            None,
-            commitment2.clone(),
-            None,
-            2000000,
-            PaymentId::Empty,
-            TransactionStatus::MinedConfirmed,
-            TransactionDirection::Inbound,
-            true,
-        );
-
-        storage
-            .save_transaction(wallet_id, &inbound_tx1)
-            .await
-            .unwrap();
-        storage
-            .save_transaction(wallet_id, &inbound_tx2)
-            .await
-            .unwrap();
-
-        // Mark one as spent
-        storage
-            .mark_transaction_spent(&commitment1, 300, 0)
-            .await
-            .unwrap();
-
-        // Load wallet state
-        let wallet_state = storage.load_wallet_state(wallet_id).await.unwrap();
-
-        // Verify the state
-        let (total_received, total_spent, balance, unspent_count, spent_count) =
-            wallet_state.get_summary();
-        assert_eq!(total_received, 3000000); // 1M + 2M
-        assert_eq!(total_spent, 1000000); // 1M spent
-        assert_eq!(balance, 2000000); // 2M remaining
-        assert_eq!(unspent_count, 1); // 1 unspent
-        assert_eq!(spent_count, 1); // 1 spent
-
-        let unspent = wallet_state.get_unspent_transactions();
-        assert_eq!(unspent.len(), 1);
-        assert_eq!(unspent[0].commitment, commitment2);
-
-        let spent = wallet_state.get_spent_transactions();
-        assert_eq!(spent.len(), 1);
-        assert_eq!(spent[0].commitment, commitment1);
-    }
-
-    #[tokio::test]
-    async fn test_block_range_queries() {
-        let storage = SqliteStorage::new_in_memory().await.unwrap();
-        storage.initialize().await.unwrap();
-
-        // Create a test wallet first to satisfy foreign key constraints
-        let wallet_id = create_test_wallet(&storage).await;
-
-        // Add transactions across different blocks
-        let transactions = vec![
-            WalletTransaction::new(
-                100,
-                Some(0),
-                None,
-                CompressedCommitment::new([1u8; 32]),
-                None,
-                1000000,
-                PaymentId::Empty,
-                TransactionStatus::MinedConfirmed,
-                TransactionDirection::Inbound,
-                true,
-            ),
-            WalletTransaction::new(
-                500,
-                Some(1),
-                None,
-                CompressedCommitment::new([2u8; 32]),
-                None,
-                2000000,
-                PaymentId::Empty,
-                TransactionStatus::MinedConfirmed,
-                TransactionDirection::Inbound,
-                true,
-            ),
-            WalletTransaction::new(
-                1000,
-                Some(2),
-                None,
-                CompressedCommitment::new([3u8; 32]),
-                None,
-                3000000,
-                PaymentId::Empty,
-                TransactionStatus::MinedConfirmed,
-                TransactionDirection::Inbound,
-                true,
-            ),
-        ];
-
-        storage
-            .save_transactions(wallet_id, &transactions)
-            .await
-            .unwrap();
-
-        // Test block range queries
-        let range_txs = storage
-            .get_transactions_by_block_range(200, 800)
-            .await
-            .unwrap();
-        assert_eq!(range_txs.len(), 1);
-        assert_eq!(range_txs[0].block_height, 500);
-
-        // Test highest/lowest block
-        let highest = storage.get_highest_block().await.unwrap();
-        let lowest = storage.get_lowest_block().await.unwrap();
-        assert_eq!(highest, Some(1000));
-        assert_eq!(lowest, Some(100));
-    }
-
-    #[tokio::test]
-    async fn test_clear_all_transactions() {
-        let storage = SqliteStorage::new_in_memory().await.unwrap();
-        storage.initialize().await.unwrap();
-
-        // Create a test wallet first to satisfy foreign key constraints
-        let wallet_id = create_test_wallet(&storage).await;
-
-        // Add some transactions
-        let transaction = WalletTransaction::new(
-            100,
-            Some(0),
-            None,
-            CompressedCommitment::new([1u8; 32]),
-            None,
-            1000000,
-            PaymentId::Empty,
-            TransactionStatus::MinedConfirmed,
-            TransactionDirection::Inbound,
-            true,
-        );
-        storage
-            .save_transaction(wallet_id, &transaction)
-            .await
-            .unwrap();
-
-        // Verify they exist
-        let count = storage.get_transaction_count().await.unwrap();
-        assert_eq!(count, 1);
-
-        // Clear all
-        storage.clear_all_transactions().await.unwrap();
-
-        // Verify they're gone
-        let count = storage.get_transaction_count().await.unwrap();
-        assert_eq!(count, 0);
-
-        let stats = storage.get_statistics().await.unwrap();
-        assert_eq!(stats.total_transactions, 0);
-    }
-    */
-}
-
 // Suppress clippy warning about items after test module
 #[allow(clippy::items_after_test_module)]
 /// EventStorage implementation for SqliteStorage
@@ -2270,33 +1798,6 @@ impl EventStorage for SqliteStorage {
                 crate::events::types::WalletEventError::storage(
                     "initialize",
                     format!("Failed to create event schema: {e}"),
-                )
-            })?;
-
-        // Migration: Add output_hash column to existing tables if it doesn't exist
-        self.connection
-            .call(move |conn| {
-                // Check if output_hash column exists, if not add it
-                let mut stmt = conn.prepare("PRAGMA table_info(wallet_events)")?;
-                let rows: Result<Vec<_>, _> = stmt
-                    .query_map([], |row| {
-                        let column_name: String = row.get(1)?;
-                        Ok(column_name)
-                    })?
-                    .collect();
-                if let Ok(columns) = rows {
-                    if !columns.contains(&"output_hash".to_string()) {
-                        conn.execute("ALTER TABLE wallet_events ADD COLUMN output_hash TEXT", [])?;
-                        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_output_hash ON wallet_events(output_hash)", [])?;
-                    }
-                }
-                Ok(())
-            })
-            .await
-            .map_err(|e| {
-                crate::events::types::WalletEventError::storage(
-                    "initialize",
-                    format!("Failed to migrate event schema: {e}"),
                 )
             })?;
 

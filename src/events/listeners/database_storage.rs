@@ -660,6 +660,7 @@ impl DatabaseStorageListener {
             // Status and spending tracking
             status: 0, // Unspent
             mined_height: Some(block_info.height),
+            block_hash: Some(block_info.hash.clone()),
             spent_in_tx_id: None,
 
             // Timestamps
