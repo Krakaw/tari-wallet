@@ -270,7 +270,6 @@ impl SqliteStorage {
 
     /// Create the event storage schema
     async fn create_event_schema(&self) -> WalletResult<()> {
-        use crate::storage::event_storage::EventStorage;
         <Self as EventStorage>::initialize(self)
             .await
             .map_err(|e| WalletError::StorageError(format!("Failed to create event schema: {e}")))
@@ -2795,18 +2794,18 @@ impl EventStorage for SqliteStorage {
             .await?;
         let event_id = uuid::Uuid::new_v4().to_string();
 
-        Ok(StoredEvent::new(
-            event_id,
-            wallet_id.to_string(),
-            event_type.to_string(),
-            sequence,
-            payload_json,
-            "{}".to_string(),
-            source.to_string(),
-            None,
-            None, // No output_hash for helper events
-            SystemTime::now(),
-        ))
+        Ok(StoredEvent::builder()
+            .event_id(event_id)
+            .wallet_id(wallet_id.to_string())
+            .event_type(event_type.to_string())
+            .sequence_number(sequence)
+            .payload_json(payload_json)
+            .metadata_json("{}".to_string())
+            .source(source.to_string())
+            .correlation_id(None)
+            .output_hash(None) // No output_hash for helper events
+            .timestamp(SystemTime::now())
+            .build())
     }
 
     async fn create_event_with_correlation(
@@ -2829,18 +2828,18 @@ impl EventStorage for SqliteStorage {
             .await?;
         let event_id = uuid::Uuid::new_v4().to_string();
 
-        Ok(StoredEvent::new(
-            event_id,
-            wallet_id.to_string(),
-            event_type.to_string(),
-            sequence,
-            payload_json,
-            "{}".to_string(),
-            source.to_string(),
-            Some(correlation_id),
-            None, // No output_hash for helper events with correlation
-            SystemTime::now(),
-        ))
+        Ok(StoredEvent::builder()
+            .event_id(event_id)
+            .wallet_id(wallet_id.to_string())
+            .event_type(event_type.to_string())
+            .sequence_number(sequence)
+            .payload_json(payload_json)
+            .metadata_json("{}".to_string())
+            .source(source.to_string())
+            .correlation_id(Some(correlation_id))
+            .output_hash(None) // No output_hash for helper events with correlation
+            .timestamp(SystemTime::now())
+            .build())
     }
 
     async fn create_events_batch(

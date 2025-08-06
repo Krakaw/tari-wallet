@@ -119,18 +119,18 @@ impl SqliteEventListener {
             _ => None, // Other events don't have output associations
         };
 
-        Ok(StoredEvent::new(
-            uuid::Uuid::new_v4().to_string(),
-            wallet_id.to_string(),
-            event_type.to_string(),
-            sequence_number,
-            payload_json,
-            metadata_json,
-            "wallet_scanner".to_string(),
-            None, // No correlation ID for now
-            output_hash,
-            std::time::SystemTime::now(),
-        ))
+        Ok(StoredEvent::builder()
+            .event_id(uuid::Uuid::new_v4().to_string())
+            .wallet_id(wallet_id.to_string())
+            .event_type(event_type.to_string())
+            .sequence_number(sequence_number)
+            .payload_json(payload_json)
+            .metadata_json(metadata_json)
+            .source("wallet_scanner".to_string())
+            .correlation_id(None) // No correlation ID for now
+            .output_hash(output_hash)
+            .timestamp(std::time::SystemTime::now())
+            .build())
     }
 }
 

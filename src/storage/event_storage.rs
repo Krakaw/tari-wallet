@@ -57,9 +57,110 @@ pub struct StoredEvent {
     pub stored_at: SystemTime,
 }
 
+/// Builder for StoredEvent
+#[cfg(feature = "storage")]
+#[derive(Default)]
+pub struct StoredEventBuilder {
+    pub id: Option<u64>,
+    pub event_id: Option<String>,
+    pub wallet_id: Option<String>,
+    pub event_type: Option<String>,
+    pub sequence_number: Option<u64>,
+    pub payload_json: Option<String>,
+    pub metadata_json: Option<String>,
+    pub source: Option<String>,
+    pub correlation_id: Option<String>,
+    pub output_hash: Option<String>,
+    pub timestamp: Option<SystemTime>,
+    pub stored_at: Option<SystemTime>,
+}
+
+#[cfg(feature = "storage")]
+impl StoredEventBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn event_id(mut self, event_id: String) -> Self {
+        self.event_id = Some(event_id);
+        self
+    }
+
+    pub fn wallet_id(mut self, wallet_id: String) -> Self {
+        self.wallet_id = Some(wallet_id);
+        self
+    }
+
+    pub fn event_type(mut self, event_type: String) -> Self {
+        self.event_type = Some(event_type);
+        self
+    }
+
+    pub fn sequence_number(mut self, sequence_number: u64) -> Self {
+        self.sequence_number = Some(sequence_number);
+        self
+    }
+
+    pub fn payload_json(mut self, payload_json: String) -> Self {
+        self.payload_json = Some(payload_json);
+        self
+    }
+
+    pub fn metadata_json(mut self, metadata_json: String) -> Self {
+        self.metadata_json = Some(metadata_json);
+        self
+    }
+
+    pub fn source(mut self, source: String) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    pub fn correlation_id(mut self, correlation_id: Option<String>) -> Self {
+        self.correlation_id = correlation_id;
+        self
+    }
+
+    pub fn output_hash(mut self, output_hash: Option<String>) -> Self {
+        self.output_hash = output_hash;
+        self
+    }
+
+    pub fn timestamp(mut self, timestamp: SystemTime) -> Self {
+        self.timestamp = Some(timestamp);
+        self
+    }
+
+    pub fn stored_at(mut self, stored_at: SystemTime) -> Self {
+        self.stored_at = Some(stored_at);
+        self
+    }
+
+    pub fn build(self) -> StoredEvent {
+        StoredEvent {
+            id: self.id,
+            event_id: self.event_id.expect("event_id is required"),
+            wallet_id: self.wallet_id.expect("wallet_id is required"),
+            event_type: self.event_type.expect("event_type is required"),
+            sequence_number: self.sequence_number.expect("sequence_number is required"),
+            payload_json: self.payload_json.expect("payload_json is required"),
+            metadata_json: self.metadata_json.expect("metadata_json is required"),
+            source: self.source.expect("source is required"),
+            correlation_id: self.correlation_id,
+            output_hash: self.output_hash,
+            timestamp: self.timestamp.expect("timestamp is required"),
+            stored_at: self.stored_at.unwrap_or_else(SystemTime::now),
+        }
+    }
+}
+
 impl StoredEvent {
-    /// Create a new stored event
-    #[allow(clippy::too_many_arguments)]
+    /// Create a new stored event using the builder pattern
+    pub fn builder() -> StoredEventBuilder {
+        StoredEventBuilder::new()
+    }
+
+    /// Create a new stored event (legacy method for backward compatibility)
     pub fn new(
         event_id: String,
         wallet_id: String,
@@ -72,20 +173,18 @@ impl StoredEvent {
         output_hash: Option<String>,
         timestamp: SystemTime,
     ) -> Self {
-        Self {
-            id: None,
-            event_id,
-            wallet_id,
-            event_type,
-            sequence_number,
-            payload_json,
-            metadata_json,
-            source,
-            correlation_id,
-            output_hash,
-            timestamp,
-            stored_at: SystemTime::now(),
-        }
+        Self::builder()
+            .event_id(event_id)
+            .wallet_id(wallet_id)
+            .event_type(event_type)
+            .sequence_number(sequence_number)
+            .payload_json(payload_json)
+            .metadata_json(metadata_json)
+            .source(source)
+            .correlation_id(correlation_id)
+            .output_hash(output_hash)
+            .timestamp(timestamp)
+            .build()
     }
 }
 
