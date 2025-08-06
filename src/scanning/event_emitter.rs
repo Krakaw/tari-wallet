@@ -498,8 +498,8 @@ impl ScanEventEmitter {
     /// Create event metadata with consistent source and correlation ID
     fn create_metadata(&self) -> EventMetadata {
         match &self.correlation_id {
-            Some(id) => EventMetadata::with_correlation(&self.source, id.clone()),
-            None => EventMetadata::new(&self.source),
+            Some(id) => EventMetadata::with_correlation(&self.source, "unknown", id.clone()),
+            None => EventMetadata::new(&self.source, "unknown"),
         }
     }
 

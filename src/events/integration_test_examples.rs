@@ -23,6 +23,7 @@ mod integration_examples {
 
         // Simulate a scanning workflow
         let scan_started = WalletScanEvent::scan_started(
+            "test_wallet_id",
             ScanConfig::default().with_batch_size(10),
             (0, 100),
             "test_wallet".to_string(),
@@ -30,6 +31,7 @@ mod integration_examples {
         dispatcher.dispatch(scan_started).await;
 
         let block_processed = WalletScanEvent::block_processed(
+            "test_wallet_id",
             1,
             "0x123abc".to_string(),
             1697123456,
@@ -39,6 +41,7 @@ mod integration_examples {
         dispatcher.dispatch(block_processed).await;
 
         let scan_completed = WalletScanEvent::scan_completed(
+            "test_wallet_id",
             std::collections::HashMap::from([
                 ("blocks_processed".to_string(), 100),
                 ("outputs_found".to_string(), 5),

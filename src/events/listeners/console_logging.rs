@@ -442,7 +442,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::ScanStarted {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new("console_logger", "unknown"),
                 config: config.clone(),
                 block_range: *block_range,
                 wallet_context: wallet_context.to_string(),
@@ -476,7 +476,7 @@ impl ConsoleLoggingListener {
 
             self.log_message(
                 &WalletScanEvent::BlockProcessed {
-                    metadata: crate::events::types::EventMetadata::new("console_logger"),
+                    metadata: crate::events::types::EventMetadata::new("console_logger", "unknown"),
                     height,
                     hash: hash.to_string(),
                     timestamp: SystemTime::now()
@@ -527,7 +527,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::OutputFound {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new("console_logger", "unknown"),
                 output_data: output_data.clone(),
                 block_info: block_info.clone(),
                 address_info: address_info.clone(),
@@ -567,7 +567,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::SpentOutputFound {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new("console_logger", "unknown"),
                 spent_output_data: spent_output_data.clone(),
                 spending_block_info: spending_block_info.clone(),
                 original_output_info: OutputData::new(
@@ -654,7 +654,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::ScanProgress {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new("console_logger", "unknown"),
                 current_block,
                 total_blocks,
                 current_block_height: current_block, // Use current_block as fallback
@@ -727,7 +727,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::ScanCompleted {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new("console_logger", "unknown"),
                 final_statistics: final_statistics.clone(),
                 success,
                 total_duration: *total_duration,
@@ -772,7 +772,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::ScanError {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new("console_logger", "unknown"),
                 error_message: error_message.to_string(),
                 error_code: error_code.clone(),
                 block_height: *block_height,
@@ -808,7 +808,7 @@ impl ConsoleLoggingListener {
 
         self.log_message(
             &WalletScanEvent::ScanCancelled {
-                metadata: crate::events::types::EventMetadata::new("console_logger"),
+                metadata: crate::events::types::EventMetadata::new("console_logger", "unknown"),
                 reason: reason.to_string(),
                 final_statistics: final_statistics.clone(),
                 partial_completion: *partial_completion,
@@ -1320,7 +1320,7 @@ mod tests {
     #[test]
     fn test_log_level_filtering() {
         let error_event = WalletScanEvent::ScanError {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             error_message: "Test error".to_string(),
             error_code: None,
             block_height: None,
@@ -1329,7 +1329,7 @@ mod tests {
         };
 
         let progress_event = WalletScanEvent::ScanProgress {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             current_block: 100,
             total_blocks: 1000,
             current_block_height: 1100,
@@ -1371,7 +1371,7 @@ mod tests {
         let config = ScanConfig::new().with_batch_size(25);
 
         let event = Arc::new(WalletScanEvent::ScanStarted {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             config,
             block_range: (1000, 2000),
             wallet_context: "test_wallet".to_string(),
@@ -1415,7 +1415,7 @@ mod tests {
         );
 
         let event = Arc::new(WalletScanEvent::OutputFound {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             output_data,
             block_info,
             address_info,
@@ -1437,7 +1437,7 @@ mod tests {
         final_stats.insert("outputs_found".to_string(), 5);
 
         let event = Arc::new(WalletScanEvent::ScanCompleted {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             final_statistics: final_stats,
             success: true,
             total_duration: Duration::from_secs(120),
@@ -1452,7 +1452,7 @@ mod tests {
         let mut listener = ConsoleLoggingListener::new();
 
         let event = Arc::new(WalletScanEvent::ScanError {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             error_message: "Connection timeout".to_string(),
             error_code: Some("TIMEOUT".to_string()),
             block_height: Some(12345),
@@ -1475,7 +1475,7 @@ mod tests {
 
         // Progress event should be filtered out at minimal level
         let progress_event = Arc::new(WalletScanEvent::ScanProgress {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             current_block: 100,
             total_blocks: 1000,
             current_block_height: 1100,
@@ -1530,7 +1530,8 @@ mod tests {
             ConsoleLoggingConfig::new().with_correlation_ids(true),
         );
 
-        let metadata = EventMetadata::with_correlation("test", "scan_123".to_string());
+        let metadata =
+            EventMetadata::with_correlation("test", "test_wallet", "scan_123".to_string());
         let event = Arc::new(WalletScanEvent::ScanError {
             metadata,
             error_message: "Test error".to_string(),

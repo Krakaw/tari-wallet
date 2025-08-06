@@ -5,6 +5,10 @@
 //! The current implementation includes SQLite support with room for additional
 //! backends like PostgreSQL, MongoDB, or other databases.
 
+#[cfg(feature = "storage")]
+pub mod connection_pool;
+#[cfg(feature = "storage")]
+pub mod event_storage;
 pub mod output_status;
 #[cfg(feature = "storage")]
 pub mod performance_optimizations;
@@ -14,6 +18,10 @@ pub mod sqlite;
 pub mod storage_trait;
 pub mod stored_output;
 
+#[cfg(feature = "storage")]
+pub use connection_pool::*;
+#[cfg(feature = "storage")]
+pub use event_storage::*;
 pub use output_status::*;
 #[cfg(feature = "storage")]
 pub use performance_optimizations::*;

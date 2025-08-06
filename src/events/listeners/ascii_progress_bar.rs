@@ -497,7 +497,7 @@ mod tests {
 
         // Test scan started event
         let start_event = SharedEvent::new(WalletScanEvent::ScanStarted {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             config: crate::events::types::ScanConfig {
                 batch_size: Some(10),
                 timeout_seconds: Some(30),
@@ -522,7 +522,7 @@ mod tests {
 
         // Test progress event (current_block contains blocks_processed, current_block_height contains actual height)
         let progress_event = SharedEvent::new(WalletScanEvent::ScanProgress {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             current_block: 500, // This is blocks_processed
             total_blocks: 2000,
             current_block_height: 1500, // This is the actual current block height
@@ -551,7 +551,7 @@ mod tests {
 
         // Start scan
         let start_event = SharedEvent::new(WalletScanEvent::ScanStarted {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             config: crate::events::types::ScanConfig {
                 batch_size: Some(10),
                 timeout_seconds: Some(30),
@@ -567,7 +567,7 @@ mod tests {
 
         // Complete scan
         let complete_event = SharedEvent::new(WalletScanEvent::ScanCompleted {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             final_statistics: HashMap::new(),
             success: true,
             total_duration: Duration::from_secs(120),
@@ -587,7 +587,7 @@ mod tests {
         let listener = AsciiProgressBarListener::new();
 
         let progress_event = SharedEvent::new(WalletScanEvent::ScanProgress {
-            metadata: EventMetadata::new("test"),
+            metadata: EventMetadata::new("test", "test_wallet"),
             current_block: 500, // This is blocks_processed
             total_blocks: 2000,
             current_block_height: 1500, // This is the actual current block height
