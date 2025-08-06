@@ -18,8 +18,9 @@
 //! # Usage
 //!
 //! ```rust,no_run
+//! use lightweight_wallet_libs::events::replay::ReplayConfig;
 //! # #[cfg(feature = "storage")]
-//! use lightweight_wallet_libs::events::replay::{EventReplayEngine, ReplayConfig};
+//! use lightweight_wallet_libs::events::replay::EventReplayEngine;
 //! # #[cfg(feature = "storage")]
 //! use lightweight_wallet_libs::storage::event_storage::SqliteEventStorage;
 //!

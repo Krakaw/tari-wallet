@@ -15,6 +15,7 @@
 //! # Usage Examples
 //!
 //! ```rust,no_run
+//! # #[cfg(feature = "storage")]
 //! use lightweight_wallet_libs::events::user_api::WalletReplayManager;
 //! # #[cfg(feature = "storage")]
 //! use lightweight_wallet_libs::storage::event_storage::SqliteEventStorage;
