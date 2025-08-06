@@ -48,6 +48,7 @@ pub struct StoredOutput {
     // Status and spending tracking
     pub status: u32,                 // 0=Unspent, 1=Spent, 2=Locked, etc.
     pub mined_height: Option<u64>,   // Block height when mined
+    pub block_hash: Option<Vec<u8>>, // Block hash when mined
     pub spent_in_tx_id: Option<u64>, // Transaction ID where spent
 
     // Timestamps

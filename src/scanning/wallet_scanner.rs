@@ -152,6 +152,7 @@ fn create_stored_output_from_blockchain_data(
             OutputStatus::Unspent as u32
         },
         mined_height: Some(transaction.block_height),
+        block_hash: None, // Block hash not available in this context
         spent_in_tx_id: if transaction.is_spent {
             // Calculate transaction ID from spent block and input index
             transaction.spent_in_block.and_then(|spent_block| {

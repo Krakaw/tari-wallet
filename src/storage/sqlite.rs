@@ -188,6 +188,7 @@ impl SqliteStorage {
                 -- Status and spending tracking
                 status INTEGER NOT NULL DEFAULT 0,
                 mined_height BIGINT,
+                block_hash BLOB,
                 spent_in_tx_id BIGINT,
 
                 -- Timestamps
@@ -369,6 +370,7 @@ impl SqliteStorage {
             rangeproof: row.get("rangeproof")?,
             status: row.get::<_, i64>("status")? as u32,
             mined_height: row.get::<_, Option<i64>>("mined_height")?.map(|h| h as u64),
+            block_hash: row.get("block_hash")?,
             spent_in_tx_id: row
                 .get::<_, Option<i64>>("spent_in_tx_id")?
                 .map(|id| id as u64),
@@ -1264,13 +1266,13 @@ impl WalletStorage for SqliteStorage {
                     r#"
                     UPDATE outputs
                     SET wallet_id = ?, commitment = ?, hash = ?, value = ?, spending_key = ?,
-                        script_private_key = ?, script = ?, input_data = ?, covenant = ?,
-                        output_type = ?, features_json = ?, maturity = ?, script_lock_height = ?,
-                        sender_offset_public_key = ?, metadata_signature_ephemeral_commitment = ?,
-                        metadata_signature_ephemeral_pubkey = ?, metadata_signature_u_a = ?,
-                        metadata_signature_u_x = ?, metadata_signature_u_y = ?, encrypted_data = ?,
-                        minimum_value_promise = ?, rangeproof = ?, status = ?, mined_height = ?,
-                        spent_in_tx_id = ?
+                    script_private_key = ?, script = ?, input_data = ?, covenant = ?,
+                    output_type = ?, features_json = ?, maturity = ?, script_lock_height = ?,
+                    sender_offset_public_key = ?, metadata_signature_ephemeral_commitment = ?,
+                    metadata_signature_ephemeral_pubkey = ?, metadata_signature_u_a = ?,
+                    metadata_signature_u_x = ?, metadata_signature_u_y = ?, encrypted_data = ?,
+                    minimum_value_promise = ?, rangeproof = ?, status = ?, mined_height = ?,
+                    block_hash = ?, spent_in_tx_id = ?
                     WHERE id = ?
                     "#,
                     params![
@@ -1298,8 +1300,9 @@ impl WalletStorage for SqliteStorage {
                         output_clone.rangeproof,
                         output_clone.status as i64,
                         output_clone.mined_height.map(|h| h as i64),
+                        output_clone.block_hash,
                         output_clone.spent_in_tx_id.map(|id| id as i64),
-                        output_id as i64,
+                         output_id as i64,
                     ],
                 )?;
 
@@ -1313,12 +1316,12 @@ impl WalletStorage for SqliteStorage {
                     r#"
                     INSERT INTO outputs
                     (wallet_id, commitment, hash, value, spending_key, script_private_key,
-                     script, input_data, covenant, output_type, features_json, maturity,
-                     script_lock_height, sender_offset_public_key, metadata_signature_ephemeral_commitment,
-                     metadata_signature_ephemeral_pubkey, metadata_signature_u_a, metadata_signature_u_x,
-                     metadata_signature_u_y, encrypted_data, minimum_value_promise, rangeproof,
-                     status, mined_height, spent_in_tx_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    script, input_data, covenant, output_type, features_json, maturity,
+                    script_lock_height, sender_offset_public_key, metadata_signature_ephemeral_commitment,
+                    metadata_signature_ephemeral_pubkey, metadata_signature_u_a, metadata_signature_u_x,
+                    metadata_signature_u_y, encrypted_data, minimum_value_promise, rangeproof,
+                    status, mined_height, block_hash, spent_in_tx_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                     params![
                         output_clone.wallet_id as i64,
@@ -1345,8 +1348,9 @@ impl WalletStorage for SqliteStorage {
                         output_clone.rangeproof,
                         output_clone.status as i64,
                         output_clone.mined_height.map(|h| h as i64),
-                        output_clone.spent_in_tx_id.map(|id| id as i64),
-                    ],
+                        output_clone.block_hash,
+                            output_clone.spent_in_tx_id.map(|id| id as i64),
+                     ],
                 )?;
 
                 Ok(conn.last_insert_rowid() as u32)
@@ -1419,8 +1423,8 @@ impl WalletStorage for SqliteStorage {
                          script_lock_height, sender_offset_public_key, metadata_signature_ephemeral_commitment,
                          metadata_signature_ephemeral_pubkey, metadata_signature_u_a, metadata_signature_u_x,
                          metadata_signature_u_y, encrypted_data, minimum_value_promise, rangeproof,
-                         status, mined_height, spent_in_tx_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         status, mined_height, block_hash, spent_in_tx_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(wallet_id, commitment) DO UPDATE SET
                             status = EXCLUDED.status,
                             mined_height = COALESCE(EXCLUDED.mined_height, mined_height),
@@ -1452,6 +1456,7 @@ impl WalletStorage for SqliteStorage {
                             output.rangeproof,
                             output.status as i64,
                             output.mined_height.map(|h| h as i64),
+                            output.block_hash,
                             output.spent_in_tx_id.map(|id| id as i64),
                         ],
                     )?;
