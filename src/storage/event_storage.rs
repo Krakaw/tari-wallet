@@ -159,33 +159,6 @@ impl StoredEvent {
     pub fn builder() -> StoredEventBuilder {
         StoredEventBuilder::new()
     }
-
-    /// Create a new stored event (legacy method for backward compatibility)
-    pub fn new(
-        event_id: String,
-        wallet_id: String,
-        event_type: String,
-        sequence_number: u64,
-        payload_json: String,
-        metadata_json: String,
-        source: String,
-        correlation_id: Option<String>,
-        output_hash: Option<String>,
-        timestamp: SystemTime,
-    ) -> Self {
-        Self::builder()
-            .event_id(event_id)
-            .wallet_id(wallet_id)
-            .event_type(event_type)
-            .sequence_number(sequence_number)
-            .payload_json(payload_json)
-            .metadata_json(metadata_json)
-            .source(source)
-            .correlation_id(correlation_id)
-            .output_hash(output_hash)
-            .timestamp(timestamp)
-            .build()
-    }
 }
 
 /// Filter criteria for querying events
@@ -2446,18 +2419,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_stored_event_creation() {
-        let event = StoredEvent::new(
-            "test-event-id".to_string(),
-            "test-wallet-id".to_string(),
-            "UTXO_RECEIVED".to_string(),
-            1,
-            "{}".to_string(),
-            "{}".to_string(),
-            "test-source".to_string(),
-            Some("correlation-123".to_string()),
-            Some("test-output-hash".to_string()),
-            SystemTime::now(),
-        );
+        let event = StoredEvent::builder()
+            .event_id("test-event-id".to_string())
+            .wallet_id("test-wallet-id".to_string())
+            .event_type("UTXO_RECEIVED".to_string())
+            .sequence_number(1)
+            .payload_json("{}".to_string())
+            .metadata_json("{}".to_string())
+            .source("test-source".to_string())
+            .correlation_id(Some("correlation-123".to_string()))
+            .output_hash(Some("test-output-hash".to_string()))
+            .timestamp(SystemTime::now())
+            .build();
 
         assert_eq!(event.event_id, "test-event-id");
         assert_eq!(event.wallet_id, "test-wallet-id");
@@ -2609,18 +2582,18 @@ mod tests {
         assert!(missing.is_empty());
 
         // Create event with gap (manually store event with sequence 5)
-        let gap_event = StoredEvent::new(
-            "gap-event".to_string(),
-            wallet_id.to_string(),
-            "UTXO_RECEIVED".to_string(),
-            5, // Creates gap at sequence 4
-            "{}".to_string(),
-            "{}".to_string(),
-            "test".to_string(),
-            None,
-            None, // No output hash for this test
-            SystemTime::now(),
-        );
+        let gap_event = StoredEvent::builder()
+            .event_id("gap-event".to_string())
+            .wallet_id(wallet_id.to_string())
+            .event_type("UTXO_RECEIVED".to_string())
+            .sequence_number(5) // Creates gap at sequence 4
+            .payload_json("{}".to_string())
+            .metadata_json("{}".to_string())
+            .source("test".to_string())
+            .correlation_id(None)
+            .output_hash(None) // No output hash for this test
+            .timestamp(SystemTime::now())
+            .build();
         storage.store_event(&gap_event).await.unwrap();
 
         let missing = storage

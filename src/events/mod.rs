@@ -91,8 +91,6 @@ pub mod listeners;
 pub mod replay;
 pub mod test_utils;
 pub mod types;
-#[cfg(feature = "storage")]
-pub mod user_api;
 
 // Re-export core types for convenience
 pub use error_recovery::{
@@ -110,12 +108,6 @@ pub use test_utils::{EventCapture, EventPattern, PerformanceAssertion, TestScena
 pub use types::{
     EventListenerError, ReorgPayload, SharedWalletEvent, UtxoReceivedPayload, UtxoSpentPayload,
     WalletEvent, WalletEventError, WalletEventResult, WalletEventValidationError, *,
-};
-#[cfg(feature = "storage")]
-pub use user_api::{
-    BatchHealthCheckResult, ReplayOptions, ReplayPerformanceMetrics, UserProgressCallback,
-    UserReplayPhase, UserReplayProgress, WalletHealthStatus, WalletReplayManager,
-    WalletReplayResult, WalletReplaySummary, WalletStatusInfo,
 };
 
 /// Errors that can occur during event dispatcher operations

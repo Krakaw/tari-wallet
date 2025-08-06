@@ -2678,18 +2678,18 @@ impl EventStorage for SqliteStorage {
         let next_seq = self.get_next_sequence_number(wallet_id).await?;
         let event_id = uuid::Uuid::new_v4().to_string();
 
-        let event = StoredEvent::new(
-            event_id,
-            wallet_id.to_string(),
-            event_type.to_string(),
-            next_seq,
-            payload_json,
-            metadata_json,
-            source.to_string(),
-            correlation_id,
-            None, // No output_hash for generic events
-            SystemTime::now(),
-        );
+        let event = StoredEvent::builder()
+            .event_id(event_id)
+            .wallet_id(wallet_id.to_string())
+            .event_type(event_type.to_string())
+            .sequence_number(next_seq)
+            .payload_json(payload_json)
+            .metadata_json(metadata_json)
+            .source(source.to_string())
+            .correlation_id(correlation_id)
+            .output_hash(None) // No output_hash for generic events
+            .timestamp(SystemTime::now())
+            .build();
 
         let db_id = self.store_event(&event).await?;
         Ok((db_id, next_seq))
@@ -2705,18 +2705,18 @@ impl EventStorage for SqliteStorage {
 
         for (event_type, payload_json, metadata_json, source, correlation_id) in events {
             let event_id = uuid::Uuid::new_v4().to_string();
-            let event = StoredEvent::new(
-                event_id,
-                wallet_id.to_string(),
-                event_type.clone(),
-                next_seq,
-                payload_json.clone(),
-                metadata_json.clone(),
-                source.clone(),
-                correlation_id.clone(),
-                None, // No output_hash for batch events
-                SystemTime::now(),
-            );
+            let event = StoredEvent::builder()
+                .event_id(event_id)
+                .wallet_id(wallet_id.to_string())
+                .event_type(event_type.clone())
+                .sequence_number(next_seq)
+                .payload_json(payload_json.clone())
+                .metadata_json(metadata_json.clone())
+                .source(source.clone())
+                .correlation_id(correlation_id.clone())
+                .output_hash(None) // No output_hash for batch events
+                .timestamp(SystemTime::now())
+                .build();
 
             let db_id = self.store_event(&event).await?;
             results.push((db_id, next_seq));
