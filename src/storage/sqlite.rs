@@ -2245,6 +2245,7 @@ impl EventStorage for SqliteStorage {
                 metadata_json TEXT NOT NULL,
                 source TEXT NOT NULL,
                 correlation_id TEXT,
+                output_hash TEXT, -- Hash/commitment to link with outputs/transactions tables
                 timestamp INTEGER NOT NULL, -- Unix timestamp in seconds
                 stored_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
                 
@@ -2260,6 +2261,7 @@ impl EventStorage for SqliteStorage {
             CREATE INDEX IF NOT EXISTS idx_events_stored_at ON wallet_events(stored_at);
             CREATE INDEX IF NOT EXISTS idx_events_source ON wallet_events(source);
             CREATE INDEX IF NOT EXISTS idx_events_correlation ON wallet_events(correlation_id);
+            CREATE INDEX IF NOT EXISTS idx_events_output_hash ON wallet_events(output_hash);
         "#;
 
         self.connection
@@ -2269,6 +2271,33 @@ impl EventStorage for SqliteStorage {
                 crate::events::types::WalletEventError::storage(
                     "initialize",
                     format!("Failed to create event schema: {e}"),
+                )
+            })?;
+
+        // Migration: Add output_hash column to existing tables if it doesn't exist
+        self.connection
+            .call(move |conn| {
+                // Check if output_hash column exists, if not add it
+                let mut stmt = conn.prepare("PRAGMA table_info(wallet_events)")?;
+                let rows: Result<Vec<_>, _> = stmt
+                    .query_map([], |row| {
+                        let column_name: String = row.get(1)?;
+                        Ok(column_name)
+                    })?
+                    .collect();
+                if let Ok(columns) = rows {
+                    if !columns.contains(&"output_hash".to_string()) {
+                        conn.execute("ALTER TABLE wallet_events ADD COLUMN output_hash TEXT", [])?;
+                        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_output_hash ON wallet_events(output_hash)", [])?;
+                    }
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|e| {
+                crate::events::types::WalletEventError::storage(
+                    "initialize",
+                    format!("Failed to migrate event schema: {e}"),
                 )
             })?;
 
@@ -2289,8 +2318,8 @@ impl EventStorage for SqliteStorage {
                     r#"
                     INSERT INTO wallet_events 
                     (event_id, wallet_id, event_type, sequence_number, payload_json, 
-                     metadata_json, source, correlation_id, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     metadata_json, source, correlation_id, output_hash, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                     params![
                         event_clone.event_id,
@@ -2301,6 +2330,7 @@ impl EventStorage for SqliteStorage {
                         event_clone.metadata_json,
                         event_clone.source,
                         event_clone.correlation_id,
+                        event_clone.output_hash,
                         timestamp_secs,
                     ],
                 )?;
@@ -2657,6 +2687,7 @@ impl EventStorage for SqliteStorage {
             metadata_json,
             source.to_string(),
             correlation_id,
+            None, // No output_hash for generic events
             SystemTime::now(),
         );
 
@@ -2683,6 +2714,7 @@ impl EventStorage for SqliteStorage {
                 metadata_json.clone(),
                 source.clone(),
                 correlation_id.clone(),
+                None, // No output_hash for batch events
                 SystemTime::now(),
             );
 
@@ -2771,6 +2803,7 @@ impl EventStorage for SqliteStorage {
             "{}".to_string(),
             source.to_string(),
             None,
+            None, // No output_hash for helper events
             SystemTime::now(),
         ))
     }
@@ -2804,6 +2837,7 @@ impl EventStorage for SqliteStorage {
             "{}".to_string(),
             source.to_string(),
             Some(correlation_id),
+            None, // No output_hash for helper events with correlation
             SystemTime::now(),
         ))
     }
@@ -2863,6 +2897,7 @@ impl SqliteStorage {
             metadata_json: row.get("metadata_json")?,
             source: row.get("source")?,
             correlation_id: row.get("correlation_id")?,
+            output_hash: row.get("output_hash")?,
             timestamp,
             stored_at,
         })

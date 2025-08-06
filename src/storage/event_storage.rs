@@ -71,6 +71,8 @@ pub struct StoredEvent {
     pub source: String,
     /// Optional correlation ID for related events
     pub correlation_id: Option<String>,
+    /// Optional output hash/commitment to link with outputs/transactions
+    pub output_hash: Option<String>,
     /// Timestamp when event was created
     pub timestamp: SystemTime,
     /// Timestamp when event was stored in database
@@ -89,6 +91,7 @@ impl StoredEvent {
         metadata_json: String,
         source: String,
         correlation_id: Option<String>,
+        output_hash: Option<String>,
         timestamp: SystemTime,
     ) -> Self {
         Self {
@@ -101,6 +104,7 @@ impl StoredEvent {
             metadata_json,
             source,
             correlation_id,
+            output_hash,
             timestamp,
             stored_at: SystemTime::now(),
         }
@@ -535,6 +539,7 @@ impl SqliteEventStorage {
             metadata_json: row.get("metadata_json")?,
             source: row.get("source")?,
             correlation_id: row.get("correlation_id")?,
+            output_hash: row.get("output_hash")?,
             timestamp,
             stored_at,
         })
@@ -1280,6 +1285,7 @@ impl EventStorage for SqliteEventStorage {
                     metadata_json,
                     source: source_owned,
                     correlation_id: None,
+                    output_hash: None,
                     timestamp,
                     stored_at: SystemTime::now(), // Approximate, DB will have exact value
                 })
@@ -1369,6 +1375,7 @@ impl EventStorage for SqliteEventStorage {
                     metadata_json,
                     source: source_owned,
                     correlation_id: Some(correlation_id),
+                    output_hash: None,
                     timestamp,
                     stored_at: SystemTime::now(), // Approximate, DB will have exact value
                 })
@@ -1457,6 +1464,7 @@ impl EventStorage for SqliteEventStorage {
                         metadata_json,
                         source,
                         correlation_id: None,
+                        output_hash: None,
                         timestamp: batch_timestamp,
                         stored_at: SystemTime::now(), // Approximate, DB will have exact value
                     });

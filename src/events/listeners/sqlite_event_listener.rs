@@ -108,6 +108,17 @@ impl SqliteEventListener {
         let metadata_json = serde_json::to_string(&metadata)
             .map_err(|e| WalletEventError::serialization(e.to_string(), "metadata"))?;
 
+        // Extract output hash for linking with outputs/transactions
+        let output_hash = match event {
+            WalletScanEvent::OutputFound { output_data, .. } => {
+                Some(output_data.commitment.clone())
+            }
+            WalletScanEvent::SpentOutputFound {
+                spent_output_data, ..
+            } => Some(spent_output_data.spent_commitment.clone()),
+            _ => None, // Other events don't have output associations
+        };
+
         Ok(StoredEvent::new(
             uuid::Uuid::new_v4().to_string(),
             wallet_id.to_string(),
@@ -117,6 +128,7 @@ impl SqliteEventListener {
             metadata_json,
             "wallet_scanner".to_string(),
             None, // No correlation ID for now
+            output_hash,
             std::time::SystemTime::now(),
         ))
     }
