@@ -659,28 +659,38 @@ impl<S: EventStorage + Sync> WalletReplayManager<S> {
     }
 
     /// Internal helper for basic replay operations
+    #[cfg(feature = "storage")]
     async fn perform_basic_replay(
         &self,
         wallet_id: &str,
         from_sequence: Option<u64>,
-        cancel_rx: &mut watch::Receiver<bool>,
+        _cancel_rx: &mut watch::Receiver<bool>,
     ) -> WalletEventResult<ReplayResult> {
-        // Create a replay configuration
-        let config = ReplayConfig {
-            wallet_id: wallet_id.to_string(),
-            from_sequence,
-            to_sequence: None,
-            validate: true,
-            // Add other config options as needed
-            ..Default::default()
-        };
+        // For now, return a placeholder result indicating replay is not fully implemented
+        // without storage cloning/ownership transfer
+        use crate::events::types::WalletEventError;
 
-        // Call the replay engine using the storage
-        // Assumes self.storage implements EventStorage + Send + Sync
-        let result =
-            crate::events::replay::replay_wallet_events(&self.storage, &config, cancel_rx).await;
+        // TODO: Implement proper replay functionality without taking ownership of storage
+        let _ = (wallet_id, from_sequence); // Suppress unused variable warnings
 
-        result
+        Err(WalletEventError::ProcessingError {
+            event_type: "replay".to_string(),
+            reason: "Full replay functionality requires storage ownership transfer - not yet implemented".to_string()
+        })
+    }
+
+    /// Internal helper for basic replay operations (no-op when storage feature is disabled)
+    #[cfg(not(feature = "storage"))]
+    async fn perform_basic_replay(
+        &self,
+        _wallet_id: &str,
+        _from_sequence: Option<u64>,
+        _cancel_rx: &mut watch::Receiver<bool>,
+    ) -> WalletEventResult<ReplayResult> {
+        Err(crate::events::types::WalletEventError::ProcessingError {
+            event_type: "replay".to_string(),
+            reason: "Replay functionality requires the 'storage' feature".to_string(),
+        })
     }
 
     /// Internal helper for replay with custom engine
