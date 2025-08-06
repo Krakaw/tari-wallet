@@ -2383,15 +2383,15 @@ fn display_json_results(wallet_state: &WalletState) {
     println!("  \"summary\": {{");
     println!(
         "    \"total_transactions\": {},",
-        format_number(wallet_state.transactions.len())
+        wallet_state.transactions.len()
     );
-    println!("    \"inbound_count\": {},", format_number(inbound_count));
-    println!("    \"outbound_count\": {},", format_number(outbound_count));
-    println!("    \"total_received\": {},", format_number(total_received));
-    println!("    \"total_spent\": {},", format_number(total_spent));
-    println!("    \"current_balance\": {},", format_number(balance));
-    println!("    \"unspent_outputs\": {},", format_number(unspent_count));
-    println!("    \"spent_outputs\": {}", format_number(spent_count));
+    println!("    \"inbound_count\": {},", inbound_count);
+    println!("    \"outbound_count\": {},", outbound_count);
+    println!("    \"total_received\": {},", total_received);
+    println!("    \"total_spent\": {},", total_spent);
+    println!("    \"current_balance\": {},", balance);
+    println!("    \"unspent_outputs\": {},", unspent_count);
+    println!("    \"spent_outputs\": {}", spent_count);
     println!("  }}");
     println!("}}");
 }
