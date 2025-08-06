@@ -660,34 +660,7 @@ impl DatabaseStorageListener {
             // Status and spending tracking
             status: 0, // Unspent
             mined_height: Some(block_info.height),
-            block_hash: {
-                // DEBUG: Add print to verify this code is being executed
-                #[cfg(not(target_arch = "wasm32"))]
-                println!(
-                    "DEBUG: Converting output with block hash: {}",
-                    &block_info.hash
-                );
-
-                let hash_str = &block_info.hash;
-                if hash_str.len() == 128 {
-                    // Double-hex-encoded: decode to get the hex string, then decode again
-                    let result = hex::decode(hash_str)
-                        .ok()
-                        .and_then(|bytes| String::from_utf8(bytes).ok())
-                        .and_then(|hex_string| hex::decode(hex_string).ok());
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    println!("DEBUG: Double-decoded hash result: {:?}", result);
-
-                    result
-                } else if hash_str.len() == 64 {
-                    // Normal hex string
-                    hex::decode(hash_str).ok()
-                } else {
-                    // Just store as bytes for debugging
-                    Some(hash_str.as_bytes().to_vec())
-                }
-            },
+            block_hash: Some(block_info.hash.clone()),
             spent_in_tx_id: None,
 
             // Timestamps

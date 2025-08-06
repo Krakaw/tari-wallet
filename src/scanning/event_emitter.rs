@@ -217,7 +217,7 @@ impl ScanEventEmitter {
 
         let block_info = BlockInfo::new(
             block_info.height,
-            hex::encode(block_info.hash.clone()),
+            block_info.hash.clone(),
             block_info.timestamp,
             transaction.output_index.unwrap_or(0),
         );
