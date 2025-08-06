@@ -16,11 +16,15 @@
 //!
 //! ```rust,no_run
 //! use lightweight_wallet_libs::events::user_api::WalletReplayManager;
+//! # #[cfg(feature = "storage")]
 //! use lightweight_wallet_libs::storage::event_storage::SqliteEventStorage;
+//! # #[cfg(feature = "storage")]
+//! use tokio_rusqlite::Connection;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! # #[cfg(feature = "storage")]
 //! # {
+//! let connection = Connection::open_in_memory().await?;
 //! let storage = SqliteEventStorage::new(connection).await?;
 //! let manager = WalletReplayManager::new(storage);
 //!
@@ -30,8 +34,8 @@
 //!
 //! // Full replay with detailed analysis
 //! let result = manager.full_replay_and_analyze("wallet-id").await?;
-//! if !result.inconsistencies.is_empty() {
-//!     println!("Found {} issues", result.inconsistencies.len());
+//! if !result.errors.is_empty() {
+//!     println!("Found {} issues", result.errors.len());
 //! }
 //!
 //! // Incremental replay from checkpoint

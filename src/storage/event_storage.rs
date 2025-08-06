@@ -14,28 +14,6 @@
 //!
 //! Without the `storage` feature, this module is not available and wallet
 //! operations will use memory-only event storage.
-//!
-//! ## Usage
-//!
-//! Event storage is automatically integrated with the wallet when using
-//! database-backed storage through the wallet builder:
-//!
-//! ```rust,no_run
-//! # #[cfg(feature = "storage")]
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! use lightweight_wallet_libs::wallet::WalletBuilder;
-//! use lightweight_wallet_libs::scanning::ScanConfig;
-//!
-//! let wallet = WalletBuilder::new()
-//!     .with_database("wallet.db")
-//!     .with_seed_phrase("your seed phrase here")
-//!     .build_async()
-//!     .await?;
-//!
-//! // Event storage is now automatically available for wallet operations
-//! # Ok(())
-//! # }
-//! ```
 
 #[cfg(feature = "storage")]
 use async_trait::async_trait;
@@ -457,21 +435,9 @@ pub trait EventStorage {
     // Any such methods would violate the append-only guarantee
 }
 
-#[cfg(feature = "storage")]
-const _: () = {
-    // Compile-time assertion that EventStorage has no forbidden methods
-    // This will fail to compile if anyone adds update/delete methods
-
-    fn check_trait_is_append_only() {
-        // This function exists only to trigger compilation errors if someone
-        // adds forbidden methods to the EventStorage trait.
-        //
-        // If methods like update_event, delete_event, etc. are added,
-        // the compiler will suggest them in error messages, alerting us
-        // to the violation of append-only principles.
-        let _: Option<&str> = None; // Placeholder to make function valid
-    }
-};
+// IMPORTANT: The EventStorage trait must remain append-only for data integrity.
+// Methods like update_event, delete_event, or modify_event should NEVER be added.
+// Events are immutable records that should only be created and queried.
 
 /// Statistics about event storage
 #[cfg(feature = "storage")]

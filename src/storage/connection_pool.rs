@@ -171,16 +171,15 @@ impl PooledConnection {
         let options_clone = options.clone();
         connection
             .call(move |conn| {
-                // Set synchronous mode - this returns the new synchronous mode
+                // Set synchronous mode
                 let sync_mode = match options_clone.synchronous_mode {
                     SynchronousMode::Off => "OFF",
                     SynchronousMode::Normal => "NORMAL",
                     SynchronousMode::Full => "FULL",
                 };
-                let mut stmt = conn.prepare(&format!("PRAGMA synchronous = {sync_mode}"))?;
-                let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
+                conn.execute(&format!("PRAGMA synchronous = {sync_mode}"), [])?;
 
-                // Set journal mode - this returns the new journal mode so we need to consume the result
+                // Set journal mode - this returns the new journal mode
                 let journal_mode = match options_clone.journal_mode {
                     JournalMode::Delete => "DELETE",
                     JournalMode::Wal => "WAL",
@@ -189,21 +188,21 @@ impl PooledConnection {
                 let mut stmt = conn.prepare(&format!("PRAGMA journal_mode = {journal_mode}"))?;
                 let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
 
-                // Set cache size (negative value means KB) - this returns the new cache size
+                // Set cache size (negative value means KB) - returns the new cache size
                 let mut stmt = conn.prepare(&format!(
                     "PRAGMA cache_size = -{}",
                     options_clone.cache_size_kb
                 ))?;
                 let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
 
-                // Set busy timeout - this returns the new timeout value
+                // Set busy timeout - returns the new timeout value
                 let mut stmt = conn.prepare(&format!(
                     "PRAGMA busy_timeout = {}",
                     options_clone.busy_timeout_ms
                 ))?;
                 let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
 
-                // Enable/disable foreign keys - this returns the new foreign key setting
+                // Enable/disable foreign keys - returns the new foreign key setting
                 let fk_setting = if options_clone.enable_foreign_keys {
                     "ON"
                 } else {
@@ -214,10 +213,10 @@ impl PooledConnection {
 
                 // Additional WAL mode optimizations
                 if options_clone.enable_wal_mode {
-                    // Set WAL autocheckpoint for better performance - this returns the new autocheckpoint value
+                    // Set WAL autocheckpoint for better performance - returns the new autocheckpoint value
                     let mut stmt = conn.prepare("PRAGMA wal_autocheckpoint = 1000")?;
                     let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
-                    // Perform WAL checkpoint - this returns results so we need to consume them
+                    // Perform WAL checkpoint - this returns results
                     let mut stmt = conn.prepare("PRAGMA wal_checkpoint(TRUNCATE)")?;
                     let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
                 }
@@ -329,25 +328,30 @@ impl ConnectionPool {
         let start_time = std::time::Instant::now();
 
         // Wait for an available slot in the semaphore
-        let permit = timeout(
+        let permit = match timeout(
             self.config.connection_timeout,
             self.semaphore.clone().acquire_owned(),
         )
         .await
-        .map_err(|_| {
-            // Update timeout statistics
-            let mut stats = futures::executor::block_on(self.stats.lock());
-            stats.timeout_count += 1;
-            drop(stats);
-
-            WalletEventError::storage(
-                "connection_pool",
-                "Timeout waiting for available connection",
-            )
-        })?
-        .map_err(|_| {
-            WalletEventError::storage("connection_pool", "Connection pool semaphore closed")
-        })?;
+        {
+            Ok(Ok(permit)) => permit,
+            Ok(Err(_)) => {
+                return Err(WalletEventError::storage(
+                    "connection_pool",
+                    "Connection pool semaphore closed",
+                ));
+            }
+            Err(_) => {
+                // Update timeout statistics asynchronously
+                let mut stats = self.stats.lock().await;
+                stats.timeout_count += 1;
+                drop(stats);
+                return Err(WalletEventError::storage(
+                    "connection_pool",
+                    "Timeout waiting for available connection",
+                ));
+            }
+        };
 
         // Try to get an existing connection or create a new one
         let mut connections = self.connections.lock().await;
