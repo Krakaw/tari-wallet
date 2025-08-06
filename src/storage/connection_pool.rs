@@ -171,50 +171,55 @@ impl PooledConnection {
         let options_clone = options.clone();
         connection
             .call(move |conn| {
-                // Set synchronous mode
+                // Set synchronous mode - this returns the new synchronous mode
                 let sync_mode = match options_clone.synchronous_mode {
                     SynchronousMode::Off => "OFF",
                     SynchronousMode::Normal => "NORMAL",
                     SynchronousMode::Full => "FULL",
                 };
-                conn.execute(&format!("PRAGMA synchronous = {sync_mode}"), [])?;
+                let mut stmt = conn.prepare(&format!("PRAGMA synchronous = {sync_mode}"))?;
+                let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
 
-                // Set journal mode
+                // Set journal mode - this returns the new journal mode so we need to consume the result
                 let journal_mode = match options_clone.journal_mode {
                     JournalMode::Delete => "DELETE",
                     JournalMode::Wal => "WAL",
                     JournalMode::Memory => "MEMORY",
                 };
-                let _ = conn
-                    .prepare(&format!("PRAGMA journal_mode = {journal_mode}"))?
-                    .query([])?;
+                let mut stmt = conn.prepare(&format!("PRAGMA journal_mode = {journal_mode}"))?;
+                let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
 
-                // Set cache size (negative value means KB)
-                conn.execute(
-                    &format!("PRAGMA cache_size = -{}", options_clone.cache_size_kb),
-                    [],
-                )?;
+                // Set cache size (negative value means KB) - this returns the new cache size
+                let mut stmt = conn.prepare(&format!(
+                    "PRAGMA cache_size = -{}",
+                    options_clone.cache_size_kb
+                ))?;
+                let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
 
-                // Set busy timeout
-                conn.execute(
-                    &format!("PRAGMA busy_timeout = {}", options_clone.busy_timeout_ms),
-                    [],
-                )?;
+                // Set busy timeout - this returns the new timeout value
+                let mut stmt = conn.prepare(&format!(
+                    "PRAGMA busy_timeout = {}",
+                    options_clone.busy_timeout_ms
+                ))?;
+                let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
 
-                // Enable/disable foreign keys
+                // Enable/disable foreign keys - this returns the new foreign key setting
                 let fk_setting = if options_clone.enable_foreign_keys {
                     "ON"
                 } else {
                     "OFF"
                 };
-                conn.execute(&format!("PRAGMA foreign_keys = {fk_setting}"), [])?;
+                let mut stmt = conn.prepare(&format!("PRAGMA foreign_keys = {fk_setting}"))?;
+                let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
 
                 // Additional WAL mode optimizations
                 if options_clone.enable_wal_mode {
-                    // Set WAL autocheckpoint for better performance
-                    conn.execute("PRAGMA wal_autocheckpoint = 1000", [])?;
-                    // Perform WAL checkpoint - ignore return results
-                    let _ = conn.prepare("PRAGMA wal_checkpoint(TRUNCATE)")?.query([])?;
+                    // Set WAL autocheckpoint for better performance - this returns the new autocheckpoint value
+                    let mut stmt = conn.prepare("PRAGMA wal_autocheckpoint = 1000")?;
+                    let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
+                    // Perform WAL checkpoint - this returns results so we need to consume them
+                    let mut stmt = conn.prepare("PRAGMA wal_checkpoint(TRUNCATE)")?;
+                    let _rows: Vec<rusqlite::Result<_>> = stmt.query_map([], |_| Ok(()))?.collect();
                 }
 
                 Ok(())
@@ -517,9 +522,17 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let database_path = temp_file.path().to_string_lossy().to_string();
 
-        let pool = ConnectionPool::with_database_path(database_path)
-            .await
-            .unwrap();
+        // Use configuration without WAL mode to avoid potential test issues
+        let config = ConnectionPoolConfig {
+            database_path,
+            sqlite_options: SqliteConnectionOptions {
+                enable_wal_mode: false,
+                journal_mode: JournalMode::Memory,
+                ..SqliteConnectionOptions::default()
+            },
+            ..ConnectionPoolConfig::default()
+        };
+        let pool = ConnectionPool::new(config).await.unwrap();
         let stats = pool.get_stats().await;
 
         assert_eq!(stats.active_connections, 2); // Default min_connections

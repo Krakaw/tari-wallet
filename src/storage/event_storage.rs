@@ -513,12 +513,10 @@ impl SqliteEventStorage {
     }
 
     /// Create the database schema for events
-    /// Note: The schema is now managed by the main SqliteStorage in src/storage/sqlite.rs
-    /// This method is a no-op since the schema is already created during SqliteStorage initialization
+    /// This method creates the schema when SqliteEventStorage is used directly (e.g., in tests)
+    /// In production, the schema is typically created by SqliteStorage
     async fn create_schema(&self) -> WalletEventResult<()> {
-        // Schema creation is now handled by the main SqliteStorage
-        // The wallet_events table is created during SqliteStorage::create_schema()
-        Ok(())
+        PooledSqliteEventStorage::create_schema_with_connection(&self.connection).await
     }
 
     /// Convert database row to StoredEvent
@@ -1566,6 +1564,7 @@ impl PooledSqliteEventStorage {
                 metadata_json TEXT NOT NULL,
                 source TEXT NOT NULL,
                 correlation_id TEXT,
+                output_hash TEXT, -- Links events to specific outputs/transactions
                 timestamp INTEGER NOT NULL, -- Unix timestamp in seconds
                 stored_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
                 
@@ -1581,6 +1580,7 @@ impl PooledSqliteEventStorage {
             CREATE INDEX IF NOT EXISTS idx_events_correlation ON wallet_events(correlation_id);
             CREATE INDEX IF NOT EXISTS idx_events_source ON wallet_events(source);
             CREATE INDEX IF NOT EXISTS idx_events_stored_at ON wallet_events(stored_at);
+            CREATE INDEX IF NOT EXISTS idx_events_output_hash ON wallet_events(output_hash);
             
             -- Compound indexes for common query patterns
             CREATE INDEX IF NOT EXISTS idx_events_wallet_type ON wallet_events(wallet_id, event_type);
@@ -2390,6 +2390,7 @@ mod tests {
             "{}".to_string(),
             "test-source".to_string(),
             Some("correlation-123".to_string()),
+            Some("test-output-hash".to_string()),
             SystemTime::now(),
         );
 
@@ -2552,6 +2553,7 @@ mod tests {
             "{}".to_string(),
             "test".to_string(),
             None,
+            None, // No output hash for this test
             SystemTime::now(),
         );
         storage.store_event(&gap_event).await.unwrap();
