@@ -59,7 +59,6 @@ rayon = { version = "1.8", optional = true }
 
 # === Async & Concurrency ===
 async-trait = "0.1"
-futures = "0.3"
 
 # === Logging & Tracing ===
 tracing = { version = "0.1", optional = true }
