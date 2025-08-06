@@ -20,7 +20,10 @@ use crate::events::{ErrorRecord, ErrorRecoveryConfig, ErrorRecoveryManager, Wall
 use crate::{
     data_structures::types::CompressedCommitment,
     errors::WalletResult,
-    storage::{SqliteStorage, StoredOutput, WalletStorage},
+    storage::{
+        event_storage::{EventStorage, StoredEvent},
+        SqliteStorage, StoredOutput, WalletStorage,
+    },
 };
 
 #[cfg(feature = "storage")]
@@ -86,6 +89,8 @@ pub struct DatabaseStorageListener {
     error_recovery: ErrorRecoveryManager,
     /// Operation metrics for monitoring
     operation_metrics: HashMap<String, usize>,
+    /// Whether to enable event auditing (stores events in wallet_events table)
+    enable_event_auditing: bool,
 
     /// Background writer for non-WASM32 architectures
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
@@ -119,6 +124,7 @@ impl DatabaseStorageListener {
             verbose: false,
             error_recovery: ErrorRecoveryManager::with_config(ErrorRecoveryConfig::production()),
             operation_metrics: HashMap::new(),
+            enable_event_auditing: false, // Default disabled
             #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
             background_writer: None,
         })
@@ -191,6 +197,19 @@ impl DatabaseStorageListener {
     /// * `verbose` - Whether to enable verbose logging
     pub fn set_verbose(&mut self, verbose: bool) {
         self.verbose = verbose;
+    }
+
+    /// Enable or disable event auditing (stores events in wallet_events table)
+    ///
+    /// # Arguments
+    /// * `enable` - Whether to enable event auditing
+    pub fn set_event_auditing(&mut self, enable: bool) {
+        self.enable_event_auditing = enable;
+    }
+
+    /// Check if event auditing is enabled
+    pub fn is_event_auditing_enabled(&self) -> bool {
+        self.enable_event_auditing
     }
 
     /// Start the background writer service (non-WASM32 only)
@@ -1026,6 +1045,94 @@ impl DatabaseStorageListener {
             .await
             .map_err(|e| e.into())
     }
+
+    /// Store an event in the wallet_events table for auditing (if enabled)
+    async fn store_event_audit(
+        &self,
+        event: &WalletScanEvent,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        if !self.enable_event_auditing {
+            return Ok(());
+        }
+
+        // Only store OutputFound and SpentOutputFound events for auditing
+        let should_store = matches!(
+            event,
+            WalletScanEvent::OutputFound { .. } | WalletScanEvent::SpentOutputFound { .. }
+        );
+
+        if !should_store {
+            return Ok(());
+        }
+
+        // Get wallet ID as string for event storage
+        let wallet_id = if let Some(id) = self.wallet_id {
+            id.to_string()
+        } else {
+            return Ok(()); // No wallet ID, skip event storage
+        };
+
+        // Convert to StoredEvent format
+        let event_type = match event {
+            WalletScanEvent::OutputFound { .. } => "OUTPUT_FOUND",
+            WalletScanEvent::SpentOutputFound { .. } => "SPENT_OUTPUT_FOUND",
+            _ => return Ok(()), // Should not happen due to filter above
+        };
+
+        let payload_json =
+            serde_json::to_string(event).map_err(|e| format!("Failed to serialize event: {e}"))?;
+
+        let metadata = serde_json::json!({
+            "listener": "DatabaseStorageListener",
+            "event_auditing": true,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        });
+
+        // Create a temporary SQLite connection for event storage
+        // Note: This creates a separate connection to the same database file
+        // TODO: Consider refactoring to avoid this duplicate connection
+        if self.database_path != ":memory:" {
+            match SqliteStorage::new(&self.database_path).await {
+                Ok(sqlite_storage) => {
+                    // Get next sequence number
+                    let sequence_number = sqlite_storage
+                        .get_next_sequence_number(&wallet_id)
+                        .await
+                        .map_err(|e| format!("Failed to get sequence number: {e}"))?;
+
+                    // Create stored event
+                    let stored_event = StoredEvent {
+                        id: None,
+                        event_id: uuid::Uuid::new_v4().to_string(),
+                        wallet_id: wallet_id.clone(),
+                        event_type: event_type.to_string(),
+                        sequence_number,
+                        payload_json,
+                        metadata_json: metadata.to_string(),
+                        source: "DatabaseStorageListener".to_string(),
+                        correlation_id: None,
+                        output_hash: None, // Could be extracted from event if needed
+                        timestamp: std::time::SystemTime::now(),
+                        stored_at: std::time::SystemTime::now(),
+                    };
+
+                    // Store the event
+                    sqlite_storage
+                        .store_event(&stored_event)
+                        .await
+                        .map_err(|e| format!("Failed to store event: {e}"))?;
+                }
+                Err(e) => {
+                    // Log error but don't fail the main operation
+                    if self.verbose {
+                        eprintln!("Warning: Failed to create event storage connection: {e}");
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(feature = "storage")]
@@ -1069,6 +1176,13 @@ impl EventListener for DatabaseStorageListener {
                 transaction_data,
                 ..
             } => {
+                // Store event for auditing if enabled
+                if let Err(e) = self.store_event_audit(event.as_ref()).await {
+                    if self.verbose {
+                        eprintln!("Warning: Failed to store event audit: {e}");
+                    }
+                }
+
                 self.handle_output_found(output_data, block_info, address_info, transaction_data)
                     .await
             }
@@ -1079,6 +1193,13 @@ impl EventListener for DatabaseStorageListener {
                 spending_transaction_data,
                 ..
             } => {
+                // Store event for auditing if enabled
+                if let Err(e) = self.store_event_audit(event.as_ref()).await {
+                    if self.verbose {
+                        eprintln!("Warning: Failed to store event audit: {e}");
+                    }
+                }
+
                 self.handle_spent_output_found(
                     spent_output_data,
                     spending_block_info,
@@ -1169,6 +1290,7 @@ pub struct DatabaseStorageListenerBuilder {
     verbose: bool,
     enable_wal_mode: bool,
     auto_start_background_writer: bool,
+    enable_event_auditing: bool,
 }
 
 #[cfg(feature = "storage")]
@@ -1181,6 +1303,7 @@ impl DatabaseStorageListenerBuilder {
             verbose: false,
             enable_wal_mode: false,
             auto_start_background_writer: true,
+            enable_event_auditing: false,
         }
     }
 
@@ -1211,6 +1334,12 @@ impl DatabaseStorageListenerBuilder {
     /// Automatically start background writer on non-WASM32 platforms
     pub fn auto_start_background_writer(mut self, enabled: bool) -> Self {
         self.auto_start_background_writer = enabled;
+        self
+    }
+
+    /// Enable event auditing (stores events in wallet_events table)
+    pub fn event_auditing(mut self, enabled: bool) -> Self {
+        self.enable_event_auditing = enabled;
         self
     }
 
@@ -1361,6 +1490,7 @@ impl DatabaseStorageListenerBuilder {
 
         listener.set_batch_size(self.batch_size);
         listener.set_verbose(self.verbose);
+        listener.set_event_auditing(self.enable_event_auditing);
 
         #[cfg(all(feature = "grpc", not(target_arch = "wasm32")))]
         if self.auto_start_background_writer {

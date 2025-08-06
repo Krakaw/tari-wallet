@@ -196,7 +196,6 @@ pub mod console_logging;
 pub mod database_storage;
 pub mod mock_listener;
 pub mod progress_tracking;
-pub mod sqlite_event_listener;
 
 // Re-exports for convenience
 pub use ascii_progress_bar::{AsciiProgressBarConfig, AsciiProgressBarListener};
@@ -206,8 +205,6 @@ pub use mock_listener::MockEventListener;
 pub use progress_tracking::ProgressTrackingListener;
 
 #[cfg(feature = "storage")]
-pub use sqlite_event_listener::SqliteEventListener;
-
 #[cfg(test)]
 mod tests {
 
