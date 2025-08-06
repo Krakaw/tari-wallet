@@ -18,7 +18,9 @@
 //! # Usage
 //!
 //! ```rust,no_run
+//! # #[cfg(feature = "storage")]
 //! use lightweight_wallet_libs::events::replay::{EventReplayEngine, ReplayConfig};
+//! # #[cfg(feature = "storage")]
 //! use lightweight_wallet_libs::storage::event_storage::SqliteEventStorage;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {

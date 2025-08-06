@@ -174,24 +174,6 @@ pub trait EventListener: Send + Sync {
 /// - **Async Support**: Full async event handling with proper error propagation
 /// - **Health Monitoring**: Track listener health and performance
 /// - **Graceful Shutdown**: Proper cleanup of all listeners
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// use lightweight_wallet_libs::events::listener::EventRegistry;
-/// use lightweight_wallet_libs::events::listeners::event_logger::EventLogger;
-///
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut registry = EventRegistry::new();
-///
-/// // Register an event logging listener
-/// let logger = EventLogger::console().unwrap();
-/// registry.register(Box::new(logger)).await?;
-///
-/// // The registry can now dispatch events to all registered listeners
-/// # Ok(())
-/// # }
-/// ```
 pub struct EventRegistry {
     listeners: Vec<Box<dyn EventListener>>,
     listener_names: HashMap<String, usize>, // Maps names to indices
