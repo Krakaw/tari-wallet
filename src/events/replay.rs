@@ -38,14 +38,21 @@
 //! # }
 //! ```
 
+#[cfg(feature = "storage")]
 use crate::data_structures::wallet_transaction::{WalletState, WalletTransaction};
+#[cfg(feature = "storage")]
 use crate::events::types::{WalletEvent, WalletEventError, WalletEventResult};
 #[cfg(feature = "storage")]
 use crate::storage::event_storage::{EventStorage, StoredEvent};
 use serde::Serialize;
-use std::collections::{BTreeSet, HashMap};
+#[cfg(feature = "storage")]
+use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+#[cfg(feature = "storage")]
+use std::time::Instant;
+use std::time::{Duration, SystemTime};
+#[cfg(feature = "storage")]
 use tokio::sync::watch;
 
 /// Configuration for event replay operations
