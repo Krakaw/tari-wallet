@@ -727,11 +727,12 @@ async fn main_unified() -> WalletResult<()> {
     if !storage_backend.is_memory_only {
         use lightweight_wallet_libs::events::listeners::DatabaseStorageListener;
         if let Some(db_path) = &config.database_path {
-            // Use high-performance database configuration for scanning workloads
+            // Use high-performance database configuration for scanning workloads with event auditing
             match DatabaseStorageListener::builder()
                 .performance_preset() // High-performance settings optimized for scanning
                 .database_path(db_path)
                 .auto_start_background_writer(true)
+                .event_auditing(true) // Enable event auditing for storing scan events
                 .build()
                 .await
             {
@@ -742,42 +743,11 @@ async fn main_unified() -> WalletResult<()> {
                             "🔗 High-performance database event listener configured for wallet ID: {:?}",
                             storage_backend.wallet_id
                         );
+                        println!(
+                            "📝 Event auditing enabled - storing scan events in wallet_events table"
+                        );
                     }
                     let _ = event_dispatcher.register(Box::new(db_listener));
-
-                    // Also add SQLite event listener for event storage
-                    use lightweight_wallet_libs::events::listeners::SqliteEventListener;
-                    use lightweight_wallet_libs::storage::SqliteStorage;
-                    use std::sync::Arc;
-
-                    match SqliteStorage::new(db_path).await {
-                        Ok(sqlite_storage) => {
-                            let arc_storage = Arc::new(sqlite_storage);
-                            let event_listener = if let Some(wallet_id) = storage_backend.wallet_id
-                            {
-                                SqliteEventListener::with_wallet_id(
-                                    arc_storage,
-                                    wallet_id.to_string(),
-                                )
-                            } else {
-                                SqliteEventListener::new(arc_storage)
-                            };
-
-                            if !args.quiet {
-                                println!(
-                                    "📝 SQLite event listener configured for storing scan events"
-                                );
-                            }
-                            let _ = event_dispatcher.register(Box::new(event_listener));
-                        }
-                        Err(e) => {
-                            if !args.quiet {
-                                eprintln!(
-                                    "⚠️  Warning: Could not create SQLite event listener: {e}"
-                                );
-                            }
-                        }
-                    }
                 }
                 Err(e) => {
                     if !args.quiet {

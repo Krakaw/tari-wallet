@@ -2473,13 +2473,6 @@ fn display_summary_results(wallet_state: &WalletState, config: &BinaryScanConfig
 ///     .with_batch_size(25)
 ///     .build();
 ///
-/// // Production scanner with database storage
-/// #[cfg(feature = "storage")]
-/// let scanner = ScannerBuilder::new()
-///     .with_database_events("production_scanner".to_string(), Some("wallet.db".to_string()))?
-///     .with_performance_preset()
-///     .build();
-///
 /// // Development scanner with verbose logging
 /// let scanner = ScannerBuilder::new()
 ///     .with_development_preset()?

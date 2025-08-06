@@ -351,6 +351,13 @@ impl ScannerStorage {
         self.wallet_id = wallet_id;
     }
 
+    /// Get a reference to the underlying database storage for reuse
+    /// This allows sharing the same database connection instead of creating duplicates
+    #[cfg(feature = "storage")]
+    pub fn get_shared_database(&self) -> Option<&dyn WalletStorage> {
+        self.database.as_ref().map(|db| db.as_ref())
+    }
+
     /// Save transactions to storage incrementally - architecture-specific implementation
     #[cfg(feature = "storage")]
     pub async fn save_transactions_incremental(
