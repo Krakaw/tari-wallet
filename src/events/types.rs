@@ -8,8 +8,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime};
+use tari_transaction_components::transaction_components::OutputFeatures;
 use thiserror::Error;
 use zeroize::Zeroize;
+
+use crate::data_structures::{CompressedPublicKey, Covenant, PrivateKey, Signature};
 
 /// Thread-safe sequence number generator for event ordering
 /// Each wallet maintains its own sequence counter
@@ -175,6 +178,20 @@ pub struct OutputData {
     pub is_mine: bool,
     /// Spending key index used (if this is our output)
     pub key_index: Option<u64>,
+    /// The minimum value of the commitment that is proven by the range proof
+    pub minimum_value_promise: u64,
+    /// UTXO signature with the script offset private key, k_O
+    pub metadata_signature: Signature,
+    /// The covenant that will be executed when spending this output
+    pub covenant: Covenant,
+    /// Tari script offset pubkey, K_O
+    pub sender_offset_public_key: CompressedPublicKey,
+    /// Commitment mask private key
+    pub commitment_mask_private_key: Option<PrivateKey>,
+    /// Script key
+    pub script_key: Option<CompressedPublicKey>,
+    /// Output features
+    pub output_features: OutputFeatures,
 }
 
 /// Information about a spent output for SpentOutputFound events
@@ -242,6 +259,13 @@ impl OutputData {
             amount: None,
             is_mine,
             key_index: None,
+            minimum_value_promise: 0,
+            metadata_signature: Signature::default(),
+            covenant: Covenant::default(),
+            sender_offset_public_key: CompressedPublicKey::default(),
+            commitment_mask_private_key: None,
+            script_key: None,
+            output_features: OutputFeatures::default(),
         }
     }
 
@@ -337,7 +361,7 @@ impl BlockInfo {
 }
 
 /// Transaction data information for wallet transaction storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TransactionData {
     /// Transaction value in microTari
     pub value: u64,

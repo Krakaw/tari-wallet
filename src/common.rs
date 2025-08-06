@@ -21,7 +21,7 @@ pub fn format_number<T: std::fmt::Display>(val: T) -> String {
         .as_bytes()
         .rchunks(3)
         .rev()
-        .map(str::from_utf8)
+        .map(std::str::from_utf8)
         .collect::<Result<Vec<&str>, _>>()
     {
         Ok(chunks) => chunks.join(","),

@@ -23,6 +23,8 @@ use lightweight_wallet_libs::{
 
 #[cfg(feature = "storage")]
 mod connection_tests {
+    use lightweight_wallet_libs::CipherSeed;
+
     use super::*;
 
     #[tokio::test]
@@ -95,7 +97,13 @@ mod connection_tests {
         // Create a wallet in storage1
         let view_key = PrivateKey::new([1u8; 32]);
         let spend_key = PrivateKey::new([2u8; 32]);
-        let wallet = StoredWallet::from_keys("test1".to_string(), view_key, spend_key, 100);
+        let wallet = StoredWallet::from_keys(
+            "test1".to_string(),
+            CipherSeed::new(),
+            view_key,
+            spend_key,
+            100,
+        );
         storage1.save_wallet(&wallet).await.unwrap();
 
         // Verify it doesn't exist in storage2
@@ -130,8 +138,13 @@ mod connection_tests {
                 let wallet_name = format!("wallet_{i}");
                 let view_key = PrivateKey::new([(i as u8 + 1); 32]);
                 let spend_key = PrivateKey::new([(i as u8 + 2); 32]);
-                let wallet =
-                    StoredWallet::from_keys(wallet_name.clone(), view_key, spend_key, i * 100);
+                let wallet = StoredWallet::from_keys(
+                    wallet_name.clone(),
+                    CipherSeed::new(),
+                    view_key,
+                    spend_key,
+                    i * 100,
+                );
                 storage.save_wallet(&wallet).await.unwrap();
 
                 // Verify we can read it back
@@ -184,8 +197,13 @@ mod connection_tests {
             storage.initialize().await.unwrap();
             let view_key = PrivateKey::new([1u8; 32]);
             let spend_key = PrivateKey::new([2u8; 32]);
-            let wallet =
-                StoredWallet::from_keys("test_wallet".to_string(), view_key, spend_key, 100);
+            let wallet = StoredWallet::from_keys(
+                "test_wallet".to_string(),
+                CipherSeed::new(),
+                view_key,
+                spend_key,
+                100,
+            );
             storage.save_wallet(&wallet).await.unwrap();
         } // Storage drops here, closing connection
 
@@ -224,7 +242,13 @@ mod connection_tests {
             storage.initialize().await.unwrap();
             let view_key = PrivateKey::new([1u8; 32]);
             let spend_key = PrivateKey::new([2u8; 32]);
-            let wallet = StoredWallet::from_keys("test".to_string(), view_key, spend_key, 100);
+            let wallet = StoredWallet::from_keys(
+                "test".to_string(),
+                CipherSeed::new(),
+                view_key,
+                spend_key,
+                100,
+            );
             storage.save_wallet(&wallet).await.unwrap();
         }
 
@@ -336,7 +360,13 @@ mod connection_tests {
         // Verify database works with special characters in path
         let view_key = PrivateKey::new([1u8; 32]);
         let spend_key = PrivateKey::new([2u8; 32]);
-        let wallet = StoredWallet::from_keys("test".to_string(), view_key, spend_key, 100);
+        let wallet = StoredWallet::from_keys(
+            "test".to_string(),
+            CipherSeed::new(),
+            view_key,
+            spend_key,
+            100,
+        );
         storage.save_wallet(&wallet).await.unwrap();
         let wallets = storage.list_wallets().await.unwrap();
         assert_eq!(wallets.len(), 1);
@@ -345,6 +375,8 @@ mod connection_tests {
 
 #[cfg(feature = "storage")]
 mod connection_pool_tests {
+    use lightweight_wallet_libs::CipherSeed;
+
     use super::*;
 
     #[tokio::test]
@@ -365,8 +397,20 @@ mod connection_pool_tests {
         let spend_key1 = PrivateKey::new([2u8; 32]);
         let view_key2 = PrivateKey::new([3u8; 32]);
         let spend_key2 = PrivateKey::new([4u8; 32]);
-        let wallet1 = StoredWallet::from_keys("wallet1".to_string(), view_key1, spend_key1, 100);
-        let wallet2 = StoredWallet::from_keys("wallet2".to_string(), view_key2, spend_key2, 200);
+        let wallet1 = StoredWallet::from_keys(
+            "wallet1".to_string(),
+            CipherSeed::new(),
+            view_key1,
+            spend_key1,
+            100,
+        );
+        let wallet2 = StoredWallet::from_keys(
+            "wallet2".to_string(),
+            CipherSeed::new(),
+            view_key2,
+            spend_key2,
+            200,
+        );
         storage1.save_wallet(&wallet1).await.unwrap();
         storage2.save_wallet(&wallet2).await.unwrap();
 
@@ -395,8 +439,13 @@ mod connection_pool_tests {
                     let wallet_name = format!("wallet_{i}_{j}");
                     let view_key = PrivateKey::new([(i + j) as u8 + 1; 32]);
                     let spend_key = PrivateKey::new([(i + j) as u8 + 2; 32]);
-                    let wallet =
-                        StoredWallet::from_keys(wallet_name, view_key, spend_key, i * 100 + j);
+                    let wallet = StoredWallet::from_keys(
+                        wallet_name,
+                        CipherSeed::new(),
+                        view_key,
+                        spend_key,
+                        i * 100 + j,
+                    );
                     storage_clone.save_wallet(&wallet).await.unwrap();
                 }
                 i
@@ -420,6 +469,8 @@ mod connection_pool_tests {
 
 #[cfg(feature = "storage")]
 mod error_handling_tests {
+    use lightweight_wallet_libs::CipherSeed;
+
     use super::*;
 
     #[tokio::test]
@@ -443,7 +494,13 @@ mod error_handling_tests {
         // Should not succeed in SQL injection
         let view_key = PrivateKey::new([1u8; 32]);
         let spend_key = PrivateKey::new([2u8; 32]);
-        let wallet = StoredWallet::from_keys(malicious_name.to_string(), view_key, spend_key, 100);
+        let wallet = StoredWallet::from_keys(
+            malicious_name.to_string(),
+            CipherSeed::new(),
+            view_key,
+            spend_key,
+            100,
+        );
         let result = storage.save_wallet(&wallet).await;
         assert!(result.is_ok()); // SQLite properly handles this
 
@@ -462,7 +519,8 @@ mod error_handling_tests {
         let long_name = "a".repeat(10000);
         let view_key = PrivateKey::new([1u8; 32]);
         let spend_key = PrivateKey::new([2u8; 32]);
-        let wallet = StoredWallet::from_keys(long_name, view_key, spend_key, 100);
+        let wallet =
+            StoredWallet::from_keys(long_name, CipherSeed::new(), view_key, spend_key, 100);
 
         let result = storage.save_wallet(&wallet).await;
         // Should either succeed or fail gracefully
@@ -486,7 +544,13 @@ mod error_handling_tests {
         let name_with_null = "test\0wallet";
         let view_key = PrivateKey::new([1u8; 32]);
         let spend_key = PrivateKey::new([2u8; 32]);
-        let wallet = StoredWallet::from_keys(name_with_null.to_string(), view_key, spend_key, 100);
+        let wallet = StoredWallet::from_keys(
+            name_with_null.to_string(),
+            CipherSeed::new(),
+            view_key,
+            spend_key,
+            100,
+        );
 
         let result = storage.save_wallet(&wallet).await;
         // Should handle null bytes gracefully (either accept or reject)

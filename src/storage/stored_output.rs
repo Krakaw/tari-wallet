@@ -14,8 +14,8 @@ pub struct StoredOutput {
     pub value: u64,          // Value in microMinotari
 
     // Spending keys
-    pub spending_key: String,       // Private key to spend this output
-    pub script_private_key: String, // Private key for script execution
+    pub commitment_mask_key: String, // Commitment mask key
+    pub script_key: String,          // Script key
 
     // Script and covenant data
     pub script: Vec<u8>,     // Script that governs spending
@@ -41,6 +41,7 @@ pub struct StoredOutput {
     // Payment information
     pub encrypted_data: Vec<u8>,    // Contains payment information
     pub minimum_value_promise: u64, // Minimum value promise
+    pub payment_id: Vec<u8>,        // Payment ID
 
     // Range proof
     pub rangeproof: Option<Vec<u8>>, // Range proof bytes (nullable)

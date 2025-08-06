@@ -9,6 +9,8 @@
 pub mod connection_pool;
 #[cfg(feature = "storage")]
 pub mod event_storage;
+#[cfg(feature = "storage")]
+pub mod key_manager;
 pub mod output_status;
 #[cfg(feature = "storage")]
 pub mod performance_optimizations;

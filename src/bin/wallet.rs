@@ -1,13 +1,21 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 #[cfg(feature = "storage")]
+use std::path::PathBuf;
+
+#[cfg(feature = "storage")]
 use clap::{Parser, Subcommand};
 
 #[cfg(feature = "storage")]
-use lightweight_wallet_libs::data_structures::address::TariAddressFeatures;
-#[cfg(feature = "storage")]
 use lightweight_wallet_libs::wallet::Wallet;
+#[cfg(feature = "storage")]
+use lightweight_wallet_libs::{
+    data_structures::address::TariAddressFeatures,
+    models::types::{SignedOneSidedTransactionResult, TransactionResult},
+};
 
+#[cfg(feature = "grpc")]
+use lightweight_wallet_libs::scanning::GrpcBlockchainScanner;
 // Storage-related imports
 #[cfg(feature = "storage")]
 use lightweight_wallet_libs::{
@@ -17,9 +25,17 @@ use lightweight_wallet_libs::{
         key_derivation,
         seed_phrase::{mnemonic_to_bytes, CipherSeed},
     },
+    prepare::one_sided_transaction::OneSidedTransaction,
     storage::{SqliteStorage, StoredWallet, WalletStorage},
-    WalletError,
+    TransactionBroadcaster, WalletError,
 };
+
+#[cfg(feature = "storage")]
+use tari_transaction_components::{
+    tari_amount::MicroMinotari, transaction_components::memo_field::MemoField,
+};
+#[cfg(feature = "storage")]
+#[cfg(feature = "storage")]
 
 /// Tari Wallet CLI
 #[cfg(feature = "storage")]
@@ -116,6 +132,54 @@ enum Commands {
         query_command: QueryCommands,
     },
 
+    /// Prepare a transaction for signing
+    PrepareForSigning {
+        /// Database file path
+        #[arg(long, default_value = "./wallet.db")]
+        database: String,
+
+        /// Wallet name (if not provided, will prompt for selection)
+        #[arg(long)]
+        wallet_name: Option<String>,
+
+        /// Transaction amount
+        #[arg(long)]
+        amount: u64,
+
+        /// Recipient address (in base58 format)
+        #[arg(long)]
+        recipient_address: String,
+
+        /// Output file name
+        #[arg(long)]
+        output_file: PathBuf,
+    },
+
+    BroadcastSignedTransaction {
+        /// Input file name
+        #[arg(long)]
+        input_file: PathBuf,
+
+        /// Base URL for the Tari base node GRPC endpoint
+        #[arg(
+            short,
+            long,
+            default_value = "http://127.0.0.1:18142",
+            help = "Base URL for Tari base node GRPC"
+        )]
+        base_url: String,
+    },
+
+    UnencumberAll {
+        /// Database file path
+        #[arg(long, default_value = "./wallet.db")]
+        database: String,
+
+        /// Wallet name (if not provided, will prompt for selection)
+        #[arg(long)]
+        wallet_name: Option<String>,
+    },
+
     /// Clear all data from database
     ClearDatabase {
         /// Database file path
@@ -206,6 +270,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 handle_transactions(database, wallet_name, limit).await?;
             }
         },
+        Commands::PrepareForSigning {
+            database,
+            wallet_name,
+            amount,
+            recipient_address,
+            output_file,
+        } => {
+            handle_prepare_for_signing(
+                database,
+                wallet_name,
+                amount,
+                recipient_address,
+                output_file,
+            )
+            .await?;
+        }
+        Commands::BroadcastSignedTransaction {
+            input_file,
+            base_url,
+        } => {
+            handle_broadcast_transaction(input_file, base_url).await?;
+        }
+        Commands::UnencumberAll {
+            database,
+            wallet_name,
+        } => {
+            handle_unencumber_all(database, wallet_name).await?;
+        }
         Commands::ClearDatabase {
             database,
             no_prompt,
@@ -964,6 +1056,7 @@ async fn handle_create_wallet(
         // Create stored wallet with seed phrase
         StoredWallet::from_seed_phrase(
             wallet_name.clone(),
+            cipher_seed, // Pass the derived cipher_seed
             seed_phrase.to_string(),
             view_key,
             spend_key,
@@ -985,6 +1078,7 @@ async fn handle_create_wallet(
         // Create view-only wallet (no spend key, no seed phrase)
         StoredWallet::view_only(
             wallet_name.clone(),
+            CipherSeed::new(), // Use a new default CipherSeed
             view_key,
             0, // Default birthday block - user should scan from appropriate block
         )
@@ -1014,6 +1108,92 @@ async fn handle_create_wallet(
         println!("   ⚠️  This is a view-only wallet - you cannot spend from it");
         println!("   💡 To scan from a specific block, use the scanner with --from-block option");
     }
+
+    Ok(())
+}
+
+#[cfg(feature = "storage")]
+async fn handle_prepare_for_signing(
+    database_path: String,
+    wallet_name: Option<String>,
+    amount: u64,
+    recipient_address: String,
+    output_file: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use lightweight_wallet_libs::models::types::TransactionResult;
+    use std::fs::File;
+    use std::io::Write;
+    use std::sync::Arc;
+    use tari_common_types::tari_address::TariAddress;
+
+    let storage = if database_path == ":memory:" {
+        SqliteStorage::new_in_memory().await?
+    } else {
+        SqliteStorage::new(&database_path).await?
+    };
+
+    storage.initialize().await?;
+    let wallet = select_wallet(&storage, wallet_name).await?;
+
+    let fee_per_gram = MicroMinotari(5);
+    let payment_id = MemoField::default();
+    let dest_address = TariAddress::from_base58(&recipient_address)?;
+
+    let builder = OneSidedTransaction::build(Arc::new(storage), wallet.id.unwrap()).await?;
+    let result = builder
+        .prepare(
+            dest_address,
+            MicroMinotari(amount),
+            fee_per_gram,
+            payment_id,
+        )
+        .await?;
+
+    let json_string = result.to_json()?;
+    let mut file = File::create(&output_file)?;
+    file.write_all(json_string.as_bytes())?;
+
+    println!(
+        "✅ Prepared transaction data saved to: {}",
+        output_file.display()
+    );
+    Ok(())
+}
+
+async fn handle_broadcast_transaction(
+    input_file: PathBuf,
+    base_url: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let json_string = std::fs::read_to_string(&input_file)?;
+    let request = SignedOneSidedTransactionResult::from_json(&json_string)?;
+    let mut client = GrpcBlockchainScanner::new(base_url).await?;
+    let result = client
+        .submit_transaction(request.signed_transaction.transaction)
+        .await?;
+
+    println!("✅ Transaction broadcasted with result: {}.", result);
+
+    Ok(())
+}
+
+async fn handle_unencumber_all(
+    database_path: String,
+    wallet_name: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let storage = if database_path == ":memory:" {
+        SqliteStorage::new_in_memory().await?
+    } else {
+        SqliteStorage::new(&database_path).await?
+    };
+
+    storage.initialize().await?;
+    let wallet = select_wallet(&storage, wallet_name).await?;
+
+    let count = storage.unlock_all_outputs(wallet.id.unwrap()).await?;
+    println!(
+        "✅ Transactions unencumbered {} outputs in wallet: {}.",
+        count, wallet.name
+    );
 
     Ok(())
 }

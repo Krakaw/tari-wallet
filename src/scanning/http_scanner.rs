@@ -579,6 +579,9 @@ impl HttpBlockchainScanner {
         // Convert Minimum Value Promise - match GRPC approach exactly
         let minimum_value_promise = MicroMinotari::new(0);
 
+        let output_features =
+            tari_transaction_components::transaction_components::OutputFeatures::default();
+
         // Use direct construction exactly like GRPC scanner
         Ok(TransactionOutput {
             version: 0, // HTTP API doesn't provide version, GRPC uses grpc_output.version which is 0
@@ -591,6 +594,7 @@ impl HttpBlockchainScanner {
             covenant,
             encrypted_data,
             minimum_value_promise,
+            output_features,
         })
     }
 

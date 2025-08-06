@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use tari_transaction_components::transaction_components::Transaction;
 
 use crate::{
     data_structures::{
@@ -34,6 +35,11 @@ use crate::{
 use blake2::{Blake2b, Digest};
 use tari_crypto::ristretto::{RistrettoPublicKey, RistrettoSecretKey};
 use tari_utilities::ByteArray;
+
+#[cfg(feature = "grpc")]
+pub mod convert_output_features;
+#[cfg(feature = "grpc")]
+pub mod convert_transaction;
 
 // Include GRPC scanner when the feature is enabled
 #[cfg(feature = "grpc")]
@@ -399,6 +405,17 @@ pub trait WalletScanner: Send + Sync {
 
     /// Get the underlying blockchain scanner
     fn blockchain_scanner(&mut self) -> &mut dyn BlockchainScanner;
+}
+
+/// Transaction broadcaster
+///
+/// This trait provides a lightweight interface that can be implemented by
+/// different backend providers (gRPC, HTTP, etc.) without requiring heavy
+/// dependencies in the core library.
+#[async_trait(?Send)]
+pub trait TransactionBroadcaster: Send + Sync {
+    /// Submit a transaction to base node
+    async fn submit_transaction(&mut self, transaction: Transaction) -> WalletResult<i32>;
 }
 
 /// Default scanning logic implementation

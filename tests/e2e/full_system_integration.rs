@@ -500,9 +500,7 @@ fn create_test_output(
         range_proof_type: RangeProofType::BulletProofPlus,
     };
 
-    let metadata_signature = Signature {
-        bytes: vec![0x06; 64],
-    };
+    let metadata_signature = Signature::default();
 
     Ok(TransactionOutput::new(
         1, // version

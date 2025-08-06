@@ -125,10 +125,10 @@ mod tests {
 
     #[test]
     fn test_standard_output_pattern() {
-        let script = script!(Nop);
+        let script = script!(Nop).unwrap();
         assert!(is_standard_output(&script));
 
-        let script = script!(Nop Nop);
+        let script = script!(Nop Nop).unwrap();
         assert!(!is_standard_output(&script));
     }
 
@@ -136,13 +136,13 @@ mod tests {
     fn test_script_pattern_analysis() {
         let derived_keys = vec![];
 
-        let script = script!(Nop);
+        let script = script!(Nop).unwrap();
         assert_eq!(
             analyze_script_pattern(&script, &derived_keys),
             ScriptPattern::Standard
         );
 
-        let script = script!(PushZero);
+        let script = script!(PushZero).unwrap();
         assert_eq!(
             analyze_script_pattern(&script, &derived_keys),
             ScriptPattern::Unknown

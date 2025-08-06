@@ -138,6 +138,8 @@ fn test_wallet_transaction_serialization() {
         TransactionStatus::MinedConfirmed,
         TransactionDirection::Inbound,
         true,
+        None,
+        None,
     );
 
     serde_roundtrip(&wallet_tx);

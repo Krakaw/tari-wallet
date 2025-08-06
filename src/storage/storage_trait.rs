@@ -4,7 +4,7 @@
 //! for different storage backends to persist and retrieve wallet transaction data.
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use tari_common_types::types::CompressedPublicKey;
 
 use crate::{
     data_structures::{
@@ -13,6 +13,8 @@ use crate::{
         wallet_transaction::{WalletState, WalletTransaction},
     },
     errors::WalletResult,
+    key_management::seed_phrase::CipherSeed,
+    key_manager::{ImportedKeySql, KeyManagerStateSql, NewImportedKeySql, NewKeyManagerStateSql},
 };
 
 use super::output_status::OutputStatus;
@@ -114,12 +116,14 @@ impl StoredOutput {
 }
 
 /// A wallet stored in the database with keys and metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StoredWallet {
     /// Unique wallet ID (database primary key)
     pub id: Option<u32>,
     /// User-friendly wallet name (must be unique)
     pub name: String,
+    /// Master key for the wallet (CipherSeed)
+    pub master_key: CipherSeed,
     /// Encrypted seed phrase (optional, if provided then view/spend keys are also stored)
     pub seed_phrase: Option<String>,
     /// Private view key in hex format (always present for functional wallets)
@@ -140,6 +144,7 @@ impl StoredWallet {
     /// Create a new wallet from seed phrase (derives and stores all keys)
     pub fn from_seed_phrase(
         name: String,
+        master_key: CipherSeed,
         seed_phrase: String,
         view_key: PrivateKey,
         spend_key: PrivateKey,
@@ -148,6 +153,7 @@ impl StoredWallet {
         Self {
             id: None,
             name,
+            master_key,
             seed_phrase: Some(seed_phrase),
             view_key_hex: hex::encode(view_key.as_bytes()),
             spend_key_hex: Some(hex::encode(spend_key.as_bytes())),
@@ -161,6 +167,7 @@ impl StoredWallet {
     /// Create a new wallet from view and spend keys
     pub fn from_keys(
         name: String,
+        master_key: CipherSeed,
         view_key: PrivateKey,
         spend_key: PrivateKey,
         birthday_block: u64,
@@ -168,6 +175,7 @@ impl StoredWallet {
         Self {
             id: None,
             name,
+            master_key,
             seed_phrase: None,
             view_key_hex: hex::encode(view_key.as_bytes()),
             spend_key_hex: Some(hex::encode(spend_key.as_bytes())),
@@ -179,10 +187,16 @@ impl StoredWallet {
     }
 
     /// Create a view-only wallet (no spend key)
-    pub fn view_only(name: String, view_key: PrivateKey, birthday_block: u64) -> Self {
+    pub fn view_only(
+        name: String,
+        master_key: CipherSeed,
+        view_key: PrivateKey,
+        birthday_block: u64,
+    ) -> Self {
         Self {
             id: None,
             name,
+            master_key,
             seed_phrase: None,
             view_key_hex: hex::encode(view_key.as_bytes()),
             spend_key_hex: None,
@@ -482,6 +496,29 @@ pub trait WalletStorage: Send + Sync {
 
     /// Get output count for a wallet
     async fn get_output_count(&self, wallet_id: u32) -> WalletResult<usize>;
+
+    /// Mark multiple outputs as locked
+    async fn mark_outputs_locked(&self, output_ids: &[u32]) -> WalletResult<usize>;
+
+    /// Unlock all outputs that are currently in the `Locked` state, setting them to `Unspent`.
+    async fn unlock_all_outputs(&self, wallet_id: u32) -> WalletResult<usize>;
+
+    // === Key manager state Methods ===
+    async fn key_manager_get_state(
+        &self,
+        branch: &str,
+        wallet_id: u32,
+    ) -> WalletResult<KeyManagerStateSql>;
+    async fn key_manager_commit_state(&self, state: &NewKeyManagerStateSql) -> WalletResult<()>;
+    async fn key_manager_set_index(&self, id: i32, index: Vec<u8>) -> WalletResult<()>;
+
+    // === Key manager imported keys Methods ===
+    async fn key_manager_get_imported_key(
+        &self,
+        key: &CompressedPublicKey,
+        wallet_id: u32,
+    ) -> WalletResult<ImportedKeySql>;
+    async fn key_manager_commit_imported_key(&self, key: &NewImportedKeySql) -> WalletResult<()>;
 }
 
 impl TransactionFilter {
