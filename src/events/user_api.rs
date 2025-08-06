@@ -11,39 +11,6 @@
 //! - **Intelligent defaults**: Sensible default configurations for different use cases
 //! - **Error handling**: User-friendly error messages and recovery suggestions
 //! - **Reporting integration**: Built-in inconsistency detection and reporting
-//!
-//! # Usage Examples
-//!
-//! ```rust,no_run
-//! # #[cfg(feature = "storage")]
-//! use lightweight_wallet_libs::events::user_api::WalletReplayManager;
-//! # #[cfg(feature = "storage")]
-//! use lightweight_wallet_libs::storage::event_storage::SqliteEventStorage;
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! # #[cfg(feature = "storage")]
-//! # {
-//! // Use an in-memory database for this example  
-//! let connection = tokio_rusqlite::Connection::open_in_memory().await?;
-//! let storage = SqliteEventStorage::new(connection).await?;
-//! let manager = WalletReplayManager::new(storage);
-//!
-//! // Quick health check - replay and verify
-//! let result = manager.quick_health_check("wallet-id").await?;
-//! println!("Wallet health: {:?}", result.health_status);
-//!
-//! // Full replay with detailed analysis
-//! let result = manager.full_replay_and_analyze("wallet-id").await?;
-//! if !result.errors.is_empty() {
-//!     println!("Found {} issues", result.errors.len());
-//! }
-//!
-//! // Incremental replay from checkpoint
-//! let result = manager.incremental_replay("wallet-id", 1000).await?;
-//! # }
-//! # Ok(())
-//! # }
-//! ```
 
 #[cfg(feature = "storage")]
 use crate::events::replay::{

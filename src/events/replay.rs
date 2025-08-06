@@ -14,34 +14,6 @@
 //! - **Cancellation support**: Ability to cancel long-running replay operations
 //! - **State verification**: Compare replayed state against current wallet state
 //! - **Discrepancy detection**: Identify and report differences between states
-//!
-//! # Usage
-//!
-//! ```rust,no_run
-//! use lightweight_wallet_libs::events::replay::ReplayConfig;
-//! # #[cfg(feature = "storage")]
-//! use lightweight_wallet_libs::events::replay::EventReplayEngine;
-//! # #[cfg(feature = "storage")]
-//! use lightweight_wallet_libs::storage::event_storage::SqliteEventStorage;
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! # #[cfg(feature = "storage")]
-//! # {
-//! // Use an in-memory database for this example
-//! let connection = tokio_rusqlite::Connection::open_in_memory().await?;
-//! let storage = SqliteEventStorage::new(connection).await?;
-//! let config = ReplayConfig::default();
-//! let mut engine = EventReplayEngine::new(storage, config);
-//!
-//! // Replay all events for a wallet
-//! let replayed_state = engine.replay_wallet("wallet-id").await?;
-//!
-//! // Incremental replay from a checkpoint
-//! let state = engine.replay_from_sequence("wallet-id", 100).await?;
-//! # }
-//! # Ok(())
-//! # }
-//! ```
 
 #[cfg(feature = "storage")]
 use crate::data_structures::wallet_transaction::{WalletState, WalletTransaction};
