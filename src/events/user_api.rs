@@ -663,43 +663,24 @@ impl<S: EventStorage + Sync> WalletReplayManager<S> {
         &self,
         wallet_id: &str,
         from_sequence: Option<u64>,
-        _cancel_rx: &mut watch::Receiver<bool>,
+        cancel_rx: &mut watch::Receiver<bool>,
     ) -> WalletEventResult<ReplayResult> {
-        // Create a temporary engine for this operation
-        // In a production implementation, you'd want a better approach to engine management
-        // This is a simplified version that just returns a basic result
+        // Create a replay configuration
+        let config = ReplayConfig {
+            wallet_id: wallet_id.to_string(),
+            from_sequence,
+            to_sequence: None,
+            validate: true,
+            // Add other config options as needed
+            ..Default::default()
+        };
 
-        // For now, return a mock result since we can't easily create the engine
-        // In a real implementation, you'd restructure this to work with the storage pattern
-        Ok(ReplayResult {
-            wallet_state: ReplayedWalletState {
-                wallet_id: wallet_id.to_string(),
-                ..Default::default()
-            },
-            progress: crate::events::replay::ReplayProgress {
-                wallet_id: wallet_id.to_string(),
-                current_sequence: from_sequence.unwrap_or(1),
-                total_events: Some(0),
-                events_processed: 0,
-                events_applied: 0,
-                events_failed: 0,
-                start_time: SystemTime::now(),
-                estimated_remaining: None,
-                phase: crate::events::replay::ReplayPhase::Completed,
-                errors: Vec::new(),
-            },
-            success: true,
-            validation_issues: Vec::new(),
-            metrics: crate::events::replay::ReplayMetrics {
-                total_duration: Duration::from_millis(1),
-                loading_duration: Duration::from_millis(0),
-                processing_duration: Duration::from_millis(1),
-                validation_duration: Duration::from_millis(0),
-                average_event_time: Duration::from_millis(0),
-                peak_memory_usage: None,
-                storage_queries: 1,
-            },
-        })
+        // Call the replay engine using the storage
+        // Assumes self.storage implements EventStorage + Send + Sync
+        let result =
+            crate::events::replay::replay_wallet_events(&self.storage, &config, cancel_rx).await;
+
+        result
     }
 
     /// Internal helper for replay with custom engine

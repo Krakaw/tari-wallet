@@ -2370,8 +2370,8 @@ impl EventStorage for SqliteStorage {
                         r#"
                         INSERT INTO wallet_events 
                         (event_id, wallet_id, event_type, sequence_number, payload_json, 
-                         metadata_json, source, correlation_id, timestamp)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         metadata_json, source, correlation_id, output_hash, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         "#,
                         params![
                             event.event_id,
@@ -2382,6 +2382,7 @@ impl EventStorage for SqliteStorage {
                             event.metadata_json,
                             event.source,
                             event.correlation_id,
+                            event.output_hash,
                             timestamp_secs,
                         ],
                     )?;

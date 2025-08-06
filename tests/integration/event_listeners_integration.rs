@@ -51,7 +51,7 @@ async fn test_database_storage_listener_integration() {
 
     // Create scan started event with wallet context
     let scan_started = WalletScanEvent::ScanStarted(ScanStarted {
-        metadata: EventMetadata::new(),
+        metadata: EventMetadata::new("integration_test", &wallet.wallet_id()),
         wallet_id: wallet.wallet_id(),
         from_block: 1000,
         to_block: 2000,
@@ -66,7 +66,7 @@ async fn test_database_storage_listener_integration() {
     // Create and handle block processed events
     for block_height in 1000..1005 {
         let block_processed = WalletScanEvent::BlockProcessed(BlockProcessed {
-            metadata: EventMetadata::new(),
+            metadata: EventMetadata::new("integration_test", &wallet.wallet_id()),
             block_info: BlockInfo {
                 height: block_height,
                 hash: format!("block_hash_{}", block_height),
@@ -85,7 +85,7 @@ async fn test_database_storage_listener_integration() {
 
     // Create and handle output found events
     let output_found = WalletScanEvent::OutputFound(OutputFound {
-        metadata: EventMetadata::new(),
+        metadata: EventMetadata::new("integration_test", &wallet.wallet_id()),
         output_data: OutputData {
             commitment: format!("commitment_test_1"),
             value: 1000000,
@@ -117,7 +117,7 @@ async fn test_database_storage_listener_integration() {
 
     // Handle scan completion
     let scan_completed = WalletScanEvent::ScanCompleted(ScanCompleted {
-        metadata: EventMetadata::new(),
+        metadata: EventMetadata::new("integration_test", &wallet.wallet_id()),
         success: true,
         final_stats: ScanStats {
             blocks_processed: 5,
@@ -189,7 +189,7 @@ async fn test_progress_tracking_listener_integration() {
     let events = vec![
         // Start scan
         WalletScanEvent::ScanStarted(ScanStarted {
-            metadata: EventMetadata::new(),
+            metadata: EventMetadata::new("integration_test", "123"),
             wallet_id: 123,
             from_block: 1000,
             to_block: 1010,
@@ -198,7 +198,7 @@ async fn test_progress_tracking_listener_integration() {
         }),
         // Process blocks with progress
         WalletScanEvent::ScanProgress(ScanProgress {
-            metadata: EventMetadata::new(),
+            metadata: EventMetadata::new("integration_test", "123"),
             current_block: 1002,
             total_blocks: 10,
             blocks_processed: 2,
@@ -208,7 +208,7 @@ async fn test_progress_tracking_listener_integration() {
             outputs_found: 0,
         }),
         WalletScanEvent::ScanProgress(ScanProgress {
-            metadata: EventMetadata::new(),
+            metadata: EventMetadata::new("integration_test", "123"),
             current_block: 1005,
             total_blocks: 10,
             blocks_processed: 5,
@@ -218,7 +218,7 @@ async fn test_progress_tracking_listener_integration() {
             outputs_found: 2,
         }),
         WalletScanEvent::ScanProgress(ScanProgress {
-            metadata: EventMetadata::new(),
+            metadata: EventMetadata::new("integration_test", "123"),
             current_block: 1008,
             total_blocks: 10,
             blocks_processed: 8,
@@ -229,7 +229,7 @@ async fn test_progress_tracking_listener_integration() {
         }),
         // Complete scan
         WalletScanEvent::ScanCompleted(ScanCompleted {
-            metadata: EventMetadata::new(),
+            metadata: EventMetadata::new("integration_test", "123"),
             success: true,
             final_stats: ScanStats {
                 blocks_processed: 10,
@@ -285,7 +285,7 @@ async fn test_console_logging_listener_integration() {
         // Create comprehensive event sequence
         let events = vec![
             WalletScanEvent::ScanStarted(ScanStarted {
-                metadata: EventMetadata::new(),
+                metadata: EventMetadata::new("integration_test", "456"),
                 wallet_id: 456,
                 from_block: 2000,
                 to_block: 2020,
@@ -293,7 +293,7 @@ async fn test_console_logging_listener_integration() {
                 scan_mode: "HTTP".to_string(),
             }),
             WalletScanEvent::BlockProcessed(BlockProcessed {
-                metadata: EventMetadata::new(),
+                metadata: EventMetadata::new("integration_test", "456"),
                 block_info: BlockInfo {
                     height: 2005,
                     hash: "test_block_hash".to_string(),
@@ -306,7 +306,7 @@ async fn test_console_logging_listener_integration() {
                 transactions_processed: 15,
             }),
             WalletScanEvent::OutputFound(OutputFound {
-                metadata: EventMetadata::new(),
+                metadata: EventMetadata::new("integration_test", "456"),
                 output_data: OutputData {
                     commitment: "test_commitment".to_string(),
                     value: 2000000,
@@ -333,7 +333,7 @@ async fn test_console_logging_listener_integration() {
                 mined_timestamp: 1640995200,
             }),
             WalletScanEvent::ScanError(ScanError {
-                metadata: EventMetadata::new(),
+                metadata: EventMetadata::new("integration_test", "456"),
                 error_type: "NetworkTimeout".to_string(),
                 error_message: "Connection timeout after 30 seconds".to_string(),
                 block_height: Some(2010),
@@ -342,7 +342,7 @@ async fn test_console_logging_listener_integration() {
                 context: HashMap::new(),
             }),
             WalletScanEvent::ScanCompleted(ScanCompleted {
-                metadata: EventMetadata::new(),
+                metadata: EventMetadata::new("integration_test", "456"),
                 success: true,
                 final_stats: ScanStats {
                     blocks_processed: 20,
@@ -383,7 +383,7 @@ async fn test_ascii_progress_bar_listener_integration() {
 
         // Start scan
         let scan_started = WalletScanEvent::ScanStarted(ScanStarted {
-            metadata: EventMetadata::new(),
+            metadata: EventMetadata::new("integration_test", "789"),
             wallet_id: 789,
             from_block: 5000,
             to_block: 5100,
@@ -397,7 +397,7 @@ async fn test_ascii_progress_bar_listener_integration() {
         // Simulate progress updates
         for i in (0..=100).step_by(10) {
             let progress = WalletScanEvent::ScanProgress(ScanProgress {
-                metadata: EventMetadata::new(),
+                metadata: EventMetadata::new("integration_test", "789"),
                 current_block: 5000 + i,
                 total_blocks: 100,
                 blocks_processed: i,
@@ -416,7 +416,7 @@ async fn test_ascii_progress_bar_listener_integration() {
 
         // Complete scan
         let scan_completed = WalletScanEvent::ScanCompleted(ScanCompleted {
-            metadata: EventMetadata::new(),
+            metadata: EventMetadata::new("integration_test", "789"),
             success: true,
             final_stats: ScanStats {
                 blocks_processed: 100,
@@ -479,7 +479,7 @@ async fn test_combined_listeners_integration() {
     // Create comprehensive event sequence
     let events = vec![
         WalletScanEvent::ScanStarted(ScanStarted {
-            metadata: EventMetadata::new(),
+            metadata: EventMetadata::new("integration_test", "999"),
             wallet_id: 999,
             from_block: 10000,
             to_block: 10050,
@@ -487,7 +487,7 @@ async fn test_combined_listeners_integration() {
             scan_mode: "GRPC".to_string(),
         }),
         WalletScanEvent::ScanProgress(ScanProgress {
-            metadata: EventMetadata::new(),
+            metadata: EventMetadata::new("integration_test", "999"),
             current_block: 10025,
             total_blocks: 50,
             blocks_processed: 25,
@@ -497,7 +497,7 @@ async fn test_combined_listeners_integration() {
             outputs_found: 5,
         }),
         WalletScanEvent::ScanCompleted(ScanCompleted {
-            metadata: EventMetadata::new(),
+            metadata: EventMetadata::new("integration_test", "999"),
             success: true,
             final_stats: ScanStats {
                 blocks_processed: 50,
@@ -551,7 +551,7 @@ async fn test_error_handling_integration() {
 
     // Create error scenario
     let error_event = WalletScanEvent::ScanError(ScanError {
-        metadata: EventMetadata::new(),
+        metadata: EventMetadata::new("integration_test", "error_wallet"),
         error_type: "DatabaseError".to_string(),
         error_message: "Failed to write to database".to_string(),
         block_height: Some(1500),
@@ -571,7 +571,7 @@ async fn test_error_handling_integration() {
 
     // Test recovery scenario
     let recovery_event = WalletScanEvent::ScanProgress(ScanProgress {
-        metadata: EventMetadata::new(),
+        metadata: EventMetadata::new("integration_test", "error_wallet"),
         current_block: 1501,
         total_blocks: 2000,
         blocks_processed: 1501,
@@ -612,7 +612,7 @@ async fn test_high_frequency_events_integration() {
     let mut events = Vec::new();
     for i in 0..1000 {
         events.push(WalletScanEvent::BlockProcessed(BlockProcessed {
-            metadata: EventMetadata::new(),
+            metadata: EventMetadata::new("integration_test", "performance_wallet"),
             block_info: BlockInfo {
                 height: 20000 + i,
                 hash: format!("block_hash_{}", i),
