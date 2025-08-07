@@ -13,6 +13,7 @@ pub mod hex_utils;
 pub mod key_management;
 pub mod scanning;
 
+pub mod signing;
 pub mod storage;
 pub mod utils;
 pub mod validation;
@@ -32,6 +33,7 @@ pub use hex_utils::*;
 pub use key_management::*;
 pub use scanning::*;
 
+pub use signing::*;
 pub use storage::*;
 pub use validation::*;
 pub use wallet::*;
