@@ -324,7 +324,7 @@ impl ConnectionPool {
     }
 
     /// Acquire a connection from the pool
-    pub async fn acquire(&self) -> WalletEventResult<PooledConnectionGuard> {
+    pub async fn acquire(&self) -> WalletEventResult<PooledConnectionGuard<'_>> {
         let start_time = std::time::Instant::now();
 
         // Wait for an available slot in the semaphore
