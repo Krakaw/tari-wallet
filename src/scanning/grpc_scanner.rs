@@ -417,7 +417,7 @@ impl GrpcBlockchainScanner {
         Ok(ScanConfig {
             start_height,
             end_height,
-            batch_size: 100,
+            batch_size: 10, // Optimized for base node GRPC API
             request_timeout: self.timeout,
             extraction_config,
         })
@@ -435,50 +435,9 @@ impl GrpcBlockchainScanner {
         ScanConfig {
             start_height,
             end_height,
-            batch_size: 100,
+            batch_size: 10, // Optimized for base node GRPC API
             request_timeout: self.timeout,
             extraction_config,
-        }
-    }
-
-    /// Scan for regular recoverable outputs using encrypted data decryption (GRPC version)
-    fn scan_for_recoverable_output_grpc(
-        output: &TransactionOutput,
-        extraction_config: &ExtractionConfig,
-    ) -> WalletResult<Option<WalletOutput>> {
-        // Skip non-payment outputs for this scan type
-        if !matches!(
-            output.features().output_type,
-            crate::data_structures::wallet_output::OutputType::Payment
-        ) {
-            return Ok(None);
-        }
-
-        // Use the standard extraction logic - the view key should be correctly derived already
-        match extract_wallet_output(output, extraction_config) {
-            Ok(wallet_output) => Ok(Some(wallet_output)),
-            Err(_) => Ok(None), // Not a wallet output or decryption failed
-        }
-    }
-
-    /// Scan for one-sided payments (GRPC version)
-    fn scan_for_one_sided_payment_grpc(
-        output: &TransactionOutput,
-        extraction_config: &ExtractionConfig,
-    ) -> WalletResult<Option<WalletOutput>> {
-        // Skip non-payment outputs for this scan type
-        if !matches!(
-            output.features().output_type,
-            crate::data_structures::wallet_output::OutputType::Payment
-        ) {
-            return Ok(None);
-        }
-
-        // For one-sided payments, use the same extraction logic
-        // The difference is in how the outputs are created, not how they're decrypted
-        match extract_wallet_output(output, extraction_config) {
-            Ok(wallet_output) => Ok(Some(wallet_output)),
-            Err(_) => Ok(None), // Not a wallet output or decryption failed
         }
     }
 
@@ -781,42 +740,42 @@ impl BlockchainScanner for GrpcBlockchainScanner {
                 if let Some(block_info) = Self::convert_block(&grpc_block)? {
                     let mut wallet_outputs = Vec::new();
 
-                    // Process outputs without debug output - let caller decide what to log
-                    for output in &block_info.outputs {
-                        // Use enhanced multi-strategy scanning instead of basic extraction
-                        let mut found_output = false;
+                    // Process outputs in parallel for maximum performance
+                    #[cfg(feature = "grpc")]
+                    {
+                        use rayon::prelude::*;
+                        let parallel_results: Vec<_> = block_info
+                            .outputs
+                            .par_iter()
+                            .filter_map(|output| {
+                                // Try wallet output extraction once (covers recoverable and one-sided payments)
+                                if matches!(
+                                    output.features().output_type,
+                                    crate::data_structures::wallet_output::OutputType::Payment
+                                ) {
+                                    if let Ok(wallet_output) =
+                                        extract_wallet_output(output, &config.extraction_config)
+                                    {
+                                        return Some(wallet_output);
+                                    }
+                                }
 
-                        // Strategy 1: Regular recoverable outputs (encrypted data decryption)
-                        if !found_output {
-                            if let Some(wallet_output) = Self::scan_for_recoverable_output_grpc(
-                                output,
-                                &config.extraction_config,
-                            )? {
-                                wallet_outputs.push(wallet_output);
-                                found_output = true;
-                            }
-                        }
+                                // Handle coinbase outputs separately
+                                if matches!(
+                                    output.features().output_type,
+                                    crate::data_structures::wallet_output::OutputType::Coinbase
+                                ) {
+                                    if let Ok(Some(wallet_output)) =
+                                        Self::scan_for_coinbase_output_grpc(output)
+                                    {
+                                        return Some(wallet_output);
+                                    }
+                                }
 
-                        // Strategy 2: One-sided payments (different detection logic)
-                        if !found_output {
-                            if let Some(wallet_output) = Self::scan_for_one_sided_payment_grpc(
-                                output,
-                                &config.extraction_config,
-                            )? {
-                                wallet_outputs.push(wallet_output);
-                                found_output = true;
-                            }
-                        }
-
-                        // Strategy 3: Coinbase outputs (special handling)
-                        if !found_output {
-                            if let Some(wallet_output) =
-                                Self::scan_for_coinbase_output_grpc(output)?
-                            {
-                                wallet_outputs.push(wallet_output);
-                                // found_output = true;
-                            }
-                        }
+                                None
+                            })
+                            .collect();
+                        wallet_outputs.extend(parallel_results);
                     }
 
                     batch_results.push(BlockScanResult {

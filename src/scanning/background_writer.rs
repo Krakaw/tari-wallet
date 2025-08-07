@@ -66,6 +66,11 @@ pub enum BackgroundWriterCommand {
         /// Response channel returning number of transactions marked as spent
         response_tx: oneshot::Sender<WalletResult<usize>>,
     },
+    /// Flush any pending batched operations
+    FlushBatch {
+        /// Response channel for operation result
+        response_tx: oneshot::Sender<WalletResult<()>>,
+    },
     /// Shutdown the background writer thread
     Shutdown {
         /// Response channel to confirm shutdown completion
@@ -109,23 +114,84 @@ pub struct BackgroundWriter {
     pub join_handle: tokio::task::JoinHandle<()>,
 }
 
+/// Configuration for batch operations
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+#[derive(Debug, Clone)]
+pub struct BatchConfig {
+    /// Maximum number of operations to batch before auto-flushing
+    pub max_batch_size: usize,
+    /// Maximum time to wait before auto-flushing (in milliseconds)
+    pub max_batch_time_ms: u64,
+}
+
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+impl Default for BatchConfig {
+    fn default() -> Self {
+        Self {
+            max_batch_size: 1000,
+            max_batch_time_ms: 1000, // 1 second for faster flushing
+        }
+    }
+}
+
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+impl BatchConfig {
+    /// Create a high-performance config for scanning workloads
+    pub fn for_scanning() -> Self {
+        Self {
+            max_batch_size: 500,    // Smaller batches for lower latency
+            max_batch_time_ms: 250, // Much more aggressive flushing - 250ms
+        }
+    }
+}
+
+/// Batch operation state
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+struct BatchState {
+    /// Pending transaction batches (wallet_id, transactions)
+    transaction_batches: Vec<(u32, Vec<WalletTransaction>)>,
+    /// Pending spent transaction batches
+    spent_batches: Vec<Vec<(CompressedCommitment, u64, usize)>>,
+    /// Pending wallet updates (wallet_id, block_height)
+    wallet_updates: Vec<(u32, u64)>,
+    /// Time when batch was started
+    batch_start_time: std::time::Instant,
+    /// Total operations in current batch
+    total_operations: usize,
+    /// Total transactions accumulated in current batch
+    total_transactions: usize,
+}
+
 #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 impl BackgroundWriter {
-    /// Background writer main loop (non-WASM32 only)
+    /// Background writer main loop with configurable batching (non-WASM32 only)
     ///
     /// This function runs in a background task and processes commands from the
-    /// command receiver. It handles all database operations asynchronously,
-    /// including saving transactions, outputs, updating scan progress, and
-    /// marking transactions as spent.
+    /// command receiver. It supports both immediate writes (batch_size=1) and
+    /// batched operations for high-performance scenarios.
     ///
     /// # Arguments
     ///
     /// * `storage` - Database storage interface for performing operations
     /// * `command_rx` - Receiver for background writer commands
+    /// * `batch_config` - Configuration for batch operations
     pub async fn background_writer_loop(
         storage: Box<dyn WalletStorage>,
         command_rx: &mut mpsc::UnboundedReceiver<BackgroundWriterCommand>,
+        batch_config: BatchConfig,
     ) {
+        let mut batch_state = BatchState {
+            transaction_batches: Vec::new(),
+            spent_batches: Vec::new(),
+            wallet_updates: Vec::new(),
+            batch_start_time: std::time::Instant::now(),
+            total_operations: 0,
+            total_transactions: 0,
+        };
+
+        // If batch_size is 1, disable batching (immediate writes)
+        let use_batching = batch_config.max_batch_size > 1;
+
         while let Some(command) = command_rx.recv().await {
             match command {
                 BackgroundWriterCommand::SaveTransactions {
@@ -133,13 +199,36 @@ impl BackgroundWriter {
                     transactions,
                     response_tx,
                 } => {
-                    let result = storage.save_transactions(wallet_id, &transactions).await;
-                    let _ = response_tx.send(result);
+                    if use_batching {
+                        // Add to batch
+                        let transaction_count = transactions.len();
+                        batch_state
+                            .transaction_batches
+                            .push((wallet_id, transactions));
+                        batch_state.total_operations += 1;
+                        batch_state.total_transactions += transaction_count;
+                        let _ = response_tx.send(Ok(()));
+
+                        // Check if we should flush based on transaction count or time
+                        if Self::should_flush_batch(&batch_state, &batch_config) {
+                            if let Err(e) =
+                                Self::flush_batch(storage.as_ref(), &mut batch_state).await
+                            {
+                                eprintln!("Failed to flush batch: {e}");
+                            }
+                        }
+                    } else {
+                        // Immediate write
+                        let result = storage.save_transactions(wallet_id, &transactions).await;
+                        let _ = response_tx.send(result);
+                    }
                 }
                 BackgroundWriterCommand::SaveOutputs {
                     outputs,
                     response_tx,
                 } => {
+                    // CRITICAL: Always write outputs immediately to prevent race conditions
+                    // Outputs must be written before they can be marked as spent in later blocks
                     let result = storage.save_outputs(&outputs).await;
                     let _ = response_tx.send(result);
                 }
@@ -148,10 +237,24 @@ impl BackgroundWriter {
                     block_height,
                     response_tx,
                 } => {
-                    let result = storage
-                        .update_wallet_scanned_block(wallet_id, block_height)
-                        .await;
-                    let _ = response_tx.send(result);
+                    if use_batching {
+                        batch_state.wallet_updates.push((wallet_id, block_height));
+                        batch_state.total_operations += 1;
+                        let _ = response_tx.send(Ok(()));
+
+                        if Self::should_flush_batch(&batch_state, &batch_config) {
+                            if let Err(e) =
+                                Self::flush_batch(storage.as_ref(), &mut batch_state).await
+                            {
+                                eprintln!("Failed to flush batch: {e}");
+                            }
+                        }
+                    } else {
+                        let result = storage
+                            .update_wallet_scanned_block(wallet_id, block_height)
+                            .await;
+                        let _ = response_tx.send(result);
+                    }
                 }
                 BackgroundWriterCommand::MarkTransactionSpent {
                     commitment,
@@ -159,24 +262,144 @@ impl BackgroundWriter {
                     input_index,
                     response_tx,
                 } => {
-                    let result = storage
-                        .mark_transaction_spent(&commitment, block_height, input_index)
-                        .await;
-                    let _ = response_tx.send(result);
+                    if use_batching {
+                        // Flush any pending transaction batches first to ensure outputs exist
+                        if !batch_state.transaction_batches.is_empty() {
+                            if let Err(e) =
+                                Self::flush_batch(storage.as_ref(), &mut batch_state).await
+                            {
+                                eprintln!("Failed to flush batch before marking spent: {e}");
+                            }
+                        }
+
+                        batch_state.spent_batches.push(vec![(
+                            commitment,
+                            block_height,
+                            input_index,
+                        )]);
+                        batch_state.total_operations += 1;
+                        let _ = response_tx.send(Ok(true));
+
+                        if Self::should_flush_batch(&batch_state, &batch_config) {
+                            if let Err(e) =
+                                Self::flush_batch(storage.as_ref(), &mut batch_state).await
+                            {
+                                eprintln!("Failed to flush batch: {e}");
+                            }
+                        }
+                    } else {
+                        let result = storage
+                            .mark_transaction_spent(&commitment, block_height, input_index)
+                            .await;
+                        let _ = response_tx.send(result);
+                    }
                 }
                 BackgroundWriterCommand::MarkTransactionsSpentBatch {
                     commitments,
                     response_tx,
                 } => {
-                    let result = storage.mark_transactions_spent_batch(&commitments).await;
+                    if use_batching {
+                        // Flush any pending transaction batches first to ensure outputs exist
+                        if !batch_state.transaction_batches.is_empty() {
+                            if let Err(e) =
+                                Self::flush_batch(storage.as_ref(), &mut batch_state).await
+                            {
+                                eprintln!("Failed to flush batch before marking spent: {e}");
+                            }
+                        }
+
+                        batch_state.spent_batches.push(commitments);
+                        batch_state.total_operations += 1;
+                        let _ = response_tx.send(Ok(0)); // Return 0 for batched
+
+                        if Self::should_flush_batch(&batch_state, &batch_config) {
+                            if let Err(e) =
+                                Self::flush_batch(storage.as_ref(), &mut batch_state).await
+                            {
+                                eprintln!("Failed to flush batch: {e}");
+                            }
+                        }
+                    } else {
+                        let result = storage.mark_transactions_spent_batch(&commitments).await;
+                        let _ = response_tx.send(result);
+                    }
+                }
+                BackgroundWriterCommand::FlushBatch { response_tx } => {
+                    let result = Self::flush_batch(storage.as_ref(), &mut batch_state).await;
                     let _ = response_tx.send(result);
                 }
                 BackgroundWriterCommand::Shutdown { response_tx } => {
+                    // Flush any pending operations before shutdown
+                    if use_batching {
+                        let _ = Self::flush_batch(storage.as_ref(), &mut batch_state).await;
+                    }
                     let _ = response_tx.send(());
                     break;
                 }
             }
         }
+    }
+
+    /// Check if batch should be flushed based on transaction count or time limits
+    fn should_flush_batch(batch_state: &BatchState, config: &BatchConfig) -> bool {
+        // Flush when we have accumulated enough transactions (not operations)
+        batch_state.total_transactions >= config.max_batch_size
+            || batch_state.batch_start_time.elapsed().as_millis() > config.max_batch_time_ms as u128
+    }
+
+    /// Flush all pending batch operations
+    async fn flush_batch(
+        storage: &dyn WalletStorage,
+        batch_state: &mut BatchState,
+    ) -> WalletResult<()> {
+        use crate::storage::sqlite::SqliteStorage;
+
+        // Try to downcast to SqliteStorage to use batch methods
+        if let Some(sqlite_storage) = storage.as_any().downcast_ref::<SqliteStorage>() {
+            // Use high-performance batch methods
+            if !batch_state.transaction_batches.is_empty() {
+                sqlite_storage
+                    .save_all_batches(&batch_state.transaction_batches)
+                    .await?;
+            }
+
+            if !batch_state.spent_batches.is_empty() {
+                sqlite_storage
+                    .mark_all_spent_batches(&batch_state.spent_batches)
+                    .await?;
+            }
+
+            if !batch_state.wallet_updates.is_empty() {
+                sqlite_storage
+                    .update_all_wallet_scanned_blocks(&batch_state.wallet_updates)
+                    .await?;
+            }
+        } else {
+            // Fallback to individual operations for other storage types
+            for (wallet_id, transactions) in &batch_state.transaction_batches {
+                storage.save_transactions(*wallet_id, transactions).await?;
+            }
+
+            for batch in &batch_state.spent_batches {
+                storage.mark_transactions_spent_batch(batch).await?;
+            }
+
+            for (wallet_id, block_height) in &batch_state.wallet_updates {
+                storage
+                    .update_wallet_scanned_block(*wallet_id, *block_height)
+                    .await?;
+            }
+        }
+
+        // Clear the batch
+        batch_state.transaction_batches.clear();
+        batch_state.spent_batches.clear();
+        batch_state.wallet_updates.clear();
+        batch_state.batch_start_time = std::time::Instant::now();
+        batch_state.total_operations = 0;
+        batch_state.total_transactions = 0;
+
+        Ok(())
     }
 }
 
@@ -549,6 +772,16 @@ mod tests {
         async fn get_output_count(&self, _wallet_id: u32) -> WalletResult<usize> {
             Ok(0)
         }
+
+        async fn store_simple_event(
+            &self,
+            _wallet_id: u32,
+            _event_type: &str,
+            _event_data: &str,
+        ) -> WalletResult<()> {
+            Ok(()) // Mock implementation does nothing
+        }
+
         async fn mark_spent_outputs_from_inputs(
             &self,
             _wallet_id: u32,
@@ -556,6 +789,10 @@ mod tests {
             _to_block: u64,
         ) -> WalletResult<usize> {
             Ok(0)
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
         }
     }
 
@@ -568,8 +805,12 @@ mod tests {
         // Spawn the background writer task
         let storage_clone = mock_storage.clone();
         let writer_task = tokio::spawn(async move {
-            BackgroundWriter::background_writer_loop(Box::new(storage_clone), &mut command_rx)
-                .await;
+            BackgroundWriter::background_writer_loop(
+                Box::new(storage_clone),
+                &mut command_rx,
+                BatchConfig::default(),
+            )
+            .await;
         });
 
         // Send a save transactions command
@@ -615,8 +856,12 @@ mod tests {
         // Spawn the background writer task
         let storage_clone = mock_storage.clone();
         let writer_task = tokio::spawn(async move {
-            BackgroundWriter::background_writer_loop(Box::new(storage_clone), &mut command_rx)
-                .await;
+            BackgroundWriter::background_writer_loop(
+                Box::new(storage_clone),
+                &mut command_rx,
+                BatchConfig::default(),
+            )
+            .await;
         });
 
         // Send a save transactions command
@@ -654,8 +899,12 @@ mod tests {
         // Spawn the background writer task
         let storage_clone = mock_storage.clone();
         let writer_task = tokio::spawn(async move {
-            BackgroundWriter::background_writer_loop(Box::new(storage_clone), &mut command_rx)
-                .await;
+            BackgroundWriter::background_writer_loop(
+                Box::new(storage_clone),
+                &mut command_rx,
+                BatchConfig::default(),
+            )
+            .await;
         });
 
         // Send a save outputs command
@@ -699,8 +948,12 @@ mod tests {
         // Spawn the background writer task
         let storage_clone = mock_storage.clone();
         let writer_task = tokio::spawn(async move {
-            BackgroundWriter::background_writer_loop(Box::new(storage_clone), &mut command_rx)
-                .await;
+            BackgroundWriter::background_writer_loop(
+                Box::new(storage_clone),
+                &mut command_rx,
+                BatchConfig::default(),
+            )
+            .await;
         });
 
         // Send an update wallet command
@@ -745,8 +998,12 @@ mod tests {
         // Spawn the background writer task
         let storage_clone = mock_storage.clone();
         let writer_task = tokio::spawn(async move {
-            BackgroundWriter::background_writer_loop(Box::new(storage_clone), &mut command_rx)
-                .await;
+            BackgroundWriter::background_writer_loop(
+                Box::new(storage_clone),
+                &mut command_rx,
+                BatchConfig::default(),
+            )
+            .await;
         });
 
         // Send a mark transaction spent command
@@ -794,8 +1051,12 @@ mod tests {
         // Spawn the background writer task
         let storage_clone = mock_storage.clone();
         let writer_task = tokio::spawn(async move {
-            BackgroundWriter::background_writer_loop(Box::new(storage_clone), &mut command_rx)
-                .await;
+            BackgroundWriter::background_writer_loop(
+                Box::new(storage_clone),
+                &mut command_rx,
+                BatchConfig::default(),
+            )
+            .await;
         });
 
         // Send a batch mark command
@@ -842,8 +1103,12 @@ mod tests {
         // Spawn the background writer task
         let storage_clone = mock_storage.clone();
         let writer_task = tokio::spawn(async move {
-            BackgroundWriter::background_writer_loop(Box::new(storage_clone), &mut command_rx)
-                .await;
+            BackgroundWriter::background_writer_loop(
+                Box::new(storage_clone),
+                &mut command_rx,
+                BatchConfig::default(),
+            )
+            .await;
         });
 
         // Send shutdown command
@@ -870,8 +1135,12 @@ mod tests {
         // Spawn the background writer task
         let storage_clone = mock_storage.clone();
         let writer_task = tokio::spawn(async move {
-            BackgroundWriter::background_writer_loop(Box::new(storage_clone), &mut command_rx)
-                .await;
+            BackgroundWriter::background_writer_loop(
+                Box::new(storage_clone),
+                &mut command_rx,
+                BatchConfig::default(),
+            )
+            .await;
         });
 
         // Send multiple commands
@@ -931,8 +1200,12 @@ mod tests {
         // Spawn the background writer task
         let storage_clone = mock_storage.clone();
         let writer_task = tokio::spawn(async move {
-            BackgroundWriter::background_writer_loop(Box::new(storage_clone), &mut command_rx)
-                .await;
+            BackgroundWriter::background_writer_loop(
+                Box::new(storage_clone),
+                &mut command_rx,
+                BatchConfig::default(),
+            )
+            .await;
         });
 
         // Close the sender - this should cause the loop to exit

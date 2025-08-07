@@ -92,12 +92,24 @@ impl ScannerStorage {
         database_path: &str,
         workload_type: &str,
     ) -> WalletResult<Self> {
-        let (_batch_size, perf_config) = BatchOperations::recommend_batch_config(workload_type);
+        let (batch_size, _perf_config) = BatchOperations::recommend_batch_config(workload_type);
+        Self::new_with_performance_database_and_batch_size(database_path, workload_type, batch_size)
+            .await
+    }
+
+    /// Create a new scanner storage instance with custom batch size and high-performance database configuration
+    #[cfg(feature = "storage")]
+    pub async fn new_with_performance_database_and_batch_size(
+        database_path: &str,
+        workload_type: &str,
+        batch_size: usize,
+    ) -> WalletResult<Self> {
+        let (_, perf_config) = BatchOperations::recommend_batch_config(workload_type);
 
         let storage: Box<dyn WalletStorage> = if database_path == ":memory:" {
-            Box::new(SqliteStorage::new_in_memory_with_config(perf_config).await?)
+            Box::new(SqliteStorage::new_in_memory_with_config(perf_config, batch_size).await?)
         } else {
-            Box::new(SqliteStorage::new_with_config(database_path, perf_config).await?)
+            Box::new(SqliteStorage::new_with_config(database_path, perf_config, batch_size).await?)
         };
 
         storage.initialize().await?;
@@ -126,15 +138,52 @@ impl ScannerStorage {
             // For in-memory databases, we can't share the connection, so fall back to direct storage
             return Ok(());
         } else {
-            Box::new(SqliteStorage::new(database_path).await?)
+            // Get batch configuration from the current database if available
+            let batch_size = if let Some(ref db) = self.database {
+                if let Some(sqlite_storage) = db.as_any().downcast_ref::<SqliteStorage>() {
+                    sqlite_storage.batch_size()
+                } else {
+                    1000 // Default batch size
+                }
+            } else {
+                1000 // Default batch size
+            };
+
+            let (_, perf_config) = BatchOperations::recommend_batch_config("scanning");
+            Box::new(SqliteStorage::new_with_config(database_path, perf_config, batch_size).await?)
         };
 
         // Initialize the background database (ensure schema exists)
         background_database.initialize().await?;
 
+        // Configure batching based on batch size - use scanning-optimized config
+        let batch_config = if let Some(ref db) = self.database {
+            if let Some(sqlite_storage) = db.as_any().downcast_ref::<SqliteStorage>() {
+                if sqlite_storage.batch_size() > 1 {
+                    // Use scanning-optimized batch config for better performance
+                    super::background_writer::BatchConfig::for_scanning()
+                } else {
+                    // Use immediate writes if batch_size=1
+                    super::background_writer::BatchConfig {
+                        max_batch_size: 1,
+                        max_batch_time_ms: 50, // Very fast flush for immediate writes
+                    }
+                }
+            } else {
+                super::background_writer::BatchConfig::for_scanning()
+            }
+        } else {
+            super::background_writer::BatchConfig::for_scanning()
+        };
+
         // Spawn the background writer task
         let join_handle = tokio::spawn(async move {
-            BackgroundWriter::background_writer_loop(background_database, &mut command_rx).await;
+            BackgroundWriter::background_writer_loop(
+                background_database,
+                &mut command_rx,
+                batch_config,
+            )
+            .await;
         });
 
         self.background_writer = Some(BackgroundWriter {
@@ -349,6 +398,57 @@ impl ScannerStorage {
     #[cfg(feature = "storage")]
     pub fn set_wallet_id(&mut self, wallet_id: Option<u32>) {
         self.wallet_id = wallet_id;
+    }
+
+    /// Get the wallet ID for this storage instance
+    pub fn wallet_id(&self) -> Option<u32> {
+        self.wallet_id
+    }
+
+    /// Check if operating in memory-only mode
+    pub fn is_memory_only(&self) -> bool {
+        self.is_memory_only
+    }
+
+    /// Check if using batch writer (if background writer exists)
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+    pub fn is_using_batch_writer(&self) -> bool {
+        self.background_writer.is_some()
+    }
+
+    /// Check if using batch writer (placeholder for WASM32)
+    #[cfg(any(not(feature = "storage"), target_arch = "wasm32"))]
+    pub fn is_using_batch_writer(&self) -> bool {
+        false
+    }
+
+    /// Flush pending batch operations
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+    pub async fn flush_batch_operations(&self) -> WalletResult<usize> {
+        if let Some(ref background_writer) = self.background_writer {
+            let (response_tx, response_rx) = oneshot::channel();
+            background_writer
+                .command_tx
+                .send(BackgroundWriterCommand::FlushBatch { response_tx })
+                .map_err(|_| {
+                    WalletError::StorageError("Failed to send flush command".to_string())
+                })?;
+
+            response_rx
+                .await
+                .map_err(|_| {
+                    WalletError::StorageError("Failed to receive flush response".to_string())
+                })?
+                .map(|_| 0) // Return 0 as we don't track the exact count
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Flush pending batch operations (placeholder for WASM32)
+    #[cfg(any(not(feature = "storage"), target_arch = "wasm32"))]
+    pub async fn flush_batch_operations(&self) -> WalletResult<usize> {
+        Ok(0)
     }
 
     /// Get a reference to the underlying database storage for reuse

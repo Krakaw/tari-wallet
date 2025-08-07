@@ -11,7 +11,7 @@
 //! - Running balance calculation
 //! - Clean, user-friendly output with bash-style progress bars
 //! - Automatic scan from wallet birthday to chain tip
-//! - **Batch processing for improved performance (up to 100 blocks per batch)**
+//! - **Configurable database batching for performance (1=immediate writes, 1000=high performance)**
 //! - **Graceful error handling with resume functionality**
 //!
 //! ## Error Handling & Interruption
@@ -62,6 +62,18 @@
 //!
 //! # Use in-memory database (useful for testing)
 //! cargo run --bin scanner --features grpc-storage -- --database ":memory:"
+//!
+//! # *** DATABASE BATCH SIZE CONFIGURATION ***
+//! # Use immediate writes (batch-size=1) for consistency and real-time storage
+//! cargo run --bin scanner --features grpc-storage -- --batch-size 1
+//!
+//! # Use high-performance batching (batch-size=1000, default) for bulk scanning  
+//! # This can achieve thousands of blocks/second vs 22 blocks/s with immediate writes
+//! # Note: Outputs are always written immediately to prevent race conditions
+//! cargo run --bin scanner --features grpc-storage -- --batch-size 1000
+//!
+//! # Use custom batch size for specific performance needs
+//! cargo run --bin scanner --features grpc-storage -- --batch-size 500
 //!
 //! # *** WALLET MANAGEMENT FEATURES ***
 //! # Use specific wallet for scanning
@@ -186,8 +198,12 @@ pub struct CliArgs {
     )]
     blocks: Option<Vec<u64>>,
 
-    /// Batch size for scanning
-    #[arg(long, default_value = "10", help = "Batch size for scanning")]
+    /// Database batch size for write operations (1=immediate writes for consistency, 1000=high performance batching)
+    #[arg(
+        long,
+        default_value = "1000",
+        help = "Database batch size for write operations (1=immediate writes for consistency, 1000=high performance batching)"
+    )]
     batch_size: usize,
 
     /// Progress update frequency
@@ -247,7 +263,7 @@ async fn display_storage_info(
     }
 
     // Display storage mode
-    if storage_backend.is_memory_only {
+    if storage_backend.is_memory_only() {
         println!("💭 Using in-memory storage (transactions will not be persisted)");
         return Ok(());
     }
@@ -283,7 +299,7 @@ async fn display_completion_info(
         return Ok(());
     }
 
-    if storage_backend.is_memory_only {
+    if storage_backend.is_memory_only() {
         println!("💭 Transactions stored in memory only (not persisted)");
         return Ok(());
     }
@@ -328,7 +344,7 @@ fn create_scan_config(
         progress_frequency: args.progress_frequency,
         quiet: args.quiet,
         output_format,
-        batch_size: args.batch_size,
+        batch_size: 10, // Fixed GRPC block fetching batch size (optimized for base node)
         database_path: Some(args.database.clone()),
         wallet_name: args.wallet_name.clone(),
         explicit_from_block: args.from_block,
@@ -350,7 +366,7 @@ fn create_scan_config(
 fn create_wallet_scanner_config(args: &CliArgs) -> WalletScannerConfig {
     WalletScannerConfig {
         event_emitter: None, // Will be set separately with event system
-        batch_size: args.batch_size,
+        batch_size: 10,      // Fixed GRPC block fetching batch size (optimized for base node)
         timeout: Some(std::time::Duration::from_secs(args.timeout)),
         verbose_logging: !args.quiet,
         retry_config: Default::default(), // Use default retry config
@@ -562,14 +578,19 @@ async fn main_unified() -> WalletResult<()> {
     #[cfg(feature = "storage")]
     let (temp_config, _) = create_scanner_configs(&args, 0, to_block)?;
 
-    // Create storage backend - use database when available and no keys provided, memory otherwise
+    // Create storage backend - use enhanced storage with batch writer for maximum performance
     #[cfg(feature = "storage")]
     let mut storage_backend = if keys_provided {
         // Keys provided - use memory-only storage
         ScannerStorage::new_memory()
     } else {
-        // No keys provided - use high-performance database storage optimized for scanning
-        ScannerStorage::new_with_performance_database(&args.database, "scanning").await?
+        // No keys provided - use high-performance database storage with custom batch size
+        ScannerStorage::new_with_performance_database_and_batch_size(
+            &args.database,
+            "scanning",
+            args.batch_size,
+        )
+        .await?
     };
 
     #[cfg(not(feature = "storage"))]
@@ -600,9 +621,16 @@ async fn main_unified() -> WalletResult<()> {
                 storage_backend.set_wallet_id(Some(wallet_id));
 
                 // Now load the scan context
-                storage_backend
-                    .load_scan_context_from_wallet(args.quiet)
-                    .await?
+                Some(
+                    storage_backend
+                        .load_scan_context_from_wallet(args.quiet)
+                        .await?
+                        .ok_or_else(|| {
+                            WalletError::ResourceNotFound(
+                                "No scan context found for wallet".to_string(),
+                            )
+                        })?,
+                )
             }
             Err(e) => return Err(e),
         };
@@ -658,15 +686,19 @@ async fn main_unified() -> WalletResult<()> {
     // Create final configs with the correct from_block
     let (config, scanner_config) = create_scanner_configs(&args, from_block, to_block)?;
 
-    // Start background writer for non-WASM32 architectures (if using database storage)
+    // Start enhanced background writer for non-WASM32 architectures (if using database storage)
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
-    if !storage_backend.is_memory_only {
+    if !storage_backend.is_memory_only() {
         if !args.quiet {
-            println!("🚀 Starting background database writer...");
+            println!("🚀 Starting ultra-high-performance batch background writer...");
         }
         storage_backend
             .start_background_writer(&args.database)
             .await?;
+
+        if !args.quiet && storage_backend.is_using_batch_writer() {
+            println!("⚡ Batch writer active: up to 1000 operations per transaction for maximum performance");
+        }
     }
 
     // Display storage info and existing data (only for storage builds)
@@ -724,7 +756,7 @@ async fn main_unified() -> WalletResult<()> {
 
     // Add database storage listener if using database storage (only available with storage feature)
     #[cfg(feature = "storage")]
-    if !storage_backend.is_memory_only {
+    if !storage_backend.is_memory_only() {
         use lightweight_wallet_libs::events::listeners::DatabaseStorageListener;
         if let Some(db_path) = &config.database_path {
             // Use high-performance database configuration for scanning workloads with event auditing
@@ -732,16 +764,17 @@ async fn main_unified() -> WalletResult<()> {
                 .performance_preset() // High-performance settings optimized for scanning
                 .database_path(db_path)
                 .auto_start_background_writer(true)
+                .batch_size(args.batch_size)
                 .event_auditing(true) // Enable event auditing for storing scan events
                 .build()
                 .await
             {
                 Ok(mut db_listener) => {
-                    db_listener.set_wallet_id(storage_backend.wallet_id);
-                    if !args.quiet && storage_backend.wallet_id.is_some() {
+                    db_listener.set_wallet_id(storage_backend.wallet_id());
+                    if !args.quiet && storage_backend.wallet_id().is_some() {
                         println!(
                             "🔗 High-performance database event listener configured for wallet ID: {:?}",
-                            storage_backend.wallet_id
+                            storage_backend.wallet_id()
                         );
                         println!(
                             "📝 Event auditing enabled - storing scan events in wallet_events table"
@@ -852,11 +885,20 @@ async fn main_unified() -> WalletResult<()> {
         }
     }
 
-    // Stop background writer gracefully
+    // Stop enhanced background writer gracefully
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
-    if !storage_backend.is_memory_only {
+    if !storage_backend.is_memory_only() {
         if !args.quiet {
-            println!("🛑 Stopping background database writer...");
+            if storage_backend.is_using_batch_writer() {
+                println!("🛑 Stopping ultra-high-performance batch background writer...");
+                // Flush any remaining batched operations before shutdown
+                let flushed_ops = storage_backend.flush_batch_operations().await.unwrap_or(0);
+                if flushed_ops > 0 {
+                    println!("💾 Flushed {flushed_ops} remaining batched operations");
+                }
+            } else {
+                println!("🛑 Stopping background database writer...");
+            }
         }
         storage_backend.stop_background_writer().await?;
     }

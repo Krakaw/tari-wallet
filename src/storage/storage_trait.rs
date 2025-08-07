@@ -312,6 +312,9 @@ pub trait WalletStorage: Send + Sync {
     /// Initialize the storage backend (create tables, indexes, etc.)
     async fn initialize(&self) -> WalletResult<()>;
 
+    /// Get a reference to the underlying concrete type for downcasting
+    fn as_any(&self) -> &dyn std::any::Any;
+
     // === Wallet Management Methods ===
 
     /// Save a wallet to storage (create or update)
@@ -482,6 +485,14 @@ pub trait WalletStorage: Send + Sync {
 
     /// Get output count for a wallet
     async fn get_output_count(&self, wallet_id: u32) -> WalletResult<usize>;
+
+    /// Store a simple event for auditing (simplified, no trait complexity)
+    async fn store_simple_event(
+        &self,
+        wallet_id: u32,
+        event_type: &str,
+        event_data: &str,
+    ) -> WalletResult<()>;
 }
 
 impl TransactionFilter {

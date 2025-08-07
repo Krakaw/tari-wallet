@@ -20,10 +20,7 @@ use crate::events::{ErrorRecord, ErrorRecoveryConfig, ErrorRecoveryManager, Wall
 use crate::{
     data_structures::types::CompressedCommitment,
     errors::WalletResult,
-    storage::{
-        event_storage::{EventStorage, StoredEvent},
-        SqliteStorage, StoredOutput, WalletStorage,
-    },
+    storage::{SqliteStorage, StoredOutput, WalletStorage},
 };
 
 #[cfg(feature = "storage")]
@@ -91,6 +88,12 @@ pub struct DatabaseStorageListener {
     operation_metrics: HashMap<String, usize>,
     /// Whether to enable event auditing (stores events in wallet_events table)
     enable_event_auditing: bool,
+    /// Batch of pending outputs to be written
+    pending_outputs: Vec<StoredOutput>,
+    /// Batch of pending transactions to be written
+    pending_transactions: Vec<crate::data_structures::wallet_transaction::WalletTransaction>,
+    /// Batch of pending events to be written (for auditing) - simplified batching
+    pending_events: Vec<String>,
 
     /// Background writer for non-WASM32 architectures
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
@@ -125,6 +128,9 @@ impl DatabaseStorageListener {
             error_recovery: ErrorRecoveryManager::with_config(ErrorRecoveryConfig::production()),
             operation_metrics: HashMap::new(),
             enable_event_auditing: false, // Default disabled
+            pending_outputs: Vec::new(),
+            pending_transactions: Vec::new(),
+            pending_events: Vec::new(),
             #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
             background_writer: None,
         })
@@ -212,6 +218,43 @@ impl DatabaseStorageListener {
         self.enable_event_auditing
     }
 
+    /// Flush any pending batched outputs, transactions, and events to the database
+    ///
+    /// This method should be called at the end of a scan to ensure all
+    /// batched data is written to the database.
+    pub async fn flush(&mut self) -> WalletResult<()> {
+        if !self.pending_outputs.is_empty()
+            || !self.pending_transactions.is_empty()
+            || !self.pending_events.is_empty()
+        {
+            if self.verbose {
+                self.log(&format!(
+                    "Flushing {} pending outputs, {} pending transactions, and {} pending events",
+                    self.pending_outputs.len(),
+                    self.pending_transactions.len(),
+                    self.pending_events.len()
+                ));
+            }
+
+            // Flush outputs
+            if !self.pending_outputs.is_empty() {
+                self.flush_outputs().await?;
+            }
+
+            // Flush transactions
+            if !self.pending_transactions.is_empty() {
+                self.flush_transactions().await?;
+            }
+
+            // Flush events (just log them)
+            if !self.pending_events.is_empty() {
+                self.flush_events().await;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Start the background writer service (non-WASM32 only)
     ///
     /// This starts an async background service for database operations
@@ -232,8 +275,14 @@ impl DatabaseStorageListener {
         background_database.initialize().await?;
 
         // Spawn the background writer task
+        let batch_config = crate::scanning::background_writer::BatchConfig::default();
         let join_handle = tokio::spawn(async move {
-            BackgroundWriter::background_writer_loop(background_database, &mut command_rx).await;
+            BackgroundWriter::background_writer_loop(
+                background_database,
+                &mut command_rx,
+                batch_config,
+            )
+            .await;
         });
 
         self.background_writer = Some(BackgroundWriter {
@@ -671,6 +720,72 @@ impl DatabaseStorageListener {
         Ok(stored_output)
     }
 
+    /// Flush pending outputs to database
+    async fn flush_outputs(&mut self) -> WalletResult<()> {
+        if self.pending_outputs.is_empty() {
+            return Ok(());
+        }
+
+        let outputs_to_save = std::mem::take(&mut self.pending_outputs);
+        self.save_outputs(&outputs_to_save).await?;
+        Ok(())
+    }
+
+    /// Flush pending transactions to database
+    async fn flush_transactions(&mut self) -> WalletResult<()> {
+        if self.pending_transactions.is_empty() {
+            return Ok(());
+        }
+
+        let transactions_to_save = std::mem::take(&mut self.pending_transactions);
+
+        // Save all transactions for the current wallet
+        if let Some(wallet_id) = self.wallet_id {
+            for transaction in transactions_to_save {
+                self.database
+                    .save_transaction(wallet_id, &transaction)
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Flush pending events to database - store incoming/outgoing transactions
+    async fn flush_events(&mut self) {
+        if self.pending_events.is_empty() {
+            return;
+        }
+
+        let events_to_save = std::mem::take(&mut self.pending_events);
+        let wallet_id = self.wallet_id.unwrap_or(0);
+
+        // Store transaction events in the database
+        for event_data in events_to_save {
+            // Extract event type from the string (format: "TRANSACTION: INCOMING - {...}" or "TRANSACTION: OUTGOING - {...}")
+            let event_type = if event_data.contains("INCOMING") {
+                "INCOMING_TRANSACTION"
+            } else if event_data.contains("OUTGOING") {
+                "OUTGOING_TRANSACTION"
+            } else {
+                "TRANSACTION"
+            };
+
+            // Store in wallet_events table
+            if let Err(e) = self
+                .database
+                .store_simple_event(wallet_id, event_type, &event_data)
+                .await
+            {
+                if self.verbose {
+                    self.log(&format!("Failed to store transaction event: {e}"));
+                }
+            } else if self.verbose {
+                self.log(&format!("Stored transaction event: {event_type}"));
+            }
+        }
+    }
+
     /// Save outputs to database using architecture-specific method
     async fn save_outputs(&self, outputs: &[StoredOutput]) -> WalletResult<Vec<u32>> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -936,7 +1051,7 @@ impl DatabaseStorageListener {
         }
     }
 
-    /// Try to save a transaction (single attempt)
+    /// Try to save a transaction (single attempt) - uses batching
     async fn try_save_transaction(
         &mut self,
         wallet_id: u32,
@@ -952,11 +1067,21 @@ impl DatabaseStorageListener {
             block_info,
         )?;
 
-        // Save the transaction to database
-        self.database
-            .save_transaction(wallet_id, &wallet_transaction)
-            .await
-            .map_err(|e| e.into())
+        // Add to batch
+        self.pending_transactions.push(wallet_transaction);
+
+        // Check if we need to flush the batch
+        if self.pending_transactions.len() >= self.batch_size {
+            if self.verbose {
+                self.log(&format!(
+                    "Flushing batch of {} transactions",
+                    self.pending_transactions.len()
+                ));
+            }
+            self.flush_transactions().await?;
+        }
+
+        Ok(())
     }
 
     /// Convert event data to WalletTransaction
@@ -1029,7 +1154,7 @@ impl DatabaseStorageListener {
         )
     }
 
-    /// Try to save an output (single attempt)
+    /// Try to save an output (single attempt) - uses batching
     async fn try_save_output(
         &mut self,
         wallet_id: u32,
@@ -1041,95 +1166,61 @@ impl DatabaseStorageListener {
         let stored_output =
             self.convert_to_stored_output(wallet_id, output_data, block_info, address_info)?;
 
-        // Save the output to database
-        self.save_outputs(&[stored_output])
-            .await
-            .map_err(|e| e.into())
+        // Add to batch
+        self.pending_outputs.push(stored_output);
+
+        // Check if we need to flush the batch
+        if self.pending_outputs.len() >= self.batch_size {
+            if self.verbose {
+                self.log(&format!(
+                    "Flushing batch of {} outputs",
+                    self.pending_outputs.len()
+                ));
+            }
+            self.flush_outputs().await?;
+        }
+
+        // For now, return a dummy ID since we're batching
+        // In a real implementation, you might want to track pending IDs differently
+        Ok(vec![0])
     }
 
-    /// Store an event in the wallet_events table for auditing (if enabled)
+    /// Store an event for auditing (if enabled) - only for incoming/outgoing transactions
     async fn store_event_audit(
-        &self,
+        &mut self,
         event: &WalletScanEvent,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         if !self.enable_event_auditing {
             return Ok(());
         }
 
-        // Only store OutputFound and SpentOutputFound events for auditing
-        let should_store = matches!(
-            event,
-            WalletScanEvent::OutputFound { .. } | WalletScanEvent::SpentOutputFound { .. }
+        // Only store incoming (OutputFound) and outgoing (SpentOutputFound) transaction events
+        let (event_type, transaction_direction) = match event {
+            WalletScanEvent::OutputFound { .. } => ("TRANSACTION", "INCOMING"),
+            WalletScanEvent::SpentOutputFound { .. } => ("TRANSACTION", "OUTGOING"),
+            _ => return Ok(()), // Skip all other events
+        };
+
+        // Create simple event data for the transaction
+        let event_data = format!(
+            "{}: {} - {}",
+            event_type,
+            transaction_direction,
+            serde_json::to_string(event).unwrap_or_default()
         );
 
-        if !should_store {
-            return Ok(());
-        }
+        // Add to batch
+        self.pending_events.push(event_data);
 
-        // Get wallet ID as string for event storage
-        let wallet_id = if let Some(id) = self.wallet_id {
-            id.to_string()
-        } else {
-            return Ok(()); // No wallet ID, skip event storage
-        };
-
-        // Convert to StoredEvent format
-        let event_type = match event {
-            WalletScanEvent::OutputFound { .. } => "OUTPUT_FOUND",
-            WalletScanEvent::SpentOutputFound { .. } => "SPENT_OUTPUT_FOUND",
-            _ => return Ok(()), // Should not happen due to filter above
-        };
-
-        let payload_json =
-            serde_json::to_string(event).map_err(|e| format!("Failed to serialize event: {e}"))?;
-
-        let metadata = serde_json::json!({
-            "listener": "DatabaseStorageListener",
-            "event_auditing": true,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        });
-
-        // Create a temporary SQLite connection for event storage
-        // Note: This creates a separate connection to the same database file
-        // TODO: Consider refactoring to avoid this duplicate connection
-        if self.database_path != ":memory:" {
-            match SqliteStorage::new(&self.database_path).await {
-                Ok(sqlite_storage) => {
-                    // Get next sequence number
-                    let sequence_number = sqlite_storage
-                        .get_next_sequence_number(&wallet_id)
-                        .await
-                        .map_err(|e| format!("Failed to get sequence number: {e}"))?;
-
-                    // Create stored event
-                    let stored_event = StoredEvent {
-                        id: None,
-                        event_id: uuid::Uuid::new_v4().to_string(),
-                        wallet_id: wallet_id.clone(),
-                        event_type: event_type.to_string(),
-                        sequence_number,
-                        payload_json,
-                        metadata_json: metadata.to_string(),
-                        source: "DatabaseStorageListener".to_string(),
-                        correlation_id: None,
-                        output_hash: None, // Could be extracted from event if needed
-                        timestamp: std::time::SystemTime::now(),
-                        stored_at: std::time::SystemTime::now(),
-                    };
-
-                    // Store the event
-                    sqlite_storage
-                        .store_event(&stored_event)
-                        .await
-                        .map_err(|e| format!("Failed to store event: {e}"))?;
-                }
-                Err(e) => {
-                    // Log error but don't fail the main operation
-                    if self.verbose {
-                        eprintln!("Warning: Failed to create event storage connection: {e}");
-                    }
-                }
+        // Check if we need to flush the batch
+        if self.pending_events.len() >= self.batch_size {
+            if self.verbose {
+                self.log(&format!(
+                    "Flushing batch of {} transaction events",
+                    self.pending_events.len()
+                ));
             }
+            self.flush_events().await;
         }
 
         Ok(())

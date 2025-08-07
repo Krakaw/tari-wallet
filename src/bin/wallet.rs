@@ -783,7 +783,7 @@ async fn select_wallet(
         Err("No wallets found in database. Use 'wallet add-wallet' to create one.".into())
     } else if wallets.len() == 1 {
         println!("📂 Using wallet: {}", wallets[0].name);
-        return Ok(wallets[0].clone());
+        Ok(wallets[0].clone())
     } else {
         // Multiple wallets - prompt for selection
         println!("\n📂 Available wallets in database:");

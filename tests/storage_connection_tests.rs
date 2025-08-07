@@ -245,7 +245,8 @@ mod connection_tests {
         // SQLite's open() doesn't validate format - corruption is detected on actual use
         // Use minimal config to ensure corruption detection works
         let storage_result =
-            SqliteStorage::new_with_config(&db_path, SqlitePerformanceConfig::minimal()).await;
+            SqliteStorage::new_with_config(&db_path, SqlitePerformanceConfig::minimal(), 1000)
+                .await;
 
         // Check if storage creation itself detected corruption
         if storage_result.is_err() {

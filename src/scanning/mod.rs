@@ -87,7 +87,6 @@ pub use wallet_scanner::extract_utxo_outputs_from_wallet_state;
 // Re-export background writer types for scanner binary operations
 #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 pub use background_writer::{BackgroundWriter, BackgroundWriterCommand};
-
 // Re-export storage manager types for scanner binary operations
 #[cfg(feature = "storage")]
 pub use storage_manager::ScannerStorage;
