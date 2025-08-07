@@ -894,7 +894,7 @@ async fn main_unified() -> WalletResult<()> {
                 // Flush any remaining batched operations before shutdown
                 let flushed_ops = storage_backend.flush_batch_operations().await.unwrap_or(0);
                 if flushed_ops > 0 {
-                    println!("💾 Flushed {} remaining batched operations", flushed_ops);
+                    println!("💾 Flushed {flushed_ops} remaining batched operations");
                 }
             } else {
                 println!("🛑 Stopping background database writer...");

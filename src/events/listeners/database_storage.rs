@@ -778,10 +778,10 @@ impl DatabaseStorageListener {
                 .await
             {
                 if self.verbose {
-                    self.log(&format!("Failed to store transaction event: {}", e));
+                    self.log(&format!("Failed to store transaction event: {e}"));
                 }
             } else if self.verbose {
-                self.log(&format!("Stored transaction event: {}", event_type));
+                self.log(&format!("Stored transaction event: {event_type}"));
             }
         }
     }
