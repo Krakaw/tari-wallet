@@ -1687,14 +1687,11 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
         match scanner.get_blocks_by_heights(block_heights.clone()).await {
             Ok(blocks) => {
                 for block_info in blocks {
-                    // Convert BlockInfo to Block for processing
-                    let block = crate::data_structures::block::Block::new(
-                        block_info.height,
-                        block_info.hash.clone(),
-                        block_info.timestamp,
-                        block_info.outputs.clone(),
-                        block_info.inputs.clone(),
-                    );
+                    // Extract needed fields before move for performance optimization
+                    let block_hash = block_info.hash.clone();
+
+                    // Convert BlockInfo to Block for processing (move instead of clone for performance)
+                    let block = crate::data_structures::block::Block::from_block_info(block_info);
 
                     // Scan for wallet outputs and spent outputs (with detailed information for events)
                     let (found_outputs, spent_output_details) = block
@@ -1777,7 +1774,7 @@ async fn scan_wallet_across_blocks_with_processor<T: DataProcessor>(
 
                     let block_data = BlockData::new(
                         block.height,
-                        hex::encode(&block_info.hash),
+                        hex::encode(&block_hash),
                         block.timestamp,
                         block_transactions,
                         true, // completed
@@ -2022,14 +2019,8 @@ async fn scan_wallet_across_blocks_with_cancellation(
                 for block_info in blocks {
                     let processing_start = std::time::Instant::now();
 
-                    // Convert BlockInfo to Block for processing
-                    let block = crate::data_structures::block::Block::new(
-                        block_info.height,
-                        block_info.hash.clone(),
-                        block_info.timestamp,
-                        block_info.outputs.clone(),
-                        block_info.inputs.clone(),
-                    );
+                    // Convert BlockInfo to Block for processing (move instead of clone for performance)
+                    let block = crate::data_structures::block::Block::from_block_info(block_info);
 
                     // Scan for wallet outputs and spent outputs (with detailed information for events)
                     let (found_outputs, spent_output_details) = block
