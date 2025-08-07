@@ -11,7 +11,7 @@
 //! - Running balance calculation
 //! - Clean, user-friendly output with bash-style progress bars
 //! - Automatic scan from wallet birthday to chain tip
-//! - **Batch processing for improved performance (up to 100 blocks per batch)**
+//! - **Configurable database batching for performance (1=immediate writes, 1000=high performance)**
 //! - **Graceful error handling with resume functionality**
 //!
 //! ## Error Handling & Interruption
@@ -62,6 +62,18 @@
 //!
 //! # Use in-memory database (useful for testing)
 //! cargo run --bin scanner --features grpc-storage -- --database ":memory:"
+//!
+//! # *** DATABASE BATCH SIZE CONFIGURATION ***
+//! # Use immediate writes (batch-size=1) for consistency and real-time storage
+//! cargo run --bin scanner --features grpc-storage -- --batch-size 1
+//!
+//! # Use high-performance batching (batch-size=1000, default) for bulk scanning  
+//! # This can achieve thousands of blocks/second vs 22 blocks/s with immediate writes
+//! # Note: Outputs are always written immediately to prevent race conditions
+//! cargo run --bin scanner --features grpc-storage -- --batch-size 1000
+//!
+//! # Use custom batch size for specific performance needs
+//! cargo run --bin scanner --features grpc-storage -- --batch-size 500
 //!
 //! # *** WALLET MANAGEMENT FEATURES ***
 //! # Use specific wallet for scanning
@@ -129,7 +141,7 @@ use lightweight_wallet_libs::{
 
 // Add conditional imports for storage feature
 #[cfg(all(feature = "grpc", feature = "storage"))]
-use lightweight_wallet_libs::scanning::EnhancedScannerStorage;
+use lightweight_wallet_libs::scanning::ScannerStorage;
 
 // Add conditional imports for non-storage feature
 #[cfg(all(feature = "grpc", not(feature = "storage")))]
@@ -186,8 +198,12 @@ pub struct CliArgs {
     )]
     blocks: Option<Vec<u64>>,
 
-    /// Batch size for scanning
-    #[arg(long, default_value = "10", help = "Batch size for scanning")]
+    /// Database batch size for write operations (1=immediate writes for consistency, 1000=high performance batching)
+    #[arg(
+        long,
+        default_value = "1000",
+        help = "Database batch size for write operations (1=immediate writes for consistency, 1000=high performance batching)"
+    )]
     batch_size: usize,
 
     /// Progress update frequency
@@ -239,7 +255,7 @@ pub struct CliArgs {
 /// Display storage configuration and existing data using library storage methods
 #[cfg(feature = "storage")]
 async fn display_storage_info(
-    storage_backend: &EnhancedScannerStorage,
+    storage_backend: &ScannerStorage,
     config: &BinaryScanConfig,
 ) -> WalletResult<()> {
     if config.quiet {
@@ -276,7 +292,7 @@ async fn display_storage_info(
 /// Display completion information using library storage methods
 #[cfg(feature = "storage")]
 async fn display_completion_info(
-    storage_backend: &EnhancedScannerStorage,
+    storage_backend: &ScannerStorage,
     config: &BinaryScanConfig,
 ) -> WalletResult<()> {
     if config.quiet {
@@ -328,7 +344,7 @@ fn create_scan_config(
         progress_frequency: args.progress_frequency,
         quiet: args.quiet,
         output_format,
-        batch_size: args.batch_size,
+        batch_size: 10, // Fixed GRPC block fetching batch size (optimized for base node)
         database_path: Some(args.database.clone()),
         wallet_name: args.wallet_name.clone(),
         explicit_from_block: args.from_block,
@@ -350,7 +366,7 @@ fn create_scan_config(
 fn create_wallet_scanner_config(args: &CliArgs) -> WalletScannerConfig {
     WalletScannerConfig {
         event_emitter: None, // Will be set separately with event system
-        batch_size: args.batch_size,
+        batch_size: 10,      // Fixed GRPC block fetching batch size (optimized for base node)
         timeout: Some(std::time::Duration::from_secs(args.timeout)),
         verbose_logging: !args.quiet,
         retry_config: Default::default(), // Use default retry config
@@ -372,7 +388,7 @@ fn create_scanner_configs(
 /// Handle interactive wallet selection when multiple wallets exist in database
 #[cfg(feature = "storage")]
 async fn handle_interactive_wallet_selection(
-    storage_backend: &EnhancedScannerStorage,
+    storage_backend: &ScannerStorage,
     args: &CliArgs,
 ) -> WalletResult<u32> {
     let wallets = storage_backend.get_wallet_selection_info().await?;
@@ -566,10 +582,15 @@ async fn main_unified() -> WalletResult<()> {
     #[cfg(feature = "storage")]
     let mut storage_backend = if keys_provided {
         // Keys provided - use memory-only storage
-        EnhancedScannerStorage::new_memory()
+        ScannerStorage::new_memory()
     } else {
-        // No keys provided - use ultra-high-performance enhanced database storage with batch writer
-        EnhancedScannerStorage::new_high_performance_database(&args.database, "scanning").await?
+        // No keys provided - use high-performance database storage with custom batch size
+        ScannerStorage::new_with_performance_database_and_batch_size(
+            &args.database,
+            "scanning",
+            args.batch_size,
+        )
+        .await?
     };
 
     #[cfg(not(feature = "storage"))]
@@ -743,7 +764,7 @@ async fn main_unified() -> WalletResult<()> {
                 .performance_preset() // High-performance settings optimized for scanning
                 .database_path(db_path)
                 .auto_start_background_writer(true)
-                .batch_size(1000)
+                .batch_size(args.batch_size)
                 .event_auditing(true) // Enable event auditing for storing scan events
                 .build()
                 .await

@@ -275,8 +275,14 @@ impl DatabaseStorageListener {
         background_database.initialize().await?;
 
         // Spawn the background writer task
+        let batch_config = crate::scanning::background_writer::BatchConfig::default();
         let join_handle = tokio::spawn(async move {
-            BackgroundWriter::background_writer_loop(background_database, &mut command_rx).await;
+            BackgroundWriter::background_writer_loop(
+                background_database,
+                &mut command_rx,
+                batch_config,
+            )
+            .await;
         });
 
         self.background_writer = Some(BackgroundWriter {

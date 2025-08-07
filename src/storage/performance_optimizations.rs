@@ -10,6 +10,7 @@ use tokio_rusqlite::Connection;
 
 /// High-performance SQLite configuration for wallet scanning
 #[cfg(feature = "storage")]
+#[derive(Clone)]
 pub struct SqlitePerformanceConfig {
     /// Enable WAL (Write-Ahead Logging) mode for better concurrency
     pub enable_wal_mode: bool,
@@ -116,6 +117,21 @@ impl SqlitePerformanceConfig {
             journal_size_limit: 128 * 1024 * 1024, // 128MB
             mmap_size: 256 * 1024 * 1024, // 256MB memory mapping
             busy_timeout_ms: 8000,
+            enable_automatic_index: false, // Disabled for predictable performance
+        }
+    }
+
+    /// Optimized specifically for scanning workloads - fast but still safe
+    pub fn scanning_optimized() -> Self {
+        Self {
+            enable_wal_mode: true,
+            synchronous_mode: 1,    // NORMAL - still safe but faster than FULL
+            cache_size_kb: 128_000, // 128MB cache for better performance
+            page_size: 16384,       // Large pages for bulk operations
+            temp_store: 2,          // Memory temp storage
+            journal_size_limit: 256 * 1024 * 1024, // 256MB
+            mmap_size: 512 * 1024 * 1024, // 512MB memory mapping
+            busy_timeout_ms: 15000,
             enable_automatic_index: false, // Disabled for predictable performance
         }
     }
@@ -307,7 +323,7 @@ impl BatchOperations {
     /// Recommend batch configuration for different workload types
     pub fn recommend_batch_config(workload_type: &str) -> (usize, SqlitePerformanceConfig) {
         match workload_type {
-            "scanning" => (100, SqlitePerformanceConfig::production_optimized()), // Safe for production use
+            "scanning" => (100, SqlitePerformanceConfig::scanning_optimized()), // Optimized for scanning workloads
             "production" => (75, SqlitePerformanceConfig::production_optimized()),
             "development" => (200, SqlitePerformanceConfig::ultra_fast()),
             "high_performance" => (150, SqlitePerformanceConfig::high_performance()), // Explicit unsafe mode

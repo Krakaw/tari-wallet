@@ -27,28 +27,32 @@ use crate::{
     },
 };
 
-/// SQLite storage backend for wallet transactions
+/// SQLite storage backend for wallet transactions with configurable batching
 #[cfg(feature = "storage")]
 pub struct SqliteStorage {
     connection: Connection,
     performance_config: SqlitePerformanceConfig,
+    batch_size: usize,
 }
 
 #[cfg(feature = "storage")]
 impl SqliteStorage {
-    /// Create a new SQLite storage instance
+    /// Create a new SQLite storage instance with default batch size (1000)
     pub async fn new<P: AsRef<Path>>(database_path: P) -> WalletResult<Self> {
         Self::new_with_config(
             database_path,
             SqlitePerformanceConfig::production_optimized(),
+            1000,
         )
         .await
     }
 
-    /// Create a new SQLite storage instance with custom performance configuration
+    /// Create a new SQLite storage instance with custom performance configuration and batch size
+    /// Set batch_size to 1 for immediate writes (no batching)
     pub async fn new_with_config<P: AsRef<Path>>(
         database_path: P,
         performance_config: SqlitePerformanceConfig,
+        batch_size: usize,
     ) -> WalletResult<Self> {
         let connection = Connection::open(database_path).await.map_err(|e| {
             WalletError::StorageError(format!("Failed to open SQLite database: {e}"))
@@ -57,6 +61,7 @@ impl SqliteStorage {
         let storage = Self {
             connection,
             performance_config,
+            batch_size: batch_size.max(1), // Ensure at least 1
         };
 
         // Apply performance optimizations before any other operations
@@ -68,14 +73,15 @@ impl SqliteStorage {
         Ok(storage)
     }
 
-    /// Create an in-memory SQLite storage instance (useful for testing)
+    /// Create an in-memory SQLite storage instance (useful for testing) with default batch size (1000)
     pub async fn new_in_memory() -> WalletResult<Self> {
-        Self::new_in_memory_with_config(SqlitePerformanceConfig::ultra_fast()).await
+        Self::new_in_memory_with_config(SqlitePerformanceConfig::ultra_fast(), 1000).await
     }
 
-    /// Create an in-memory SQLite storage instance with custom performance configuration
+    /// Create an in-memory SQLite storage instance with custom performance configuration and batch size
     pub async fn new_in_memory_with_config(
         performance_config: SqlitePerformanceConfig,
+        batch_size: usize,
     ) -> WalletResult<Self> {
         let connection = Connection::open(":memory:").await.map_err(|e| {
             WalletError::StorageError(format!("Failed to create in-memory database: {e}"))
@@ -84,6 +90,7 @@ impl SqliteStorage {
         let storage = Self {
             connection,
             performance_config,
+            batch_size: batch_size.max(1), // Ensure at least 1
         };
 
         // Apply performance optimizations
@@ -489,6 +496,10 @@ impl WalletStorage for SqliteStorage {
         self.create_schema().await
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     // === Wallet Management Methods ===
 
     async fn save_wallet(&self, wallet: &StoredWallet) -> WalletResult<u32> {
@@ -704,15 +715,21 @@ impl WalletStorage for SqliteStorage {
         wallet_id: u32,
         transactions: &[WalletTransaction],
     ) -> WalletResult<()> {
+        if transactions.is_empty() {
+            return Ok(());
+        }
+
+        // Always use batched approach for multiple transactions - it's more efficient
+        // even when batch_size=1 because we can put multiple transactions in one DB transaction
+
+        // Use batched approach for better performance
         let tx_list = transactions.to_vec();
         self.connection.call(move |conn| {
             let tx = conn.transaction()?;
 
-            for transaction in &tx_list {
-                let payment_id_json = serde_json::to_string(&transaction.payment_id)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-
-                tx.execute(
+            {
+                // Use prepared statement for better performance
+                let mut stmt = tx.prepare_cached(
                     r#"
                     INSERT OR REPLACE INTO wallet_transactions
                     (wallet_id, block_height, output_index, input_index, commitment_hex, commitment_bytes,
@@ -720,7 +737,13 @@ impl WalletStorage for SqliteStorage {
                      transaction_status, transaction_direction, is_mature)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
-                    params![
+                )?;
+
+                for transaction in &tx_list {
+                    let payment_id_json = serde_json::to_string(&transaction.payment_id)
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+                    stmt.execute(params![
                         wallet_id as i64,
                         transaction.block_height as i64,
                         transaction.output_index.map(|i| i as i64),
@@ -735,9 +758,9 @@ impl WalletStorage for SqliteStorage {
                         transaction.transaction_status as i32,
                         transaction.transaction_direction as i32,
                         transaction.is_mature,
-                    ],
-                )?;
-            }
+                    ])?;
+                }
+            } // stmt is dropped here
 
             tx.commit()?;
             Ok(())
@@ -1751,6 +1774,234 @@ impl WalletStorage for SqliteStorage {
     async fn close(&self) -> WalletResult<()> {
         // tokio-rusqlite automatically handles connection cleanup on drop
         Ok(())
+    }
+}
+
+#[cfg(feature = "storage")]
+impl SqliteStorage {
+    /// Save multiple batches of transactions in a single large transaction
+    /// This is the high-performance method for bulk operations
+    pub async fn save_all_batches(
+        &self,
+        batches: &[(u32, Vec<WalletTransaction>)], // (wallet_id, transactions)
+    ) -> WalletResult<()> {
+        if batches.is_empty() {
+            return Ok(());
+        }
+
+        let batches_owned = batches.to_vec();
+
+        self.connection
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                {
+                    // Prepare the statement once for all operations
+                    let mut stmt = tx.prepare_cached(
+                        r#"
+                        INSERT OR REPLACE INTO wallet_transactions
+                        (wallet_id, block_height, output_index, input_index, commitment_hex, commitment_bytes,
+                         value, payment_id_json, is_spent, spent_in_block, spent_in_input,
+                         transaction_status, transaction_direction, is_mature)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        "#,
+                    )?;
+
+                    for (wallet_id, transactions) in batches_owned {
+                        for transaction in transactions {
+                            let payment_id_json = serde_json::to_string(&transaction.payment_id)
+                                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+                            stmt.execute(params![
+                                wallet_id as i64,
+                                transaction.block_height as i64,
+                                transaction.output_index.map(|i| i as i64),
+                                transaction.input_index.map(|i| i as i64),
+                                transaction.commitment_hex(),
+                                transaction.commitment.as_bytes().to_vec(),
+                                transaction.value as i64,
+                                payment_id_json,
+                                transaction.is_spent,
+                                transaction.spent_in_block.map(|i| i as i64),
+                                transaction.spent_in_input.map(|i| i as i64),
+                                transaction.transaction_status as i32,
+                                transaction.transaction_direction as i32,
+                                transaction.is_mature,
+                            ])?;
+                        }
+                    }
+                } // stmt is dropped here
+
+                tx.commit()?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| WalletError::StorageError(format!("Failed to save all batches: {e}")))
+    }
+
+    /// Save multiple batches of outputs in a single large transaction
+    pub async fn save_all_output_batches(
+        &self,
+        batches: &[(u32, Vec<StoredOutput>)], // (wallet_id, outputs)
+    ) -> WalletResult<()> {
+        if batches.is_empty() {
+            return Ok(());
+        }
+
+        let batches_owned = batches.to_vec();
+
+        self.connection
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                {
+                    let mut stmt = tx.prepare_cached(
+                        r#"
+                        INSERT OR REPLACE INTO outputs
+                        (wallet_id, commitment, hash, value, spending_key, script_private_key,
+                         script, input_data, covenant, output_type, features_json, maturity,
+                         script_lock_height, sender_offset_public_key, metadata_signature_ephemeral_commitment,
+                         metadata_signature_ephemeral_pubkey, metadata_signature_u_a, metadata_signature_u_x,
+                         metadata_signature_u_y, encrypted_data, minimum_value_promise, rangeproof,
+                         status, mined_height, block_hash, spent_in_tx_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        "#,
+                    )?;
+
+                    for (wallet_id, outputs) in batches_owned {
+                        for output in outputs {
+                            stmt.execute(params![
+                                wallet_id as i64,
+                                output.commitment,
+                                output.hash,
+                                output.value as i64,
+                                output.spending_key,
+                                output.script_private_key,
+                                output.script,
+                                output.input_data,
+                                output.covenant,
+                                output.output_type as i64,
+                                output.features_json,
+                                output.maturity as i64,
+                                output.script_lock_height as i64,
+                                output.sender_offset_public_key,
+                                output.metadata_signature_ephemeral_commitment,
+                                output.metadata_signature_ephemeral_pubkey,
+                                output.metadata_signature_u_a,
+                                output.metadata_signature_u_x,
+                                output.metadata_signature_u_y,
+                                output.encrypted_data,
+                                output.minimum_value_promise as i64,
+                                output.rangeproof,
+                                output.status as i64,
+                                output.mined_height.map(|h| h as i64),
+                                output.block_hash,
+                                output.spent_in_tx_id.map(|id| id as i64),
+                            ])?;
+                        }
+                    }
+                } // stmt is dropped here
+
+                tx.commit()?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| WalletError::StorageError(format!("Failed to save all output batches: {e}")))
+    }
+
+    /// Mark multiple batches of transactions as spent in a single large transaction
+    pub async fn mark_all_spent_batches(
+        &self,
+        batches: &[Vec<(CompressedCommitment, u64, usize)>], // Multiple batches of (commitment, block, input_index)
+    ) -> WalletResult<usize> {
+        if batches.is_empty() {
+            return Ok(0);
+        }
+
+        // Flatten all batches into a single vector
+        let all_spent: Vec<(String, i64, i64)> = batches
+            .iter()
+            .flat_map(|batch| {
+                batch.iter().map(|(commitment, block_height, input_index)| {
+                    (
+                        commitment.to_hex(),
+                        *block_height as i64,
+                        *input_index as i64,
+                    )
+                })
+            })
+            .collect();
+
+        if all_spent.is_empty() {
+            return Ok(0);
+        }
+
+        self.connection
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                let mut total_affected = 0;
+
+                {
+                    let mut stmt = tx.prepare_cached(
+                        r#"
+                        UPDATE wallet_transactions
+                        SET is_spent = TRUE, spent_in_block = ?, spent_in_input = ?
+                        WHERE commitment_hex = ? AND is_spent = FALSE
+                        "#,
+                    )?;
+
+                    for (commitment_hex, spent_in_block, spent_in_input) in all_spent {
+                        let rows_affected =
+                            stmt.execute(params![spent_in_block, spent_in_input, commitment_hex])?;
+                        total_affected += rows_affected;
+                    }
+                } // stmt is dropped here
+
+                tx.commit()?;
+                Ok(total_affected)
+            })
+            .await
+            .map_err(|e| {
+                WalletError::StorageError(format!("Failed to mark all spent batches: {e}"))
+            })
+    }
+
+    /// Update wallet scanned blocks for multiple wallets in a single transaction
+    pub async fn update_all_wallet_scanned_blocks(
+        &self,
+        updates: &[(u32, u64)], // (wallet_id, block_height)
+    ) -> WalletResult<()> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+
+        let updates_owned = updates.to_vec();
+
+        self.connection
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                {
+                    let mut stmt = tx.prepare_cached(
+                        "UPDATE wallets SET latest_scanned_block = ? WHERE id = ?",
+                    )?;
+
+                    for (wallet_id, block_height) in updates_owned {
+                        stmt.execute(params![block_height as i64, wallet_id as i64])?;
+                    }
+                } // stmt is dropped here
+
+                tx.commit()?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| {
+                WalletError::StorageError(format!(
+                    "Failed to update all wallet scanned blocks: {e}"
+                ))
+            })
+    }
+
+    /// Get the configured batch size
+    pub fn batch_size(&self) -> usize {
+        self.batch_size
     }
 }
 

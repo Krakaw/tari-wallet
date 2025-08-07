@@ -312,6 +312,9 @@ pub trait WalletStorage: Send + Sync {
     /// Initialize the storage backend (create tables, indexes, etc.)
     async fn initialize(&self) -> WalletResult<()>;
 
+    /// Get a reference to the underlying concrete type for downcasting
+    fn as_any(&self) -> &dyn std::any::Any;
+
     // === Wallet Management Methods ===
 
     /// Save a wallet to storage (create or update)
