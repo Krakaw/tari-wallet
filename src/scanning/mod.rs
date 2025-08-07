@@ -52,6 +52,12 @@ pub mod storage_manager;
 #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 pub mod background_writer;
 
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+pub mod batch_background_writer;
+
+#[cfg(feature = "storage")]
+pub mod enhanced_storage_manager;
+
 pub mod wallet_scanner;
 
 pub mod progress;
@@ -87,8 +93,14 @@ pub use wallet_scanner::extract_utxo_outputs_from_wallet_state;
 // Re-export background writer types for scanner binary operations
 #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
 pub use background_writer::{BackgroundWriter, BackgroundWriterCommand};
+#[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+pub use batch_background_writer::{
+    BatchBackgroundWriter, BatchBackgroundWriterCommand, BatchWriterConfig, BatchableCommand,
+};
 
 // Re-export storage manager types for scanner binary operations
+#[cfg(feature = "storage")]
+pub use enhanced_storage_manager::EnhancedScannerStorage;
 #[cfg(feature = "storage")]
 pub use storage_manager::ScannerStorage;
 
