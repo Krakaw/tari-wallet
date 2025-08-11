@@ -1,3 +1,4 @@
+use tari_transaction_components::key_manager::error::KeyManagerStorageError;
 use thiserror::Error;
 
 /// Main error type for the lightweight wallet library
@@ -66,6 +67,9 @@ pub enum WalletError {
 
     #[error("Configuration error: {0}")]
     ConfigurationError(String),
+
+    #[error("Key Manager storage error: {0}")]
+    KeyManagerStorageError(#[from] KeyManagerStorageError),
 }
 
 /// Errors related to data structure operations

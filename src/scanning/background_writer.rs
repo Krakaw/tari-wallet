@@ -193,11 +193,17 @@ mod tests {
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     use crate::data_structures::WalletState;
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+    use crate::key_manager::{
+        ImportedKeySql, KeyManagerStateSql, NewImportedKeySql, NewKeyManagerStateSql,
+    };
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     use crate::storage::{OutputFilter, StorageStats, StoredWallet, TransactionFilter};
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     use async_trait::async_trait;
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     use std::sync::{Arc, Mutex};
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+    use tari_common_types::types::CompressedPublicKey;
 
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     #[derive(Debug, Clone)]
@@ -556,6 +562,27 @@ mod tests {
             _to_block: u64,
         ) -> WalletResult<usize> {
             Ok(0)
+        }
+        async fn key_manager_get_state(&self, branch: &str) -> WalletResult<KeyManagerStateSql> {}
+        async fn key_manager_commit_state(
+            &self,
+            state: &NewKeyManagerStateSql,
+        ) -> WalletResult<()> {
+            Ok(())
+        }
+        async fn key_manager_set_index(&self, id: i32, index: Vec<u8>) -> WalletResult<()> {
+            Ok(())
+        }
+        async fn key_manager_get_imported_key(
+            &self,
+            key: &CompressedPublicKey,
+        ) -> WalletResult<ImportedKeySql> {
+        }
+        async fn key_manager_commit_imported_key(
+            &self,
+            key: &NewImportedKeySql,
+        ) -> WalletResult<()> {
+            Ok(())
         }
     }
 

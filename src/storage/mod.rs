@@ -5,6 +5,8 @@
 //! The current implementation includes SQLite support with room for additional
 //! backends like PostgreSQL, MongoDB, or other databases.
 
+#[cfg(feature = "storage")]
+pub mod key_manager;
 pub mod output_status;
 #[cfg(feature = "storage")]
 pub mod performance_optimizations;

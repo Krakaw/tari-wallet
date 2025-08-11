@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use tari_common_types::types::CompressedPublicKey;
 
 use crate::{
     data_structures::{
@@ -13,6 +14,7 @@ use crate::{
         wallet_transaction::{WalletState, WalletTransaction},
     },
     errors::WalletResult,
+    key_manager::{ImportedKeySql, KeyManagerStateSql, NewImportedKeySql, NewKeyManagerStateSql},
 };
 
 use super::output_status::OutputStatus;
@@ -482,6 +484,18 @@ pub trait WalletStorage: Send + Sync {
 
     /// Get output count for a wallet
     async fn get_output_count(&self, wallet_id: u32) -> WalletResult<usize>;
+
+    // === Key manager state Methods ===
+    async fn key_manager_get_state(&self, branch: &str) -> WalletResult<KeyManagerStateSql>;
+    async fn key_manager_commit_state(&self, state: &NewKeyManagerStateSql) -> WalletResult<()>;
+    async fn key_manager_set_index(&self, id: i32, index: Vec<u8>) -> WalletResult<()>;
+
+    // === Key manager imported keys Methods ===
+    async fn key_manager_get_imported_key(
+        &self,
+        key: &CompressedPublicKey,
+    ) -> WalletResult<ImportedKeySql>;
+    async fn key_manager_commit_imported_key(&self, key: &NewImportedKeySql) -> WalletResult<()>;
 }
 
 impl TransactionFilter {

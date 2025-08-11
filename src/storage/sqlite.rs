@@ -21,11 +21,13 @@ use crate::{
         wallet_transaction::{WalletState, WalletTransaction},
     },
     errors::{WalletError, WalletResult},
+    key_manager::{ImportedKeySql, KeyManagerStateSql, NewImportedKeySql, NewKeyManagerStateSql},
     storage::{
         OutputFilter, OutputStatus, SqlitePerformanceConfig, StorageStats, StoredOutput,
         StoredWallet, TransactionFilter, WalletStorage,
     },
 };
+use tari_common_types::types::CompressedPublicKey;
 
 /// SQLite storage backend for wallet transactions
 #[cfg(feature = "storage")]
@@ -190,6 +192,22 @@ impl SqliteStorage {
                 UNIQUE(wallet_id, commitment)
             );
 
+            -- Key Manager states table
+            CREATE TABLE IF NOT EXISTS key_manager_states (
+                id                INTEGER PRIMARY KEY NOT NULL AUTOINCREMENT,
+                branch_seed       TEXT UNIQUE         NOT NULL,
+                primary_key_index BLOB                NOT NULL,
+                timestamp         DATETIME            NOT NULL
+            );
+            
+            -- Key Manager imported keys table
+            CREATE TABLE IF NOT EXISTS imported_keys (
+                id                INTEGER PRIMARY KEY NOT NULL AUTOINCREMENT,
+                private_key       BLOB UNIQUE         NOT NULL,
+                public_key        TEXT                NOT NULL,
+                timestamp         DATETIME            NOT NULL
+            );
+
             -- Indexes for wallets table
             CREATE INDEX IF NOT EXISTS idx_wallet_name ON wallets(name);
             CREATE INDEX IF NOT EXISTS idx_wallet_birthday ON wallets(birthday_block);
@@ -216,6 +234,14 @@ impl SqliteStorage {
             CREATE INDEX IF NOT EXISTS idx_outputs_spent_tx ON outputs(spent_in_tx_id);
             CREATE INDEX IF NOT EXISTS idx_outputs_wallet_status ON outputs(wallet_id, status);
             CREATE INDEX IF NOT EXISTS idx_outputs_spendable ON outputs(wallet_id, status, maturity, script_lock_height);
+
+            -- Indexes for Key Manager states table
+            CREATE INDEX IF NOT EXISTS idx_key_manager_states_timestamp ON key_manager_states(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_key_manager_states_branch_seed ON key_manager_states(branch_seed);
+
+            -- Indexes for Key Manager imported keys table
+            CREATE INDEX IF NOT EXISTS idx_imported_keys_timestamp ON imported_keys(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_imported_keys_public_key ON imported_keys(public_key);
 
             -- Views for easy querying (NEW)
             CREATE VIEW IF NOT EXISTS spendable_outputs AS
@@ -1708,6 +1734,34 @@ impl WalletStorage for SqliteStorage {
 
     async fn close(&self) -> WalletResult<()> {
         // tokio-rusqlite automatically handles connection cleanup on drop
+        Ok(())
+    }
+
+    async fn key_manager_get_state(&self, branch: &str) -> WalletResult<KeyManagerStateSql> {
+        let state = KeyManagerStateSql::get_state(branch, &self.connection).await?;
+        Ok(state)
+    }
+
+    async fn key_manager_commit_state(&self, state: &NewKeyManagerStateSql) -> WalletResult<()> {
+        state.commit(&self.connection).await?;
+        Ok(())
+    }
+
+    async fn key_manager_set_index(&self, id: i32, index: Vec<u8>) -> WalletResult<()> {
+        KeyManagerStateSql::set_index(id, index, &self.connection).await?;
+        Ok(())
+    }
+
+    async fn key_manager_get_imported_key(
+        &self,
+        key: &CompressedPublicKey,
+    ) -> WalletResult<ImportedKeySql> {
+        let key = ImportedKeySql::get_key(key, &self.connection).await?;
+        Ok(key)
+    }
+
+    async fn key_manager_commit_imported_key(&self, key: &NewImportedKeySql) -> WalletResult<()> {
+        key.commit(&self.connection).await?;
         Ok(())
     }
 }

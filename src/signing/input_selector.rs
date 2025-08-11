@@ -1,22 +1,27 @@
-use tari_script::TariScript;
-
 #[cfg(feature = "storage")]
-use crate::WalletStorage;
-use crate::{
-    data_structures::{Covenant, OutputFeatures},
-    fee::Fee,
-    utils::borsh::SerializedSize,
-    SerializationError, StoredOutput, WalletError, WalletResult,
+use tari_script::TariScript;
+#[cfg(feature = "storage")]
+use tari_transaction_components::{
+    fee::Fee, tari_amount::MicroMinotari, weight::TransactionWeight,
 };
 
+#[cfg(feature = "storage")]
+use crate::{
+    data_structures::{Covenant, OutputFeatures},
+    utils::borsh::SerializedSize,
+    SerializationError, StoredOutput, WalletError, WalletResult, WalletStorage,
+};
+
+#[cfg(feature = "storage")]
 struct UtxoSelection {
     utxos: Vec<StoredOutput>,
     requires_change_output: bool,
-    total_value: u64,
-    fee_without_change: u64,
-    fee_with_change: u64,
+    total_value: MicroMinotari,
+    fee_without_change: MicroMinotari,
+    fee_with_change: MicroMinotari,
 }
 
+#[cfg(feature = "storage")]
 struct InputSelector {
     pub wallet_id: u32,
     #[cfg(feature = "storage")]
@@ -24,12 +29,13 @@ struct InputSelector {
     pub fee_calc: Fee,
 }
 
+#[cfg(feature = "storage")]
 impl InputSelector {
     pub fn new(wallet_id: u32, database: Box<dyn WalletStorage>) -> Self {
         Self {
             wallet_id,
             database,
-            fee_calc: Fee::new(),
+            fee_calc: Fee::new(TransactionWeight::latest()),
         }
     }
 
@@ -44,15 +50,18 @@ impl InputSelector {
             .get_serialized_size()
             .map_err(|e| SerializationError::BorshSerializationError(e.to_string()))?;
 
-        Ok(self.fee_calc.round_up_features_and_scripts_size(
-            output_features_size + tari_script_size + covenant_size,
-        ))
+        Ok(self
+            .fee_calc
+            .weighting()
+            .round_up_features_and_scripts_size(
+                output_features_size + tari_script_size + covenant_size,
+            ))
     }
 
     pub async fn fetch_unspent_outputs(
         &self,
-        amount: u64,
-        fee_per_gram: u64,
+        amount: MicroMinotari,
+        fee_per_gram: MicroMinotari,
     ) -> WalletResult<UtxoSelection> {
         let mut uo = self.database.get_unspent_outputs(self.wallet_id).await?;
         uo.sort_by(|a, b| a.value.cmp(&b.value));
@@ -62,14 +71,14 @@ impl InputSelector {
         let mut sufficient_funds = false;
         let mut utxos = Vec::new();
         let mut requires_change_output = false;
-        let mut total_value = 0;
-        let mut fee_without_change = 0;
-        let mut fee_with_change = 0;
+        let mut total_value = MicroMinotari::zero();
+        let mut fee_without_change = MicroMinotari::zero();
+        let mut fee_with_change = MicroMinotari::zero();
         // Planned output count (not counting change)
         let num_outputs = 1;
 
         for o in uo {
-            total_value += o.value;
+            total_value += MicroMinotari::from(o.value);
             utxos.push(o);
 
             fee_without_change = self.fee_calc.calculate(
