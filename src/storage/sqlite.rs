@@ -195,6 +195,7 @@ impl SqliteStorage {
             -- Key Manager states table
             CREATE TABLE IF NOT EXISTS key_manager_states (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                wallet_id INTEGER NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
                 branch_seed       TEXT UNIQUE         NOT NULL,
                 primary_key_index BLOB                NOT NULL,
                 timestamp         DATETIME            NOT NULL
@@ -203,6 +204,7 @@ impl SqliteStorage {
             -- Key Manager imported keys table
             CREATE TABLE IF NOT EXISTS imported_keys (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                wallet_id INTEGER NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
                 private_key       BLOB UNIQUE         NOT NULL,
                 public_key        TEXT                NOT NULL,
                 timestamp         DATETIME            NOT NULL
@@ -236,12 +238,12 @@ impl SqliteStorage {
             CREATE INDEX IF NOT EXISTS idx_outputs_spendable ON outputs(wallet_id, status, maturity, script_lock_height);
 
             -- Indexes for Key Manager states table
-            CREATE INDEX IF NOT EXISTS idx_key_manager_states_timestamp ON key_manager_states(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_key_manager_states_branch_seed ON key_manager_states(branch_seed);
+            CREATE INDEX IF NOT EXISTS idx_key_manager_states_timestamp ON key_manager_states(wallet_id, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_key_manager_states_branch_seed ON key_manager_states(wallet_id, branch_seed);
 
             -- Indexes for Key Manager imported keys table
-            CREATE INDEX IF NOT EXISTS idx_imported_keys_timestamp ON imported_keys(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_imported_keys_public_key ON imported_keys(public_key);
+            CREATE INDEX IF NOT EXISTS idx_imported_keys_timestamp ON imported_keys(wallet_id, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_imported_keys_public_key ON imported_keys(wallet_id, public_key);
 
             -- Views for easy querying (NEW)
             CREATE VIEW IF NOT EXISTS spendable_outputs AS
@@ -1737,8 +1739,12 @@ impl WalletStorage for SqliteStorage {
         Ok(())
     }
 
-    async fn key_manager_get_state(&self, branch: &str) -> WalletResult<KeyManagerStateSql> {
-        let state = KeyManagerStateSql::get_state(branch, &self.connection).await?;
+    async fn key_manager_get_state(
+        &self,
+        branch: &str,
+        wallet_id: u32,
+    ) -> WalletResult<KeyManagerStateSql> {
+        let state = KeyManagerStateSql::get_state(branch, wallet_id, &self.connection).await?;
         Ok(state)
     }
 
@@ -1755,8 +1761,9 @@ impl WalletStorage for SqliteStorage {
     async fn key_manager_get_imported_key(
         &self,
         key: &CompressedPublicKey,
+        wallet_id: u32,
     ) -> WalletResult<ImportedKeySql> {
-        let key = ImportedKeySql::get_key(key, &self.connection).await?;
+        let key = ImportedKeySql::get_key(key, wallet_id, &self.connection).await?;
         Ok(key)
     }
 
@@ -1792,7 +1799,7 @@ mod storage_tests {
             types::CompressedCommitment,
             wallet_transaction::WalletTransaction,
         },
-        key_manager::NewImportedKeySql,
+        key_manager::{NewImportedKeySql, NewKeyManagerStateSql},
     };
     use chrono::Utc;
     use tari_common_types::types::{CompressedPublicKey, PrivateKey};
@@ -2265,17 +2272,23 @@ mod storage_tests {
     async fn test_key_manager_state_crud() {
         let storage = SqliteStorage::new_in_memory().await.unwrap();
         storage.initialize().await.unwrap();
+        let wallet_id = create_test_wallet(&storage).await;
 
         // Create and save a new state
-        let new_state = KeyManagerState {
-            branch_seed: "test_branch".to_string(),
-            primary_key_index: 25,
-        }
-        .into();
+        let new_state = NewKeyManagerStateSql::new(
+            KeyManagerState {
+                branch_seed: "test_branch".to_string(),
+                primary_key_index: 25,
+            },
+            wallet_id,
+        );
         storage.key_manager_commit_state(&new_state).await.unwrap();
 
         // Fetch the state and verify
-        let fetched_state = storage.key_manager_get_state("test_branch").await.unwrap();
+        let fetched_state = storage
+            .key_manager_get_state("test_branch", wallet_id)
+            .await
+            .unwrap();
         assert_eq!(fetched_state.branch_seed, "test_branch");
         assert_eq!(
             fetched_state.primary_key_index,
@@ -2290,7 +2303,10 @@ mod storage_tests {
             .unwrap();
 
         // Fetch again to confirm update
-        let updated_state = storage.key_manager_get_state("test_branch").await.unwrap();
+        let updated_state = storage
+            .key_manager_get_state("test_branch", wallet_id)
+            .await
+            .unwrap();
         assert_eq!(updated_state.primary_key_index, new_index);
     }
 
@@ -2298,6 +2314,7 @@ mod storage_tests {
     async fn test_imported_keys_crud() {
         let storage = SqliteStorage::new_in_memory().await.unwrap();
         storage.initialize().await.unwrap();
+        let wallet_id = create_test_wallet(&storage).await;
 
         // Create a test key pair
         let private_key = PrivateKey::from_hex(
@@ -2308,6 +2325,7 @@ mod storage_tests {
 
         // Create and save a new imported key
         let new_imported_key = NewImportedKeySql {
+            wallet_id,
             private_key: private_key.to_vec(),
             public_key: public_key.to_hex(),
             timestamp: Utc::now().naive_utc(),
@@ -2319,7 +2337,7 @@ mod storage_tests {
 
         // Fetch the key and verify
         let fetched_key = storage
-            .key_manager_get_imported_key(&public_key)
+            .key_manager_get_imported_key(&public_key, wallet_id)
             .await
             .unwrap();
         assert_eq!(fetched_key.private_key, private_key.to_vec());

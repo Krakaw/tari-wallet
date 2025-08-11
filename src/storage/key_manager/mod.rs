@@ -23,17 +23,22 @@ use crate::SqliteStorage;
 pub struct TransactionKeyManagerSqliteDatabase {
     database_connection: Arc<SqliteStorage>,
     cipher: Arc<RwLock<XChaCha20Poly1305>>,
+    wallet_id: u32,
 }
 
 #[allow(unused)]
 impl TransactionKeyManagerSqliteDatabase {
     /// Creates a new sql backend from provided wallet db connection
-    /// * `cipher` is used to encrypt the sensitive fields in the database, a cipher is derived
-    /// * from a provided password, which we enforce for class instantiation
-    pub fn new(database_connection: SqliteStorage, cipher: XChaCha20Poly1305) -> Self {
+    /// * `cipher` is used to encrypt the sensitive fields in the database
+    pub fn new(
+        database_connection: SqliteStorage,
+        cipher: XChaCha20Poly1305,
+        wallet_id: u32,
+    ) -> Self {
         Self {
             database_connection: Arc::new(database_connection),
             cipher: Arc::new(RwLock::new(cipher)),
+            wallet_id,
         }
     }
 }
@@ -44,7 +49,10 @@ impl TransactionKeyManagerBackend for TransactionKeyManagerSqliteDatabase {
         branch: &str,
     ) -> Result<Option<KeyManagerState>, KeyManagerStorageError> {
         let result = match tokio::task::block_in_place(|| {
-            Handle::current().block_on(self.database_connection.key_manager_get_state(branch))
+            Handle::current().block_on(
+                self.database_connection
+                    .key_manager_get_state(branch, self.wallet_id),
+            )
         })
         .ok()
         {
@@ -63,20 +71,24 @@ impl TransactionKeyManagerBackend for TransactionKeyManagerSqliteDatabase {
     fn add_key_manager(&self, key_manager: KeyManagerState) -> Result<(), KeyManagerStorageError> {
         let cipher = self.cipher.read().unwrap();
 
-        let km_sql = NewKeyManagerStateSql::from(key_manager);
+        let km_sql = NewKeyManagerStateSql::new(key_manager, self.wallet_id);
         let km_sql = km_sql
             .encrypt(&cipher)
             .map_err(|e| KeyManagerStorageError::AeadError(format!("Encryption Error: {}", e)))?;
         tokio::task::block_in_place(|| {
             Handle::current().block_on(self.database_connection.key_manager_commit_state(&km_sql))
         })
-        .map_err(|e| KeyManagerStorageError::StorageError(e.to_string()))
+        .map_err(|e| KeyManagerStorageError::StorageError(e.to_string()))?;
+        Ok(())
     }
 
     fn increment_key_index(&self, branch: &str) -> Result<(), KeyManagerStorageError> {
         let cipher = self.cipher.read().unwrap();
         let km = tokio::task::block_in_place(|| {
-            Handle::current().block_on(self.database_connection.key_manager_get_state(branch))
+            Handle::current().block_on(
+                self.database_connection
+                    .key_manager_get_state(branch, self.wallet_id),
+            )
         })
         .map_err(|e| KeyManagerStorageError::StorageError(e.to_string()))?;
         let mut km = km
@@ -101,7 +113,10 @@ impl TransactionKeyManagerBackend for TransactionKeyManagerSqliteDatabase {
     fn set_key_index(&self, branch: &str, index: u64) -> Result<(), KeyManagerStorageError> {
         let cipher = self.cipher.read().unwrap();
         let km = tokio::task::block_in_place(|| {
-            Handle::current().block_on(self.database_connection.key_manager_get_state(branch))
+            Handle::current().block_on(
+                self.database_connection
+                    .key_manager_get_state(branch, self.wallet_id),
+            )
         })
         .map_err(|e| KeyManagerStorageError::StorageError(e.to_string()))?;
         let mut km = km
@@ -135,7 +150,7 @@ impl TransactionKeyManagerBackend for TransactionKeyManagerSqliteDatabase {
             public_key,
             private_key,
         };
-        let encrypted_key = NewImportedKeySql::new_from_imported_key(key, &cipher)?;
+        let encrypted_key = NewImportedKeySql::new_from_imported_key(key, self.wallet_id, &cipher)?;
         tokio::task::block_in_place(|| {
             Handle::current().block_on(
                 self.database_connection
@@ -153,7 +168,7 @@ impl TransactionKeyManagerBackend for TransactionKeyManagerSqliteDatabase {
         let key = tokio::task::block_in_place(|| {
             Handle::current().block_on(
                 self.database_connection
-                    .key_manager_get_imported_key(public_key),
+                    .key_manager_get_imported_key(public_key, self.wallet_id),
             )
         })
         .map_err(|e| KeyManagerStorageError::StorageError(e.to_string()))?;
@@ -165,23 +180,45 @@ impl TransactionKeyManagerBackend for TransactionKeyManagerSqliteDatabase {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::SqliteStorage;
+    use crate::{storage::StoredWallet, SqliteStorage};
     use chacha20poly1305::{Key, KeyInit, XChaCha20Poly1305};
     use rand::{rngs::OsRng, RngCore};
     use tari_common_types::types::{CompressedPublicKey, PrivateKey};
     use tari_transaction_components::key_manager::KeyManagerState;
     use tari_utilities::hex::Hex;
 
+    async fn create_test_wallet(storage: &SqliteStorage) -> u32 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let test_wallet = StoredWallet {
+            id: None,
+            name: format!("test_wallet_{}_{}", std::process::id(), timestamp),
+            seed_phrase: None,
+            view_key_hex: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+                .to_string(),
+            spend_key_hex: None,
+            birthday_block: 0,
+            latest_scanned_block: None,
+            created_at: None,
+            updated_at: None,
+        };
+        storage.save_wallet(&test_wallet).await.unwrap()
+    }
+
     async fn setup_db() -> TransactionKeyManagerSqliteDatabase {
         let db = SqliteStorage::new_in_memory().await.unwrap();
         db.initialize().await.unwrap();
 
-        let mut key = [0u8; size_of::<Key>()];
+        let mut key = [0u8; 32];
         OsRng.fill_bytes(&mut key);
         let key_ga = Key::from_slice(&key);
         let cipher = XChaCha20Poly1305::new(key_ga);
 
-        TransactionKeyManagerSqliteDatabase::new(db, cipher)
+        let wallet_id = create_test_wallet(&db).await;
+        TransactionKeyManagerSqliteDatabase::new(db, cipher, wallet_id)
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

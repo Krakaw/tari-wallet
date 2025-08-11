@@ -13,6 +13,7 @@ const DOMAIN: &[u8; 11] = b"KEY_MANAGER";
 #[derive(Clone, Debug)]
 pub struct KeyManagerStateSql {
     pub id: i32,
+    pub wallet_id: u32,
     pub branch_seed: String,
     pub primary_key_index: Vec<u8>,
     pub timestamp: NaiveDateTime,
@@ -21,14 +22,16 @@ pub struct KeyManagerStateSql {
 /// Struct used to create a new Key manager in the database
 #[derive(Clone, Debug)]
 pub struct NewKeyManagerStateSql {
-    branch_seed: String,
-    primary_key_index: Vec<u8>,
-    timestamp: NaiveDateTime,
+    pub wallet_id: u32,
+    pub branch_seed: String,
+    pub primary_key_index: Vec<u8>,
+    pub timestamp: NaiveDateTime,
 }
 
-impl From<KeyManagerState> for NewKeyManagerStateSql {
-    fn from(km: KeyManagerState) -> Self {
+impl NewKeyManagerStateSql {
+    pub fn new(km: KeyManagerState, wallet_id: u32) -> Self {
         Self {
+            wallet_id,
             branch_seed: km.branch_seed,
             primary_key_index: km.primary_key_index.to_le_bytes().to_vec(),
             timestamp: Utc::now().naive_utc(),
@@ -56,10 +59,11 @@ impl NewKeyManagerStateSql {
         conn.call(move |conn| {
             conn.execute(
                 r#"
-                    INSERT INTO key_manager_states (branch_seed, primary_key_index, timestamp)
-                    VALUES (?, ?, ?)
+                    INSERT INTO key_manager_states (wallet_id, branch_seed, primary_key_index, timestamp)
+                    VALUES (?, ?, ?, ?)
                     "#,
                 params![
+                    record.wallet_id,
                     record.branch_seed,
                     record.primary_key_index,
                     record.timestamp
@@ -79,6 +83,7 @@ impl KeyManagerStateSql {
     fn row_to_state(row: &Row) -> rusqlite::Result<Self> {
         Ok(Self {
             id: row.get::<_, i64>("id")? as i32,
+            wallet_id: row.get::<_, i64>("wallet_id")? as u32,
             branch_seed: row.get("branch_seed")?,
             primary_key_index: row.get::<_, Vec<u8>>("primary_key_index")?,
             timestamp: row.get("timestamp")?,
@@ -87,11 +92,15 @@ impl KeyManagerStateSql {
 
     /// Retrieve every key manager branch currently in the database.
     /// Returns a `Vec` of [KeyManagerStateSql], if none are found, it will return an empty `Vec`.
-    pub async fn index(conn: &Connection) -> Result<Vec<Self>, KeyManagerStorageError> {
-        conn.call(|conn| {
-            let mut stmt =
-                conn.prepare("SELECT * FROM key_manager_states ORDER BY timestamp DESC")?;
-            let rows = stmt.query_map([], Self::row_to_state)?;
+    pub async fn index(
+        conn: &Connection,
+        wallet_id: u32,
+    ) -> Result<Vec<Self>, KeyManagerStorageError> {
+        conn.call(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT * FROM key_manager_states WHERE wallet_id = ? ORDER BY timestamp DESC",
+            )?;
+            let rows = stmt.query_map(params![wallet_id as i64], Self::row_to_state)?;
 
             let mut statuses = Vec::new();
             for row in rows {
@@ -110,13 +119,16 @@ impl KeyManagerStateSql {
     /// Will return Err if the branch does not exist in the database
     pub async fn get_state(
         branch: &str,
+        wallet_id: u32,
         conn: &Connection,
     ) -> Result<Self, KeyManagerStorageError> {
         let branch_owned = branch.to_string();
         conn.call(move |conn| {
-            let mut stmt =
-                conn.prepare("SELECT * FROM key_manager_states WHERE branch_seed = ?")?;
-            let mut rows = stmt.query_map(params![branch_owned], Self::row_to_state)?;
+            let mut stmt = conn.prepare(
+                "SELECT * FROM key_manager_states WHERE branch_seed = ? AND wallet_id = ?",
+            )?;
+            let mut rows =
+                stmt.query_map(params![branch_owned, wallet_id as i64], Self::row_to_state)?;
 
             if let Some(row) = rows.next() {
                 Ok(Some(row?))
@@ -134,7 +146,7 @@ impl KeyManagerStateSql {
     /// Creates or updates the database with the key manager state in this instance.
     pub async fn set_state(&self, conn: &Connection) -> Result<(), KeyManagerStorageError> {
         let record = self.clone();
-        match KeyManagerStateSql::get_state(&self.branch_seed, conn).await {
+        match KeyManagerStateSql::get_state(&self.branch_seed, self.wallet_id, conn).await {
             Ok(km) => {
                 let _ = conn
                     .call(move |conn| {
@@ -168,6 +180,7 @@ impl KeyManagerStateSql {
             }
             Err(_) => {
                 let inserter = NewKeyManagerStateSql {
+                    wallet_id: self.wallet_id,
                     branch_seed: self.branch_seed.clone(),
                     primary_key_index: self.primary_key_index.clone(),
                     timestamp: self.timestamp,
@@ -212,6 +225,7 @@ impl Encryptable<XChaCha20Poly1305> for KeyManagerStateSql {
         // Because there are two variable-length inputs in the concatenation, we prepend the length of the first
         [
             DOMAIN,
+            (self.wallet_id as u64).to_le_bytes().as_bytes(),
             (self.branch_seed.len() as u64).to_le_bytes().as_bytes(),
             self.branch_seed.as_bytes(),
             field_name.as_bytes(),
@@ -246,6 +260,7 @@ impl Encryptable<XChaCha20Poly1305> for NewKeyManagerStateSql {
         // Because there are two variable-length inputs in the concatenation, we prepend the length of the first
         [
             DOMAIN,
+            (self.wallet_id as u64).to_le_bytes().as_bytes(),
             (self.branch_seed.len() as u64).to_le_bytes().as_bytes(),
             self.branch_seed.as_bytes(),
             field_name.as_bytes(),

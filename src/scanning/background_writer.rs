@@ -565,9 +565,14 @@ mod tests {
         ) -> WalletResult<usize> {
             Ok(0)
         }
-        async fn key_manager_get_state(&self, _branch: &str) -> WalletResult<KeyManagerStateSql> {
+        async fn key_manager_get_state(
+            &self,
+            _branch: &str,
+            _wallet_id: u32,
+        ) -> WalletResult<KeyManagerStateSql> {
             Ok(KeyManagerStateSql {
                 id: 0,
+                wallet_id: 0,
                 branch_seed: "".to_string(),
                 primary_key_index: vec![],
                 timestamp: NaiveDateTime::default(),
@@ -585,9 +590,11 @@ mod tests {
         async fn key_manager_get_imported_key(
             &self,
             _key: &CompressedPublicKey,
+            _wallet_id: u32,
         ) -> WalletResult<ImportedKeySql> {
             Ok(ImportedKeySql {
                 id: 0,
+                wallet_id: 0,
                 private_key: vec![],
                 public_key: "".to_string(),
                 timestamp: NaiveDateTime::default(),

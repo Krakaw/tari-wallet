@@ -486,7 +486,11 @@ pub trait WalletStorage: Send + Sync {
     async fn get_output_count(&self, wallet_id: u32) -> WalletResult<usize>;
 
     // === Key manager state Methods ===
-    async fn key_manager_get_state(&self, branch: &str) -> WalletResult<KeyManagerStateSql>;
+    async fn key_manager_get_state(
+        &self,
+        branch: &str,
+        wallet_id: u32,
+    ) -> WalletResult<KeyManagerStateSql>;
     async fn key_manager_commit_state(&self, state: &NewKeyManagerStateSql) -> WalletResult<()>;
     async fn key_manager_set_index(&self, id: i32, index: Vec<u8>) -> WalletResult<()>;
 
@@ -494,6 +498,7 @@ pub trait WalletStorage: Send + Sync {
     async fn key_manager_get_imported_key(
         &self,
         key: &CompressedPublicKey,
+        wallet_id: u32,
     ) -> WalletResult<ImportedKeySql>;
     async fn key_manager_commit_imported_key(&self, key: &NewImportedKeySql) -> WalletResult<()>;
 }

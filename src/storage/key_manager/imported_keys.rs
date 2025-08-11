@@ -23,6 +23,7 @@ pub struct ImportedKey {
 #[derive(Clone, Debug)]
 pub struct ImportedKeySql {
     pub id: i32,
+    pub wallet_id: u32,
     pub private_key: Vec<u8>,
     pub public_key: String,
     pub timestamp: NaiveDateTime,
@@ -31,6 +32,7 @@ pub struct ImportedKeySql {
 /// Struct used to create a new Key manager in the database
 #[derive(Clone, Debug)]
 pub struct NewImportedKeySql {
+    pub wallet_id: u32,
     pub private_key: Vec<u8>,
     pub public_key: String,
     pub timestamp: NaiveDateTime,
@@ -40,9 +42,11 @@ impl NewImportedKeySql {
     // Creates a new ImportedKey with encrypted values
     pub fn new_from_imported_key(
         key: ImportedKey,
+        wallet_id: u32,
         cipher: &XChaCha20Poly1305,
     ) -> Result<Self, KeyManagerStorageError> {
         let imported_key_sql = NewImportedKeySql {
+            wallet_id,
             private_key: key.private_key.to_vec(),
             public_key: key.public_key.to_hex(),
             timestamp: Utc::now().naive_utc(),
@@ -59,10 +63,15 @@ impl NewImportedKeySql {
         conn.call(move |conn| {
             conn.execute(
                 r#"
-                    INSERT INTO imported_keys (private_key, public_key, timestamp)
-                    VALUES (?, ?, ?)
+                    INSERT INTO imported_keys (wallet_id, private_key, public_key, timestamp)
+                    VALUES (?, ?, ?, ?)
                     "#,
-                params![record.private_key, record.public_key, record.timestamp],
+                params![
+                    record.wallet_id,
+                    record.private_key,
+                    record.public_key,
+                    record.timestamp
+                ],
             )?;
 
             Ok(())
@@ -80,6 +89,7 @@ impl ImportedKeySql {
     fn row_to_state(row: &Row) -> rusqlite::Result<Self> {
         Ok(Self {
             id: row.get::<_, i64>("id")? as i32,
+            wallet_id: row.get::<_, i64>("wallet_id")? as u32,
             private_key: row.get("private_key")?,
             public_key: row.get("public_key")?,
             timestamp: row.get("timestamp")?,
@@ -88,10 +98,15 @@ impl ImportedKeySql {
 
     /// Retrieve every imported key currently in the database.
     /// Returns a `Vec` of [ImportedKeySql], if none are found, it will return an empty `Vec`.
-    pub async fn index(conn: &Connection) -> Result<Vec<Self>, KeyManagerStorageError> {
-        conn.call(|conn| {
-            let mut stmt = conn.prepare("SELECT * FROM imported_keys ORDER BY timestamp DESC")?;
-            let rows = stmt.query_map([], Self::row_to_state)?;
+    pub async fn index(
+        conn: &Connection,
+        wallet_id: u32,
+    ) -> Result<Vec<Self>, KeyManagerStorageError> {
+        conn.call(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT * FROM imported_keys WHERE wallet_id = ? ORDER BY timestamp DESC",
+            )?;
+            let rows = stmt.query_map(params![wallet_id as i64], Self::row_to_state)?;
 
             let mut keys = Vec::new();
             for row in rows {
@@ -129,12 +144,15 @@ impl ImportedKeySql {
     /// Will return Err if the branch does not exist in the database
     pub async fn get_key(
         key: &CompressedPublicKey,
+        wallet_id: u32,
         conn: &Connection,
     ) -> Result<Self, KeyManagerStorageError> {
         let key_owned = key.to_hex();
         conn.call(move |conn| {
-            let mut stmt = conn.prepare("SELECT * FROM imported_keys WHERE public_key = ?")?;
-            let mut rows = stmt.query_map(params![key_owned], Self::row_to_state)?;
+            let mut stmt =
+                conn.prepare("SELECT * FROM imported_keys WHERE public_key = ? AND wallet_id = ?")?;
+            let mut rows =
+                stmt.query_map(params![key_owned, wallet_id as i64], Self::row_to_state)?;
 
             if let Some(row) = rows.next() {
                 Ok(Some(row?))
@@ -154,7 +172,13 @@ impl ImportedKeySql {
 
 impl Encryptable<XChaCha20Poly1305> for ImportedKeySql {
     fn domain(&self, field_name: &'static str) -> Vec<u8> {
-        [DOMAIN, field_name.as_bytes()].concat().to_vec()
+        [
+            DOMAIN,
+            (self.wallet_id as u64).to_le_bytes().as_bytes(),
+            field_name.as_bytes(),
+        ]
+        .concat()
+        .to_vec()
     }
 
     fn encrypt(mut self, cipher: &XChaCha20Poly1305) -> Result<Self, String> {
@@ -177,7 +201,13 @@ impl Encryptable<XChaCha20Poly1305> for ImportedKeySql {
 
 impl Encryptable<XChaCha20Poly1305> for NewImportedKeySql {
     fn domain(&self, field_name: &'static str) -> Vec<u8> {
-        [DOMAIN, field_name.as_bytes()].concat().to_vec()
+        [
+            DOMAIN,
+            (self.wallet_id as u64).to_le_bytes().as_bytes(),
+            field_name.as_bytes(),
+        ]
+        .concat()
+        .to_vec()
     }
 
     fn encrypt(mut self, cipher: &XChaCha20Poly1305) -> Result<Self, String> {
