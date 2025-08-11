@@ -1,18 +1,13 @@
-#[cfg(feature = "storage")]
 use tari_script::TariScript;
-#[cfg(feature = "storage")]
 use tari_transaction_components::{
-    fee::Fee, tari_amount::MicroMinotari, weight::TransactionWeight,
+    fee::Fee, helpers::borsh::SerializedSize, tari_amount::MicroMinotari, weight::TransactionWeight,
 };
 
-#[cfg(feature = "storage")]
 use crate::{
     data_structures::{Covenant, OutputFeatures},
-    utils::borsh::SerializedSize,
     SerializationError, StoredOutput, WalletError, WalletResult, WalletStorage,
 };
 
-#[cfg(feature = "storage")]
 struct UtxoSelection {
     utxos: Vec<StoredOutput>,
     requires_change_output: bool,
@@ -21,15 +16,12 @@ struct UtxoSelection {
     fee_with_change: MicroMinotari,
 }
 
-#[cfg(feature = "storage")]
 struct InputSelector {
     pub wallet_id: u32,
-    #[cfg(feature = "storage")]
     pub database: Box<dyn WalletStorage>,
     pub fee_calc: Fee,
 }
 
-#[cfg(feature = "storage")]
 impl InputSelector {
     pub fn new(wallet_id: u32, database: Box<dyn WalletStorage>) -> Self {
         Self {
