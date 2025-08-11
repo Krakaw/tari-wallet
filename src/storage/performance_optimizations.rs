@@ -10,6 +10,7 @@ use tokio_rusqlite::Connection;
 
 /// High-performance SQLite configuration for wallet scanning
 #[cfg(feature = "storage")]
+#[derive(Clone)]
 pub struct SqlitePerformanceConfig {
     /// Enable WAL (Write-Ahead Logging) mode for better concurrency
     pub enable_wal_mode: bool,

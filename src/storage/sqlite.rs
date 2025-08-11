@@ -31,6 +31,7 @@ use tari_common_types::types::CompressedPublicKey;
 
 /// SQLite storage backend for wallet transactions
 #[cfg(feature = "storage")]
+#[derive(Clone)]
 pub struct SqliteStorage {
     connection: Connection,
     performance_config: SqlitePerformanceConfig,
