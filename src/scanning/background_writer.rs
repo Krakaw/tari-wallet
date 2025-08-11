@@ -201,6 +201,8 @@ mod tests {
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     use async_trait::async_trait;
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
+    use chrono::NaiveDateTime;
+    #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     use std::sync::{Arc, Mutex};
     #[cfg(all(feature = "storage", not(target_arch = "wasm32")))]
     use tari_common_types::types::CompressedPublicKey;
@@ -563,24 +565,37 @@ mod tests {
         ) -> WalletResult<usize> {
             Ok(0)
         }
-        async fn key_manager_get_state(&self, branch: &str) -> WalletResult<KeyManagerStateSql> {}
+        async fn key_manager_get_state(&self, _branch: &str) -> WalletResult<KeyManagerStateSql> {
+            Ok(KeyManagerStateSql {
+                id: 0,
+                branch_seed: "".to_string(),
+                primary_key_index: vec![],
+                timestamp: NaiveDateTime::default(),
+            })
+        }
         async fn key_manager_commit_state(
             &self,
-            state: &NewKeyManagerStateSql,
+            _state: &NewKeyManagerStateSql,
         ) -> WalletResult<()> {
             Ok(())
         }
-        async fn key_manager_set_index(&self, id: i32, index: Vec<u8>) -> WalletResult<()> {
+        async fn key_manager_set_index(&self, _id: i32, _index: Vec<u8>) -> WalletResult<()> {
             Ok(())
         }
         async fn key_manager_get_imported_key(
             &self,
-            key: &CompressedPublicKey,
+            _key: &CompressedPublicKey,
         ) -> WalletResult<ImportedKeySql> {
+            Ok(ImportedKeySql {
+                id: 0,
+                private_key: vec![],
+                public_key: "".to_string(),
+                timestamp: NaiveDateTime::default(),
+            })
         }
         async fn key_manager_commit_imported_key(
             &self,
-            key: &NewImportedKeySql,
+            _key: &NewImportedKeySql,
         ) -> WalletResult<()> {
             Ok(())
         }

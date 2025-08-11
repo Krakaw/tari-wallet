@@ -194,7 +194,7 @@ impl SqliteStorage {
 
             -- Key Manager states table
             CREATE TABLE IF NOT EXISTS key_manager_states (
-                id                INTEGER PRIMARY KEY NOT NULL AUTOINCREMENT,
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 branch_seed       TEXT UNIQUE         NOT NULL,
                 primary_key_index BLOB                NOT NULL,
                 timestamp         DATETIME            NOT NULL
@@ -202,7 +202,7 @@ impl SqliteStorage {
             
             -- Key Manager imported keys table
             CREATE TABLE IF NOT EXISTS imported_keys (
-                id                INTEGER PRIMARY KEY NOT NULL AUTOINCREMENT,
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 private_key       BLOB UNIQUE         NOT NULL,
                 public_key        TEXT                NOT NULL,
                 timestamp         DATETIME            NOT NULL
@@ -1785,12 +1785,19 @@ impl SqliteStorage {
 #[cfg(test)]
 mod storage_tests {
     use super::super::*;
-    use crate::data_structures::{
-        payment_id::PaymentId,
-        transaction::{TransactionDirection, TransactionStatus},
-        types::CompressedCommitment,
-        wallet_transaction::WalletTransaction,
+    use crate::{
+        data_structures::{
+            payment_id::PaymentId,
+            transaction::{TransactionDirection, TransactionStatus},
+            types::CompressedCommitment,
+            wallet_transaction::WalletTransaction,
+        },
+        key_manager::NewImportedKeySql,
     };
+    use chrono::Utc;
+    use tari_common_types::types::{CompressedPublicKey, PrivateKey};
+    use tari_transaction_components::key_manager::KeyManagerState;
+    use tari_utilities::{hex::Hex, ByteArray};
 
     /// Helper function to create a test wallet for foreign key compliance
     async fn create_test_wallet(storage: &SqliteStorage) -> u32 {
@@ -2252,5 +2259,70 @@ mod storage_tests {
 
         let stats = storage.get_statistics().await.unwrap();
         assert_eq!(stats.total_transactions, 0);
+    }
+
+    #[tokio::test]
+    async fn test_key_manager_state_crud() {
+        let storage = SqliteStorage::new_in_memory().await.unwrap();
+        storage.initialize().await.unwrap();
+
+        // Create and save a new state
+        let new_state = KeyManagerState {
+            branch_seed: "test_branch".to_string(),
+            primary_key_index: 25,
+        }
+        .into();
+        storage.key_manager_commit_state(&new_state).await.unwrap();
+
+        // Fetch the state and verify
+        let fetched_state = storage.key_manager_get_state("test_branch").await.unwrap();
+        assert_eq!(fetched_state.branch_seed, "test_branch");
+        assert_eq!(
+            fetched_state.primary_key_index,
+            vec![25, 0, 0, 0, 0, 0, 0, 0]
+        );
+
+        // Update the index
+        let new_index = vec![5, 6, 7, 8];
+        storage
+            .key_manager_set_index(fetched_state.id, new_index.clone())
+            .await
+            .unwrap();
+
+        // Fetch again to confirm update
+        let updated_state = storage.key_manager_get_state("test_branch").await.unwrap();
+        assert_eq!(updated_state.primary_key_index, new_index);
+    }
+
+    #[tokio::test]
+    async fn test_imported_keys_crud() {
+        let storage = SqliteStorage::new_in_memory().await.unwrap();
+        storage.initialize().await.unwrap();
+
+        // Create a test key pair
+        let private_key = PrivateKey::from_hex(
+            "6e43d7563adfc5a325864a3354ad645a2e83a86a39342448b54b255244203707",
+        )
+        .unwrap();
+        let public_key = CompressedPublicKey::from_secret_key(&private_key);
+
+        // Create and save a new imported key
+        let new_imported_key = NewImportedKeySql {
+            private_key: private_key.to_vec(),
+            public_key: public_key.to_hex(),
+            timestamp: Utc::now().naive_utc(),
+        };
+        storage
+            .key_manager_commit_imported_key(&new_imported_key)
+            .await
+            .unwrap();
+
+        // Fetch the key and verify
+        let fetched_key = storage
+            .key_manager_get_imported_key(&public_key)
+            .await
+            .unwrap();
+        assert_eq!(fetched_key.private_key, private_key.to_vec());
+        assert_eq!(fetched_key.public_key, public_key.to_hex());
     }
 }
