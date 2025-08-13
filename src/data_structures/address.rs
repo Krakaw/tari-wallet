@@ -11,6 +11,7 @@ use crate::errors::{DataStructureError, WalletError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use tari_common_types::tari_address::TariAddress as CommonTariAddress;
 
 // Address size constants (from source of truth)
 const TARI_ADDRESS_INTERNAL_DUAL_SIZE: usize = 67;
@@ -1010,6 +1011,20 @@ impl Default for TariAddress {
             Network::Esmeralda,
         )
         .unwrap()
+    }
+}
+
+impl From<CommonTariAddress> for TariAddress {
+    fn from(tari_address: CommonTariAddress) -> Self {
+        Self::from_bytes(&tari_address.to_vec())
+            .expect("Expected CommonTariAddress to be a valid TariAddress")
+    }
+}
+
+impl From<TariAddress> for CommonTariAddress {
+    fn from(tari_address: TariAddress) -> Self {
+        CommonTariAddress::from_bytes(&tari_address.to_vec())
+            .expect("Expected TariAddress to be a valid CommonTariAddress")
     }
 }
 

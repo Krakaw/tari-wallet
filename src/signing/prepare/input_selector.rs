@@ -8,22 +8,22 @@ use crate::{
     SerializationError, StoredOutput, WalletError, WalletResult, WalletStorage,
 };
 
-struct UtxoSelection {
-    utxos: Vec<StoredOutput>,
-    requires_change_output: bool,
-    total_value: MicroMinotari,
-    fee_without_change: MicroMinotari,
-    fee_with_change: MicroMinotari,
+pub struct UtxoSelection {
+    pub utxos: Vec<StoredOutput>,
+    pub requires_change_output: bool,
+    pub total_value: MicroMinotari,
+    pub fee_without_change: MicroMinotari,
+    pub fee_with_change: MicroMinotari,
 }
 
-struct InputSelector {
+pub struct InputSelector<TWalletStorage: WalletStorage> {
     pub wallet_id: u32,
-    pub database: Box<dyn WalletStorage>,
+    pub database: TWalletStorage,
     pub fee_calc: Fee,
 }
 
-impl InputSelector {
-    pub fn new(wallet_id: u32, database: Box<dyn WalletStorage>) -> Self {
+impl<TWalletStorage: WalletStorage> InputSelector<TWalletStorage> {
+    pub fn new(wallet_id: u32, database: TWalletStorage) -> Self {
         Self {
             wallet_id,
             database,

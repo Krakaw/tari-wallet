@@ -1,4 +1,8 @@
-use tari_transaction_components::key_manager::error::KeyManagerStorageError;
+use tari_script::ScriptError;
+use tari_transaction_components::{
+    key_manager::error::{KeyManagerServiceError, KeyManagerStorageError},
+    transaction_components::TransactionError,
+};
 use thiserror::Error;
 
 /// Main error type for the lightweight wallet library
@@ -70,6 +74,15 @@ pub enum WalletError {
 
     #[error("Key Manager storage error: {0}")]
     KeyManagerStorageError(#[from] KeyManagerStorageError),
+
+    #[error("Key Manager service error: {0}")]
+    KeyManagerServiceError(#[from] KeyManagerServiceError),
+
+    #[error("Transaction error: {0}")]
+    TransactionError(#[from] TransactionError),
+
+    #[error("Script error: {0}")]
+    ScriptError(#[from] ScriptError),
 }
 
 /// Errors related to data structure operations
