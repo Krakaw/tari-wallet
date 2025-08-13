@@ -10,7 +10,6 @@ pub async fn make_key_id_export_safe<TWalletStorage: WalletStorage + Clone>(
 ) -> Result<TariKeyId, String> {
     if *key_id
         == transaction_key_manager
-            .wrapper
             .get_spend_key()
             .await
             .map_err(|err| err.to_string())?
@@ -20,7 +19,6 @@ pub async fn make_key_id_export_safe<TWalletStorage: WalletStorage + Clone>(
     }
     if *key_id
         == transaction_key_manager
-            .wrapper
             .get_view_key()
             .await
             .map_err(|err| err.to_string())?
@@ -38,7 +36,6 @@ pub async fn make_key_id_export_safe<TWalletStorage: WalletStorage + Clone>(
         TariKeyId::Derived { key } => {
             let inner_key = TariKeyId::from_str(key.to_string().as_str())?;
             let public_key = transaction_key_manager
-                .wrapper
                 .get_public_key_at_key_id(&inner_key)
                 .await
                 .map_err(|err| err.to_string())?;
@@ -54,7 +51,6 @@ pub async fn make_key_id_export_safe<TWalletStorage: WalletStorage + Clone>(
         }
         TariKeyId::Managed { .. } => {
             let key = transaction_key_manager
-                .wrapper
                 .get_public_key_at_key_id(key_id)
                 .await
                 .map_err(|err| err.to_string())?;

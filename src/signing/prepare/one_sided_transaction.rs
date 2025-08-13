@@ -33,26 +33,70 @@ use crate::{
 };
 
 pub struct OneSidedTransaction<TWalletStorage: WalletStorage + Clone + 'static> {
-    pub database: TWalletStorage,
-    pub wallet_id: u32,
+    database: TWalletStorage,
+    wallet_id: u32,
+    wallet: Wallet,
+    transaction_key_manager: TransactionKeyManager<TWalletStorage>,
 }
 
 impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalletStorage> {
-    pub fn new(database: TWalletStorage, wallet_id: u32) -> Self {
+    fn new(
+        database: TWalletStorage,
+        wallet_id: u32,
+        wallet: Wallet,
+        transaction_key_manager: TransactionKeyManager<TWalletStorage>,
+    ) -> Self {
         Self {
             database,
             wallet_id,
+            wallet,
+            transaction_key_manager,
         }
+    }
+
+    pub async fn build(
+        passphrase: Option<SafePassword>,
+        database: TWalletStorage,
+        wallet_id: u32,
+    ) -> WalletResult<Self> {
+        let stored_wallet = database.get_wallet_by_id(wallet_id).await?.ok_or_else(|| {
+            WalletError::ResourceNotFound(format!("Wallet with ID {} not found", wallet_id,))
+        })?;
+        let seed_phrase = stored_wallet.seed_phrase.ok_or_else(|| {
+            WalletError::InternalError(format!(
+                "Wallet with ID {} does not have a seed phrase",
+                wallet_id,
+            ))
+        })?;
+        let passphrase_str: Option<String> = passphrase
+            .clone()
+            .map(|p| String::from_utf8(p.reveal().clone()).expect("invalid phrase"));
+        let wallet = Wallet::new_from_seed_phrase(&seed_phrase, passphrase_str.as_deref())?;
+
+        let transaction_key_manager = TransactionKeyManager::build(
+            passphrase.clone(),
+            database.clone(),
+            &wallet,
+            WalletType::default(),
+            wallet_id,
+        )
+        .await?;
+
+        Ok(Self::new(
+            database,
+            wallet_id,
+            wallet,
+            transaction_key_manager,
+        ))
     }
 
     async fn build_marshal_output_pair(
         &self,
-        transaction_key_manager: &TransactionKeyManager<TWalletStorage>,
         output: WalletOutput,
         sender_offset_key_id: Option<TariKeyId>,
     ) -> WalletResult<MarshalOutputPair> {
-        let nonce = transaction_key_manager
-            .wrapper
+        let nonce = self
+            .transaction_key_manager
             .get_next_key(TransactionKeyManagerBranch::KernelNonce.get_branch_key())
             .await?;
         let output_pair = OutputPair {
@@ -61,12 +105,11 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
             sender_offset_key_id,
         };
 
-        MarshalOutputPair::marshal(&transaction_key_manager.wrapper, output_pair).await
+        MarshalOutputPair::marshal(&self.transaction_key_manager.as_interface(), output_pair).await
     }
 
     async fn build_change_output(
         &self,
-        transaction_key_manager: &TransactionKeyManager<TWalletStorage>,
         unspent_outputs: &UtxoSelection,
         sender_address: &TariAddress,
         original_payment_id: &MemoField,
@@ -89,14 +132,14 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
             return Ok(None);
         }
 
-        let sender_offset_public = transaction_key_manager
-            .wrapper
+        let sender_offset_public = self
+            .transaction_key_manager
             .get_next_key(TransactionKeyManagerBranch::SenderOffset.get_branch_key())
             .await
             .map_err(|e| e.to_string())?;
 
-        let (change_commitment_mask_key, change_script_key) = transaction_key_manager
-            .wrapper
+        let (change_commitment_mask_key, change_script_key) = self
+            .transaction_key_manager
             .get_next_commitment_mask_and_script_key()
             .await?;
 
@@ -126,8 +169,8 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
         let change_script =
             script!(PushPubKey(Box::new(change_script_key.pub_key))).map_err(|e| e.to_string())?;
 
-        let encrypted_data = transaction_key_manager
-            .wrapper
+        let encrypted_data = self
+            .transaction_key_manager
             .encrypt_data_for_recovery(
                 &change_commitment_mask_key.key_id,
                 None,
@@ -149,8 +192,8 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
             &encrypted_data,
             &minimum_value_promise,
         );
-        let metadata_sig = transaction_key_manager
-            .wrapper
+        let metadata_sig = self
+            .transaction_key_manager
             .get_metadata_signature(
                 &change_commitment_mask_key.key_id,
                 &change_amount.into(),
@@ -163,7 +206,8 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
             .map_err(|e| e.to_string())?;
 
         let export_safe_change_script_key_id =
-            make_key_id_export_safe(transaction_key_manager, &change_script_key.key_id).await?;
+            make_key_id_export_safe(&self.transaction_key_manager, &change_script_key.key_id)
+                .await?;
         let change_wallet_output = WalletOutput::new_current_version(
             change_amount,
             change_commitment_mask_key.key_id,
@@ -178,34 +222,25 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
             encrypted_data,
             minimum_value_promise,
             payment_id,
-            &transaction_key_manager.wrapper,
+            &self.transaction_key_manager.as_interface(),
         )
         .await
         .map_err(|e| e.to_string())?;
 
         Ok(Some(
-            self.build_marshal_output_pair(
-                transaction_key_manager,
-                change_wallet_output,
-                Some(sender_offset_public.key_id),
-            )
-            .await?,
+            self.build_marshal_output_pair(change_wallet_output, Some(sender_offset_public.key_id))
+                .await?,
         ))
     }
 
     async fn get_inputs(
         &self,
-        transaction_key_manager: &TransactionKeyManager<TWalletStorage>,
         unspent_outputs: &UtxoSelection,
     ) -> WalletResult<Vec<MarshalOutputPair>> {
         let mut result = vec![];
         for utxo in &unspent_outputs.utxos {
-            let wallet_output = self
-                .wallet_output_from_stored_output(transaction_key_manager, utxo.clone())
-                .await?;
-            let input = self
-                .build_marshal_output_pair(transaction_key_manager, wallet_output, None)
-                .await?;
+            let wallet_output = self.wallet_output_from_stored_output(utxo.clone()).await?;
+            let input = self.build_marshal_output_pair(wallet_output, None).await?;
             result.push(input);
         }
         Ok(result)
@@ -213,39 +248,18 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
 
     pub async fn prepare(
         &self,
-        passphrase: Option<SafePassword>, // passphrase to decrypt the wallet
         dest_address: TariAddress,
         amount: MicroMinotari,
         fee_per_gram: MicroMinotari,
         payment_id: MemoField,
     ) -> WalletResult<PrepareOneSidedTransactionForSigningResult> {
-        let stored_wallet = self
-            .database
-            .get_wallet_by_id(self.wallet_id)
-            .await?
-            .ok_or_else(|| {
-                WalletError::ResourceNotFound(format!(
-                    "Wallet with ID {} not found",
-                    self.wallet_id,
-                ))
-            })?;
-        let seed_phrase = stored_wallet.seed_phrase.ok_or_else(|| {
-            WalletError::InternalError(format!(
-                "Wallet with ID {} does not have a seed phrase",
-                self.wallet_id,
-            ))
-        })?;
-        let passphrase_str: Option<String> = passphrase
-            .clone()
-            .map(|p| String::from_utf8(p.reveal().clone()).expect("invalid phrase"));
-        let wallet = Wallet::new_from_seed_phrase(&seed_phrase, passphrase_str.as_deref())?;
-
         let recipient = PaymentRecipient {
             amount,
             output_features: OutputFeatures::default(),
             address: dest_address.clone(),
         };
-        let sender_address = wallet
+        let sender_address = self
+            .wallet
             .get_dual_address(
                 crate::data_structures::TariAddressFeatures::create_one_sided_only(),
                 None,
@@ -261,27 +275,10 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
             .fetch_unspent_outputs(amount, fee_per_gram)
             .await?;
 
-        let transaction_key_manager = TransactionKeyManager::build(
-            passphrase.clone(),
-            self.database.clone(),
-            &wallet,
-            WalletType::default(),
-            self.wallet_id,
-        )
-        .await?;
-
-        let inputs = self
-            .get_inputs(&transaction_key_manager, &unspent_outputs)
-            .await?;
+        let inputs = self.get_inputs(&unspent_outputs).await?;
 
         let change_output = self
-            .build_change_output(
-                &transaction_key_manager,
-                &unspent_outputs,
-                &sender_address,
-                &payment_id,
-                &recipient,
-            )
+            .build_change_output(&unspent_outputs, &sender_address, &payment_id, &recipient)
             .await?;
 
         let info = OneSidedTransactionInfo {
@@ -303,7 +300,6 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
 
     async fn wallet_output_from_stored_output(
         &self,
-        transaction_key_manager: &TransactionKeyManager<TWalletStorage>,
         o: StoredOutput,
     ) -> WalletResult<WalletOutput> {
         // TODO: spending key id is not stored in db
@@ -346,7 +342,7 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
             encrypted_data,
             minimum_value_promise,
             payment_id,
-            &transaction_key_manager.wrapper,
+            &self.transaction_key_manager.as_interface(),
         )
         .await?;
         Ok(wallet_output)
