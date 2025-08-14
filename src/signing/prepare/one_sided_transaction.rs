@@ -266,7 +266,8 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
             )?
             .into();
 
-        let payment_id = get_payment_id(&sender_address, &dest_address, fee_per_gram, payment_id);
+        let payment_id =
+            self.get_payment_id(&sender_address, &dest_address, fee_per_gram, payment_id);
         let metadata = TransactionMetadata::default();
         let tx_id = TxId::new_random();
 
@@ -347,35 +348,36 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
         .await?;
         Ok(wallet_output)
     }
-}
 
-fn get_payment_id(
-    sender_address: &TariAddress,
-    dest_address: &TariAddress,
-    fee_per_gram: MicroMinotari,
-    payment_id: MemoField,
-) -> MemoField {
-    let mut payment_id = payment_id.clone();
-    if dest_address
-        .features()
-        .contains(TariAddressFeatures::PAYMENT_ID)
-    {
-        payment_id = MemoField::open(
-            dest_address.get_memo_field_payment_id_bytes(),
-            TxType::PaymentToOther,
-        );
+    fn get_payment_id(
+        &self,
+        sender_address: &TariAddress,
+        dest_address: &TariAddress,
+        fee_per_gram: MicroMinotari,
+        payment_id: MemoField,
+    ) -> MemoField {
+        let mut payment_id = payment_id.clone();
+        if dest_address
+            .features()
+            .contains(TariAddressFeatures::PAYMENT_ID)
+        {
+            payment_id = MemoField::open(
+                dest_address.get_memo_field_payment_id_bytes(),
+                TxType::PaymentToOther,
+            );
+        }
+        payment_id
+            .clone()
+            .add_sender_address(
+                sender_address.clone(),
+                true,
+                fee_per_gram,
+                if dest_address == sender_address {
+                    Some(TxType::PaymentToSelf)
+                } else {
+                    Some(TxType::PaymentToOther)
+                },
+            )
+            .unwrap_or(payment_id)
     }
-    payment_id
-        .clone()
-        .add_sender_address(
-            sender_address.clone(),
-            true,
-            fee_per_gram,
-            if dest_address == sender_address {
-                Some(TxType::PaymentToSelf)
-            } else {
-                Some(TxType::PaymentToOther)
-            },
-        )
-        .unwrap_or(payment_id)
 }

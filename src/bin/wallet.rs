@@ -1,6 +1,9 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 #[cfg(feature = "storage")]
+use std::path::PathBuf;
+
+#[cfg(feature = "storage")]
 use clap::{Parser, Subcommand};
 
 #[cfg(feature = "storage")]
@@ -20,6 +23,15 @@ use lightweight_wallet_libs::{
     storage::{SqliteStorage, StoredWallet, WalletStorage},
     WalletError,
 };
+
+#[cfg(feature = "storage")]
+use lightweight_wallet_libs::prepare::one_sided_transaction::OneSidedTransaction;
+#[cfg(feature = "storage")]
+use tari_transaction_components::{
+    tari_amount::MicroMinotari, transaction_components::memo_field::MemoField,
+};
+use tari_utilities::SafePassword;
+#[cfg(feature = "storage")]
 
 /// Tari Wallet CLI
 #[cfg(feature = "storage")]
@@ -116,6 +128,33 @@ enum Commands {
         query_command: QueryCommands,
     },
 
+    /// Prepare a transaction for signing
+    PrepareForSigning {
+        /// Database file path
+        #[arg(long, default_value = "./wallet.db")]
+        database: String,
+
+        /// Optional passphrase for CipherSeed encryption/decryption
+        #[arg(long)]
+        passphrase: Option<String>,
+
+        /// Wallet name (if not provided, will prompt for selection)
+        #[arg(long)]
+        wallet_name: Option<String>,
+
+        /// Transaction amount
+        #[arg(long)]
+        amount: u64,
+
+        /// Recipient address (in base58 format)
+        #[arg(long)]
+        recipient_address: String,
+
+        /// Output file name
+        #[arg(long)]
+        output_file: PathBuf,
+    },
+
     /// Clear all data from database
     ClearDatabase {
         /// Database file path
@@ -206,6 +245,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 handle_transactions(database, wallet_name, limit).await?;
             }
         },
+        Commands::PrepareForSigning {
+            database,
+            passphrase,
+            wallet_name,
+            amount,
+            recipient_address,
+            output_file,
+        } => {
+            handle_prepare_for_signing(
+                database,
+                passphrase,
+                wallet_name,
+                amount,
+                recipient_address,
+                output_file,
+            )
+            .await?;
+        }
         Commands::ClearDatabase {
             database,
             no_prompt,
@@ -1015,6 +1072,54 @@ async fn handle_create_wallet(
         println!("   💡 To scan from a specific block, use the scanner with --from-block option");
     }
 
+    Ok(())
+}
+
+#[cfg(feature = "storage")]
+async fn handle_prepare_for_signing(
+    database_path: String,
+    passphrase: Option<String>,
+    wallet_name: Option<String>,
+    amount: u64,
+    recipient_address: String,
+    output_file: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs::File;
+    use std::io::Write;
+    use tari_common_types::tari_address::TariAddress;
+
+    let storage = if database_path == ":memory:" {
+        SqliteStorage::new_in_memory().await?
+    } else {
+        SqliteStorage::new(&database_path).await?
+    };
+
+    storage.initialize().await?;
+    let wallet = select_wallet(&storage, wallet_name).await?;
+
+    let passphrase = passphrase.map(SafePassword::from);
+    let fee_per_gram = MicroMinotari(5);
+    let payment_id = MemoField::default();
+    let dest_address = TariAddress::from_base58(&recipient_address)?;
+
+    let builder = OneSidedTransaction::build(passphrase, storage, wallet.id.unwrap()).await?;
+    let result = builder
+        .prepare(
+            dest_address,
+            MicroMinotari(amount),
+            fee_per_gram,
+            payment_id,
+        )
+        .await?;
+
+    let json_string = serde_json::to_string_pretty(&result)?;
+    let mut file = File::create(&output_file)?;
+    file.write_all(json_string.as_bytes())?;
+
+    println!(
+        "✅ Prepared transaction data saved to: {}",
+        output_file.display()
+    );
     Ok(())
 }
 

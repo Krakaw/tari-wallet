@@ -1,10 +1,11 @@
 use semver::Version;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use tari_common_types::{tari_address::TariAddress, transaction::TxId};
+use tari_common_types::{tari_address::TariAddress, transaction::TxId, types::FixedHash};
 use tari_transaction_components::{
     tari_amount::MicroMinotari,
     transaction_components::{
         memo_field::MemoField, transaction_metadata::TransactionMetadata, OutputFeatures,
+        Transaction, WalletOutput,
     },
 };
 
@@ -80,4 +81,35 @@ pub struct PrepareOneSidedTransactionForSigningResult {
     pub version: Version,
     pub tx_id: TxId,
     pub info: OneSidedTransactionInfo,
+}
+
+impl TransactionResult for PrepareOneSidedTransactionForSigningResult {}
+
+impl HasVersion for PrepareOneSidedTransactionForSigningResult {
+    fn get_version(&self) -> &Version {
+        &self.version
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SignedTransaction {
+    pub transaction: Transaction,
+    pub sent_hashes: Vec<FixedHash>,
+    pub change_hashes: Vec<FixedHash>,
+    pub change_output: Option<WalletOutput>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SignedOneSidedTransactionResult {
+    pub version: Version,
+    pub request: PrepareOneSidedTransactionForSigningResult,
+    pub signed_transaction: SignedTransaction,
+}
+
+impl TransactionResult for SignedOneSidedTransactionResult {}
+
+impl HasVersion for SignedOneSidedTransactionResult {
+    fn get_version(&self) -> &Version {
+        &self.version
+    }
 }
