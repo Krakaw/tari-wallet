@@ -11,6 +11,8 @@ use lightweight_wallet_libs::data_structures::address::TariAddressFeatures;
 #[cfg(feature = "storage")]
 use lightweight_wallet_libs::wallet::Wallet;
 
+#[cfg(feature = "grpc")]
+use lightweight_wallet_libs::scanning::GrpcBlockchainScanner;
 // Storage-related imports
 #[cfg(feature = "storage")]
 use lightweight_wallet_libs::{
@@ -20,17 +22,19 @@ use lightweight_wallet_libs::{
         key_derivation,
         seed_phrase::{mnemonic_to_bytes, CipherSeed},
     },
+    prepare::one_sided_transaction::OneSidedTransaction,
     storage::{SqliteStorage, StoredWallet, WalletStorage},
-    WalletError,
+    TransactionBroadcaster, WalletError,
 };
 
 #[cfg(feature = "storage")]
-use lightweight_wallet_libs::prepare::one_sided_transaction::OneSidedTransaction;
-#[cfg(feature = "storage")]
 use tari_transaction_components::{
-    tari_amount::MicroMinotari, transaction_components::memo_field::MemoField,
+    tari_amount::MicroMinotari,
+    transaction_components::{memo_field::MemoField, Transaction},
 };
+#[cfg(feature = "storage")]
 use tari_utilities::SafePassword;
+
 #[cfg(feature = "storage")]
 
 /// Tari Wallet CLI
@@ -155,6 +159,21 @@ enum Commands {
         output_file: PathBuf,
     },
 
+    BroadcastSignedTransaction {
+        /// Input file name
+        #[arg(long)]
+        input_file: PathBuf,
+
+        /// Base URL for the Tari base node GRPC endpoint
+        #[arg(
+            short,
+            long,
+            default_value = "http://127.0.0.1:18142",
+            help = "Base URL for Tari base node GRPC"
+        )]
+        base_url: String,
+    },
+
     /// Clear all data from database
     ClearDatabase {
         /// Database file path
@@ -262,6 +281,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 output_file,
             )
             .await?;
+        }
+        Commands::BroadcastSignedTransaction {
+            input_file,
+            base_url,
+        } => {
+            handle_broadcast_transaction(input_file, base_url).await?;
         }
         Commands::ClearDatabase {
             database,
@@ -1120,6 +1145,19 @@ async fn handle_prepare_for_signing(
         "✅ Prepared transaction data saved to: {}",
         output_file.display()
     );
+    Ok(())
+}
+
+async fn handle_broadcast_transaction(
+    input_file: PathBuf,
+    base_url: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let json_string = std::fs::read_to_string(&input_file)?;
+    let transaction: Transaction = serde_json::from_str(&json_string)?;
+
+    let mut client = GrpcBlockchainScanner::new(base_url).await?;
+    client.submit_transaction(transaction).await?;
+
     Ok(())
 }
 

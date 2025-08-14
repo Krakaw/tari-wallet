@@ -161,7 +161,7 @@ required-features = ["grpc"]
 
 [[bin]]
 name = "wallet"
-required-features = ["storage"]
+required-features = ["storage", "grpc"]
 
 [[bin]]
 name = "signing"

@@ -30,11 +30,13 @@ use crate::{
     extraction::{extract_wallet_output, ExtractionConfig},
     scanning::{
         BlockInfo, BlockScanResult, BlockchainScanner, DefaultScanningLogic,
-        LegacyProgressCallback, ScanConfig, TipInfo, WalletScanConfig, WalletScanResult,
-        WalletScanner,
+        LegacyProgressCallback, ScanConfig, TipInfo, TransactionBroadcaster, WalletScanConfig,
+        WalletScanResult, WalletScanner,
     },
     wallet::Wallet,
 };
+#[cfg(feature = "grpc")]
+use tari_transaction_components::transaction_components::Transaction;
 
 #[cfg(feature = "grpc")]
 use crate::tari_rpc;
@@ -979,6 +981,25 @@ impl BlockchainScanner for GrpcBlockchainScanner {
     async fn get_block_by_height(&mut self, height: u64) -> WalletResult<Option<BlockInfo>> {
         let blocks = self.get_blocks_by_heights(vec![height]).await?;
         Ok(blocks.into_iter().next())
+    }
+}
+
+#[cfg(feature = "grpc")]
+#[async_trait(?Send)]
+impl TransactionBroadcaster for GrpcBlockchainScanner {
+    async fn submit_transaction(&mut self, transaction: Transaction) -> WalletResult<()> {
+        use crate::convert_transaction::convert_transaction;
+
+        let request: tari_rpc::SubmitTransactionRequest = tari_rpc::SubmitTransactionRequest {
+            transaction: Some(convert_transaction(transaction)),
+        };
+        self.client
+            .clone()
+            .submit_transaction(request)
+            .await
+            .map_err(|e| WalletError::GrpcError(e.to_string()))?;
+
+        Ok(())
     }
 }
 
