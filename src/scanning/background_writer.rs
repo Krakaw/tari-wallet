@@ -565,6 +565,12 @@ mod tests {
         ) -> WalletResult<usize> {
             Ok(0)
         }
+        async fn mark_outputs_locked(&self, _output_ids: &[u32]) -> WalletResult<usize> {
+            Ok(0)
+        }
+        async fn unlock_all_outputs(&self, _wallet_id: u32) -> WalletResult<usize> {
+            Ok(0)
+        }
         async fn key_manager_get_state(
             &self,
             _branch: &str,

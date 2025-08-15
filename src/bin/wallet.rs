@@ -174,6 +174,16 @@ enum Commands {
         base_url: String,
     },
 
+    UnncumberAll {
+        /// Database file path
+        #[arg(long, default_value = "./wallet.db")]
+        database: String,
+
+        /// Wallet name (if not provided, will prompt for selection)
+        #[arg(long)]
+        wallet_name: Option<String>,
+    },
+
     /// Clear all data from database
     ClearDatabase {
         /// Database file path
@@ -287,6 +297,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             base_url,
         } => {
             handle_broadcast_transaction(input_file, base_url).await?;
+        }
+        Commands::UnncumberAll {
+            database,
+            wallet_name,
+        } => {
+            handle_unencumber_all(database, wallet_name).await?;
         }
         Commands::ClearDatabase {
             database,
@@ -1157,6 +1173,24 @@ async fn handle_broadcast_transaction(
 
     let mut client = GrpcBlockchainScanner::new(base_url).await?;
     client.submit_transaction(transaction).await?;
+
+    Ok(())
+}
+
+async fn handle_unencumber_all(
+    database_path: String,
+    wallet_name: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let storage = if database_path == ":memory:" {
+        SqliteStorage::new_in_memory().await?
+    } else {
+        SqliteStorage::new(&database_path).await?
+    };
+
+    storage.initialize().await?;
+    let wallet = select_wallet(&storage, wallet_name).await?;
+
+    storage.unlock_all_outputs(wallet.id.unwrap()).await?;
 
     Ok(())
 }

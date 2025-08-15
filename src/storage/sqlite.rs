@@ -1784,16 +1784,20 @@ impl WalletStorage for SqliteStorage {
             .map_err(|e| WalletError::StorageError(format!("Failed to mark outputs locked: {e}")))
     }
 
-    async fn unlock_all_outputs(&self) -> WalletResult<usize> {
+    async fn unlock_all_outputs(&self, wallet_id: u32) -> WalletResult<usize> {
         self.connection
             .call(move |conn| {
                 let rows_affected = conn.execute(
                     r#"
                     UPDATE outputs
                     SET status = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE status = ?
+                    WHERE wallet_id = ? AND status = ?
                     "#,
-                    params![OutputStatus::Unspent as i64, OutputStatus::Locked as i64],
+                    params![
+                        OutputStatus::Unspent as i64,
+                        wallet_id as i64,
+                        OutputStatus::Locked as i64
+                    ],
                 )?;
                 Ok(rows_affected)
             })
