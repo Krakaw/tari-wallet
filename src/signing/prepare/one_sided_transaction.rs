@@ -246,6 +246,12 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
         Ok(result)
     }
 
+    async fn lock_outputs(&self, unspent_outputs: &UtxoSelection) -> WalletResult<()> {
+        let output_ids: Vec<u32> = unspent_outputs.utxos.iter().filter_map(|o| o.id).collect();
+        self.database.mark_outputs_locked(&output_ids).await?;
+        Ok(())
+    }
+
     pub async fn prepare(
         &self,
         dest_address: TariAddress,
@@ -281,6 +287,7 @@ impl<TWalletStorage: WalletStorage + Clone + 'static> OneSidedTransaction<TWalle
         let change_output = self
             .build_change_output(&unspent_outputs, &sender_address, &payment_id, &recipient)
             .await?;
+        self.lock_outputs(&unspent_outputs).await?;
 
         let info = OneSidedTransactionInfo {
             payment_id,

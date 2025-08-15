@@ -485,6 +485,12 @@ pub trait WalletStorage: Send + Sync {
     /// Get output count for a wallet
     async fn get_output_count(&self, wallet_id: u32) -> WalletResult<usize>;
 
+    /// Mark multiple outputs as locked
+    async fn mark_outputs_locked(&self, output_ids: &[u32]) -> WalletResult<usize>;
+
+    /// Unlock all outputs that are currently in the `Locked` state, setting them to `Unspent`.
+    async fn unlock_all_outputs(&self) -> WalletResult<usize>;
+
     // === Key manager state Methods ===
     async fn key_manager_get_state(
         &self,

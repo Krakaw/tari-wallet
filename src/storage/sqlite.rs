@@ -1735,6 +1735,72 @@ impl WalletStorage for SqliteStorage {
             .map_err(|e| WalletError::StorageError(format!("Failed to get output count: {e}")))
     }
 
+    async fn mark_outputs_locked(&self, output_ids: &[u32]) -> WalletResult<usize> {
+        if output_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let ids_to_lock: Vec<i64> = output_ids.iter().map(|&id| id as i64).collect();
+
+        self.connection
+            .call(move |conn| {
+                let mut total_affected = 0;
+                let tx = conn.transaction()?;
+
+                let placeholders = ids_to_lock
+                    .iter()
+                    .map(|_| "?")
+                    .collect::<Vec<&str>>()
+                    .join(",");
+
+                let query = format!(
+                    r#"
+                    UPDATE outputs
+                    SET status = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id IN ({}) AND status = ?
+                    "#,
+                    placeholders
+                );
+
+                let mut params_vec: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::new();
+                params_vec.push(Box::new(OutputStatus::Locked as i64));
+                for id in ids_to_lock {
+                    params_vec.push(Box::new(id));
+                }
+                params_vec.push(Box::new(OutputStatus::Unspent as i64));
+
+                let param_refs: Vec<&dyn rusqlite::ToSql> = params_vec
+                    .iter()
+                    .map(|p| p.as_ref() as &dyn rusqlite::ToSql)
+                    .collect();
+
+                let rows_affected = tx.execute(&query, &param_refs[..])?;
+                total_affected += rows_affected;
+
+                tx.commit()?;
+                Ok(total_affected)
+            })
+            .await
+            .map_err(|e| WalletError::StorageError(format!("Failed to mark outputs locked: {e}")))
+    }
+
+    async fn unlock_all_outputs(&self) -> WalletResult<usize> {
+        self.connection
+            .call(move |conn| {
+                let rows_affected = conn.execute(
+                    r#"
+                    UPDATE outputs
+                    SET status = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE status = ?
+                    "#,
+                    params![OutputStatus::Unspent as i64, OutputStatus::Locked as i64],
+                )?;
+                Ok(rows_affected)
+            })
+            .await
+            .map_err(|e| WalletError::StorageError(format!("Failed to unlock all outputs: {e}")))
+    }
+
     async fn close(&self) -> WalletResult<()> {
         // tokio-rusqlite automatically handles connection cleanup on drop
         Ok(())
