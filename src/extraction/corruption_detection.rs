@@ -386,7 +386,7 @@ impl CorruptionDetector {
         signature: &crate::data_structures::wallet_output::Signature,
     ) -> CorruptionDetectionResult {
         // Check if signature is empty
-        if signature.bytes.is_empty() {
+        if signature.u_a.is_empty() {
             return CorruptionDetectionResult::corrupted(
                 CorruptionType::SignatureCorruption,
                 "Signature is empty".to_string(),
@@ -396,7 +396,7 @@ impl CorruptionDetector {
         }
 
         // Check if signature is all zeros
-        if signature.bytes.iter().all(|&b| b == 0) {
+        if signature.u_a.iter().all(|&b| b == 0) {
             return CorruptionDetectionResult::corrupted(
                 CorruptionType::SignatureCorruption,
                 "Signature is all zeros".to_string(),

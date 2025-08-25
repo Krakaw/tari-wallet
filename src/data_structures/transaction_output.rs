@@ -39,6 +39,8 @@ pub struct TransactionOutput {
     pub encrypted_data: EncryptedData,
     /// The minimum value of the commitment that is proven by the range proof
     pub minimum_value_promise: MicroMinotari,
+    /// Core output features
+    pub output_features: tari_transaction_components::transaction_components::OutputFeatures,
 }
 
 impl TransactionOutput {
@@ -54,6 +56,7 @@ impl TransactionOutput {
         covenant: Covenant,
         encrypted_data: EncryptedData,
         minimum_value_promise: MicroMinotari,
+        output_features: tari_transaction_components::transaction_components::OutputFeatures,
     ) -> Self {
         Self {
             version,
@@ -66,6 +69,7 @@ impl TransactionOutput {
             covenant,
             encrypted_data,
             minimum_value_promise,
+            output_features,
         }
     }
 
@@ -81,6 +85,7 @@ impl TransactionOutput {
         covenant: Covenant,
         encrypted_data: EncryptedData,
         minimum_value_promise: MicroMinotari,
+        output_features: tari_transaction_components::transaction_components::OutputFeatures,
     ) -> Self {
         Self::new(
             1, // Current version
@@ -93,6 +98,7 @@ impl TransactionOutput {
             covenant,
             encrypted_data,
             minimum_value_promise,
+            output_features,
         )
     }
 
@@ -155,7 +161,11 @@ impl TransactionOutput {
 
         hasher.update(&self.script.bytes);
         hasher.update(self.sender_offset_public_key.as_bytes());
-        hasher.update(&self.metadata_signature.bytes);
+        hasher.update(&self.metadata_signature.ephemeral_commitment);
+        hasher.update(&self.metadata_signature.ephemeral_pubkey);
+        hasher.update(&self.metadata_signature.u_a);
+        hasher.update(&self.metadata_signature.u_x);
+        hasher.update(&self.metadata_signature.u_y);
         hasher.update(&self.covenant.bytes);
         hasher.update(borsh::to_vec(&self.encrypted_data).unwrap_or_default());
         hasher.update(self.minimum_value_promise.as_u64().to_le_bytes());
@@ -232,7 +242,7 @@ impl TransactionOutput {
         // This is a simplified version compared to the full cryptographic verification
         // in the reference implementation
 
-        if self.metadata_signature.bytes.is_empty() {
+        if self.metadata_signature.u_a.is_empty() {
             return Err(WalletError::ValidationError(
                 ValidationError::MetadataSignatureValidationFailed(
                     "Metadata signature is empty".to_string(),
@@ -241,7 +251,7 @@ impl TransactionOutput {
         }
 
         // Basic length and format validation
-        if self.metadata_signature.bytes.len() != 64 {
+        if self.metadata_signature.u_a.len() != 64 {
             return Err(WalletError::ValidationError(
                 ValidationError::MetadataSignatureValidationFailed(
                     "Invalid metadata signature length".to_string(),
@@ -263,7 +273,7 @@ impl TransactionOutput {
         ) {
             // For lightweight implementation, perform basic validation
             // The full implementation would verify cryptographic signatures
-            if self.metadata_signature.bytes.is_empty() {
+            if self.metadata_signature.u_a.is_empty() {
                 return Err(WalletError::ValidationError(
                     ValidationError::SignatureValidationFailed(
                         "Validator node signature is not valid".to_string(),
@@ -395,6 +405,8 @@ impl Default for TransactionOutput {
             covenant: Covenant::default(),
             encrypted_data: EncryptedData::default(),
             minimum_value_promise: MicroMinotari::new(0),
+            output_features:
+                tari_transaction_components::transaction_components::OutputFeatures::default(),
         }
     }
 }
@@ -409,7 +421,7 @@ impl Display for TransactionOutput {
             self.features,
             hex::encode(&self.script.bytes),
             hex::encode(self.sender_offset_public_key.as_bytes()),
-            hex::encode(&self.metadata_signature.bytes),
+            hex::encode(&self.metadata_signature.u_a),
             hex::encode(borsh::to_vec(&self.encrypted_data).unwrap_or_default()),
             self.proof_hex_display(false),
         )
@@ -470,6 +482,7 @@ mod test {
             covenant.clone(),
             encrypted_data.clone(),
             minimum_value_promise,
+            tari_transaction_components::transaction_components::OutputFeatures::default(),
         );
 
         assert_eq!(output.version(), 1);
@@ -561,7 +574,7 @@ mod test {
         assert!(output.verify_metadata_signature().is_err());
 
         let mut output_with_sig = output;
-        output_with_sig.metadata_signature.bytes = [1u8; 64].to_vec();
+        output_with_sig.metadata_signature.u_a = [1u8; 64].to_vec();
         // With proper length signature, should pass basic validation
         assert!(output_with_sig.verify_metadata_signature().is_ok());
     }
@@ -595,6 +608,7 @@ mod test {
             covenant,
             encrypted_data,
             minimum_value_promise,
+            tari_transaction_components::transaction_components::OutputFeatures::default(),
         );
 
         assert_eq!(output.version(), 1); // Should use current version

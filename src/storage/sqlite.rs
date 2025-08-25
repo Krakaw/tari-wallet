@@ -21,11 +21,16 @@ use crate::{
         wallet_transaction::{WalletState, WalletTransaction},
     },
     errors::{WalletError, WalletResult},
+    key_manager::{ImportedKeySql, KeyManagerStateSql, NewImportedKeySql, NewKeyManagerStateSql},
     storage::{
         OutputFilter, OutputStatus, SqlitePerformanceConfig, StorageStats, StoredOutput,
         StoredWallet, TransactionFilter, WalletStorage,
     },
 };
+use tari_common_types::types::CompressedPublicKey;
+
+#[cfg(feature = "storage")]
+use crate::key_management::seed_phrase::CipherSeed;
 
 // Add event storage imports
 #[cfg(feature = "storage")]
@@ -37,6 +42,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// SQLite storage backend for wallet transactions
 #[cfg(feature = "storage")]
+#[derive(Clone)]
 pub struct SqliteStorage {
     connection: Connection,
     performance_config: SqlitePerformanceConfig,
@@ -110,6 +116,7 @@ impl SqliteStorage {
             CREATE TABLE IF NOT EXISTS wallets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT UNIQUE NOT NULL,
+                master_key TEXT NOT NULL,
                 seed_phrase TEXT,
                 view_key_hex TEXT NOT NULL,
                 spend_key_hex TEXT,
@@ -154,8 +161,8 @@ impl SqliteStorage {
                 value BIGINT NOT NULL,
 
                 -- Spending keys
-                spending_key TEXT NOT NULL,
-                script_private_key TEXT NOT NULL,
+                commitment_mask_key TEXT NOT NULL,
+                script_key TEXT NOT NULL,
 
                 -- Script and covenant data
                 script BLOB NOT NULL,
@@ -181,6 +188,7 @@ impl SqliteStorage {
                 -- Payment information
                 encrypted_data BLOB NOT NULL,
                 minimum_value_promise BIGINT NOT NULL,
+                payment_id TEXT NOT NULL,
 
                 -- Range proof
                 rangeproof BLOB,
@@ -197,6 +205,24 @@ impl SqliteStorage {
 
                 -- Constraints
                 UNIQUE(wallet_id, commitment)
+            );
+
+            -- Key Manager states table
+            CREATE TABLE IF NOT EXISTS key_manager_states (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                wallet_id INTEGER NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+                branch_seed       TEXT UNIQUE         NOT NULL,
+                primary_key_index BLOB                NOT NULL,
+                timestamp         DATETIME            NOT NULL
+            );
+            
+            -- Key Manager imported keys table
+            CREATE TABLE IF NOT EXISTS imported_keys (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                wallet_id INTEGER NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+                private_key       BLOB UNIQUE         NOT NULL,
+                public_key        TEXT                NOT NULL,
+                timestamp         DATETIME            NOT NULL
             );
 
             -- Indexes for wallets table
@@ -225,6 +251,14 @@ impl SqliteStorage {
             CREATE INDEX IF NOT EXISTS idx_outputs_spent_tx ON outputs(spent_in_tx_id);
             CREATE INDEX IF NOT EXISTS idx_outputs_wallet_status ON outputs(wallet_id, status);
             CREATE INDEX IF NOT EXISTS idx_outputs_spendable ON outputs(wallet_id, status, maturity, script_lock_height);
+
+            -- Indexes for Key Manager states table
+            CREATE INDEX IF NOT EXISTS idx_key_manager_states_timestamp ON key_manager_states(wallet_id, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_key_manager_states_branch_seed ON key_manager_states(wallet_id, branch_seed);
+
+            -- Indexes for Key Manager imported keys table
+            CREATE INDEX IF NOT EXISTS idx_imported_keys_timestamp ON imported_keys(wallet_id, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_imported_keys_public_key ON imported_keys(wallet_id, public_key);
 
             -- Views for easy querying (NEW)
             CREATE VIEW IF NOT EXISTS spendable_outputs AS
@@ -278,9 +312,19 @@ impl SqliteStorage {
 
     /// Convert a database row to a StoredWallet
     fn row_to_wallet(row: &Row) -> rusqlite::Result<StoredWallet> {
+        use crate::HexUtils;
+
+        let master_key_hex: String = row.get("master_key")?;
+        let bytes = HexUtils::from_hex(&master_key_hex)
+            .map_err(|err| rusqlite::Error::InvalidParameterName(err.to_string()))?;
+        let master_key = CipherSeed::from_enciphered_bytes(&bytes, None).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+
         Ok(StoredWallet {
             id: Some(row.get::<_, i64>("id")? as u32),
             name: row.get("name")?,
+            master_key,
             seed_phrase: row.get("seed_phrase")?,
             view_key_hex: row.get("view_key_hex")?,
             spend_key_hex: row.get("spend_key_hex")?,
@@ -338,6 +382,8 @@ impl SqliteStorage {
             transaction_status,
             transaction_direction,
             is_mature: row.get("is_mature")?,
+            commitment_mask_private_key: None,
+            script_key: None,
         })
     }
 
@@ -349,8 +395,8 @@ impl SqliteStorage {
             commitment: row.get("commitment")?,
             hash: row.get("hash")?,
             value: row.get::<_, i64>("value")? as u64,
-            spending_key: row.get("spending_key")?,
-            script_private_key: row.get("script_private_key")?,
+            commitment_mask_key: row.get("commitment_mask_key")?,
+            script_key: row.get("script_key")?,
             script: row.get("script")?,
             input_data: row.get("input_data")?,
             covenant: row.get("covenant")?,
@@ -367,6 +413,7 @@ impl SqliteStorage {
             metadata_signature_u_y: row.get("metadata_signature_u_y")?,
             encrypted_data: row.get("encrypted_data")?,
             minimum_value_promise: row.get::<_, i64>("minimum_value_promise")? as u64,
+            payment_id: row.get("payment_id")?,
             rangeproof: row.get("rangeproof")?,
             status: row.get::<_, i64>("status")? as u32,
             mined_height: row.get::<_, Option<i64>>("mined_height")?.map(|h| h as u64),
@@ -496,22 +543,26 @@ impl WalletStorage for SqliteStorage {
 
     async fn save_wallet(&self, wallet: &StoredWallet) -> WalletResult<u32> {
         // Validate wallet before saving
+
+        use crate::HexUtils;
         wallet
             .validate()
             .map_err(|e| WalletError::StorageError(format!("Invalid wallet: {e}")))?;
 
         let wallet_clone = wallet.clone();
+        let master_key_hex = HexUtils::to_hex(&wallet_clone.master_key.encipher(None)?);
         self.connection.call(move |conn| {
             if let Some(wallet_id) = wallet_clone.id {
                 // Update existing wallet
                 let rows_affected = conn.execute(
                     r#"
                     UPDATE wallets
-                    SET name = ?, seed_phrase = ?, view_key_hex = ?, spend_key_hex = ?, birthday_block = ?, latest_scanned_block = ?
+                    SET name = ?, master_key = ?, seed_phrase = ?, view_key_hex = ?, spend_key_hex = ?, birthday_block = ?, latest_scanned_block = ?
                     WHERE id = ?
                     "#,
                     params![
                         wallet_clone.name,
+                        master_key_hex,
                         wallet_clone.seed_phrase,
                         wallet_clone.view_key_hex,
                         wallet_clone.spend_key_hex,
@@ -529,11 +580,12 @@ impl WalletStorage for SqliteStorage {
                 // Insert new wallet
                 conn.execute(
                     r#"
-                    INSERT INTO wallets (name, seed_phrase, view_key_hex, spend_key_hex, birthday_block, latest_scanned_block)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO wallets (name, master_key, seed_phrase, view_key_hex, spend_key_hex, birthday_block, latest_scanned_block)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     "#,
                     params![
                         wallet_clone.name,
+                        master_key_hex,
                         wallet_clone.seed_phrase,
                         wallet_clone.view_key_hex,
                         wallet_clone.spend_key_hex,
@@ -965,6 +1017,8 @@ impl WalletStorage for SqliteStorage {
                         transaction.transaction_status,
                         transaction.transaction_direction,
                         transaction.is_mature,
+                        None,
+                        None,
                     );
 
                     // If the transaction is spent, mark it as spent
@@ -1265,13 +1319,13 @@ impl WalletStorage for SqliteStorage {
                 let rows_affected = conn.execute(
                     r#"
                     UPDATE outputs
-                    SET wallet_id = ?, commitment = ?, hash = ?, value = ?, spending_key = ?,
-                    script_private_key = ?, script = ?, input_data = ?, covenant = ?,
+                    SET wallet_id = ?, commitment = ?, hash = ?, value = ?, commitment_mask_key = ?,
+                    script_key = ?, script = ?, input_data = ?, covenant = ?,
                     output_type = ?, features_json = ?, maturity = ?, script_lock_height = ?,
                     sender_offset_public_key = ?, metadata_signature_ephemeral_commitment = ?,
                     metadata_signature_ephemeral_pubkey = ?, metadata_signature_u_a = ?,
                     metadata_signature_u_x = ?, metadata_signature_u_y = ?, encrypted_data = ?,
-                    minimum_value_promise = ?, rangeproof = ?, status = ?, mined_height = ?,
+                    minimum_value_promise = ?, payment_id = ?, rangeproof = ?, status = ?, mined_height = ?,
                     block_hash = ?, spent_in_tx_id = ?
                     WHERE id = ?
                     "#,
@@ -1280,8 +1334,8 @@ impl WalletStorage for SqliteStorage {
                         output_clone.commitment,
                         output_clone.hash,
                         output_clone.value as i64,
-                        output_clone.spending_key,
-                        output_clone.script_private_key,
+                        output_clone.commitment_mask_key,
+                        output_clone.script_key,
                         output_clone.script,
                         output_clone.input_data,
                         output_clone.covenant,
@@ -1297,6 +1351,7 @@ impl WalletStorage for SqliteStorage {
                         output_clone.metadata_signature_u_y,
                         output_clone.encrypted_data,
                         output_clone.minimum_value_promise as i64,
+                        output_clone.payment_id,
                         output_clone.rangeproof,
                         output_clone.status as i64,
                         output_clone.mined_height.map(|h| h as i64),
@@ -1315,11 +1370,11 @@ impl WalletStorage for SqliteStorage {
                 conn.execute(
                     r#"
                     INSERT INTO outputs
-                    (wallet_id, commitment, hash, value, spending_key, script_private_key,
+                    (wallet_id, commitment, hash, value, commitment_mask_key, script_key,
                     script, input_data, covenant, output_type, features_json, maturity,
                     script_lock_height, sender_offset_public_key, metadata_signature_ephemeral_commitment,
                     metadata_signature_ephemeral_pubkey, metadata_signature_u_a, metadata_signature_u_x,
-                    metadata_signature_u_y, encrypted_data, minimum_value_promise, rangeproof,
+                    metadata_signature_u_y, encrypted_data, minimum_value_promise, payment_id, rangeproof,
                     status, mined_height, block_hash, spent_in_tx_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
@@ -1328,8 +1383,8 @@ impl WalletStorage for SqliteStorage {
                         output_clone.commitment,
                         output_clone.hash,
                         output_clone.value as i64,
-                        output_clone.spending_key,
-                        output_clone.script_private_key,
+                        output_clone.commitment_mask_key,
+                        output_clone.script_key,
                         output_clone.script,
                         output_clone.input_data,
                         output_clone.covenant,
@@ -1345,6 +1400,7 @@ impl WalletStorage for SqliteStorage {
                         output_clone.metadata_signature_u_y,
                         output_clone.encrypted_data,
                         output_clone.minimum_value_promise as i64,
+                        output_clone.payment_id,
                         output_clone.rangeproof,
                         output_clone.status as i64,
                         output_clone.mined_height.map(|h| h as i64),
@@ -1370,13 +1426,13 @@ impl WalletStorage for SqliteStorage {
                     let rows_affected = tx.execute(
                         r#"
                         UPDATE outputs
-                        SET wallet_id = ?, commitment = ?, hash = ?, value = ?, spending_key = ?,
-                            script_private_key = ?, script = ?, input_data = ?, covenant = ?,
+                        SET wallet_id = ?, commitment = ?, hash = ?, value = ?, commitment_mask_key = ?,
+                            script_key = ?, script = ?, input_data = ?, covenant = ?,
                             output_type = ?, features_json = ?, maturity = ?, script_lock_height = ?,
                             sender_offset_public_key = ?, metadata_signature_ephemeral_commitment = ?,
                             metadata_signature_ephemeral_pubkey = ?, metadata_signature_u_a = ?,
                             metadata_signature_u_x = ?, metadata_signature_u_y = ?, encrypted_data = ?,
-                            minimum_value_promise = ?, rangeproof = ?, status = ?, mined_height = ?,
+                            minimum_value_promise = ?, payment_id = ?, rangeproof = ?, status = ?, mined_height = ?,
                             spent_in_tx_id = ?
                         WHERE id = ?
                         "#,
@@ -1385,8 +1441,8 @@ impl WalletStorage for SqliteStorage {
                             output.commitment,
                             output.hash,
                             output.value as i64,
-                            output.spending_key,
-                            output.script_private_key,
+                            output.commitment_mask_key,
+                            output.script_key,
                             output.script,
                             output.input_data,
                             output.covenant,
@@ -1402,6 +1458,7 @@ impl WalletStorage for SqliteStorage {
                             output.metadata_signature_u_y,
                             output.encrypted_data,
                             output.minimum_value_promise as i64,
+                            output.payment_id,
                             output.rangeproof,
                             output.status as i64,
                             output.mined_height.map(|h| h as i64),
@@ -1418,11 +1475,11 @@ impl WalletStorage for SqliteStorage {
                     tx.execute(
                         r#"
                         INSERT INTO outputs
-                        (wallet_id, commitment, hash, value, spending_key, script_private_key,
+                        (wallet_id, commitment, hash, value, commitment_mask_key, script_key,
                          script, input_data, covenant, output_type, features_json, maturity,
                          script_lock_height, sender_offset_public_key, metadata_signature_ephemeral_commitment,
                          metadata_signature_ephemeral_pubkey, metadata_signature_u_a, metadata_signature_u_x,
-                         metadata_signature_u_y, encrypted_data, minimum_value_promise, rangeproof,
+                         metadata_signature_u_y, encrypted_data, minimum_value_promise, payment_id, rangeproof,
                          status, mined_height, block_hash, spent_in_tx_id)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(wallet_id, commitment) DO UPDATE SET
@@ -1436,8 +1493,8 @@ impl WalletStorage for SqliteStorage {
                             output.commitment,
                             output.hash,
                             output.value as i64,
-                            output.spending_key,
-                            output.script_private_key,
+                            output.commitment_mask_key,
+                            output.script_key,
                             output.script,
                             output.input_data,
                             output.covenant,
@@ -1453,6 +1510,7 @@ impl WalletStorage for SqliteStorage {
                             output.metadata_signature_u_y,
                             output.encrypted_data,
                             output.minimum_value_promise as i64,
+                            output.payment_id,
                             output.rangeproof,
                             output.status as i64,
                             output.mined_height.map(|h| h as i64),
@@ -1493,13 +1551,13 @@ impl WalletStorage for SqliteStorage {
                 let rows_affected = conn.execute(
                     r#"
                 UPDATE outputs
-                SET wallet_id = ?, commitment = ?, hash = ?, value = ?, spending_key = ?,
-                    script_private_key = ?, script = ?, input_data = ?, covenant = ?,
+                SET wallet_id = ?, commitment = ?, hash = ?, value = ?, commitment_mask_key = ?,
+                    script_key = ?, script = ?, input_data = ?, covenant = ?,
                     output_type = ?, features_json = ?, maturity = ?, script_lock_height = ?,
                     sender_offset_public_key = ?, metadata_signature_ephemeral_commitment = ?,
                     metadata_signature_ephemeral_pubkey = ?, metadata_signature_u_a = ?,
                     metadata_signature_u_x = ?, metadata_signature_u_y = ?, encrypted_data = ?,
-                    minimum_value_promise = ?, rangeproof = ?, status = ?, mined_height = ?,
+                    minimum_value_promise = ?, payment_id = ?, rangeproof = ?, status = ?, mined_height = ?,
                     spent_in_tx_id = ?
                 WHERE id = ?
                 "#,
@@ -1508,8 +1566,8 @@ impl WalletStorage for SqliteStorage {
                         output_clone.commitment,
                         output_clone.hash,
                         output_clone.value as i64,
-                        output_clone.spending_key,
-                        output_clone.script_private_key,
+                        output_clone.commitment_mask_key,
+                        output_clone.script_key,
                         output_clone.script,
                         output_clone.input_data,
                         output_clone.covenant,
@@ -1525,6 +1583,7 @@ impl WalletStorage for SqliteStorage {
                         output_clone.metadata_signature_u_y,
                         output_clone.encrypted_data,
                         output_clone.minimum_value_promise as i64,
+                        output_clone.payment_id,
                         output_clone.rangeproof,
                         output_clone.status as i64,
                         output_clone.mined_height.map(|h| h as i64),
@@ -1729,8 +1788,111 @@ impl WalletStorage for SqliteStorage {
             .map_err(|e| WalletError::StorageError(format!("Failed to get output count: {e}")))
     }
 
+    async fn mark_outputs_locked(&self, output_ids: &[u32]) -> WalletResult<usize> {
+        if output_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let ids_to_lock: Vec<i64> = output_ids.iter().map(|&id| id as i64).collect();
+
+        self.connection
+            .call(move |conn| {
+                let mut total_affected = 0;
+                let tx = conn.transaction()?;
+
+                let placeholders = ids_to_lock
+                    .iter()
+                    .map(|_| "?")
+                    .collect::<Vec<&str>>()
+                    .join(",");
+
+                let query = format!(
+                    r#"
+                    UPDATE outputs
+                    SET status = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id IN ({}) AND status = ?
+                    "#,
+                    placeholders
+                );
+
+                let mut params_vec: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::new();
+                params_vec.push(Box::new(OutputStatus::Locked as i64));
+                for id in ids_to_lock {
+                    params_vec.push(Box::new(id));
+                }
+                params_vec.push(Box::new(OutputStatus::Unspent as i64));
+
+                let param_refs: Vec<&dyn rusqlite::ToSql> = params_vec
+                    .iter()
+                    .map(|p| p.as_ref() as &dyn rusqlite::ToSql)
+                    .collect();
+
+                let rows_affected = tx.execute(&query, &param_refs[..])?;
+                total_affected += rows_affected;
+
+                tx.commit()?;
+                Ok(total_affected)
+            })
+            .await
+            .map_err(|e| WalletError::StorageError(format!("Failed to mark outputs locked: {e}")))
+    }
+
+    async fn unlock_all_outputs(&self, wallet_id: u32) -> WalletResult<usize> {
+        self.connection
+            .call(move |conn| {
+                let rows_affected = conn.execute(
+                    r#"
+                    UPDATE outputs
+                    SET status = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE wallet_id = ? AND status = ?
+                    "#,
+                    params![
+                        OutputStatus::Unspent as i64,
+                        wallet_id as i64,
+                        OutputStatus::Locked as i64
+                    ],
+                )?;
+                Ok(rows_affected)
+            })
+            .await
+            .map_err(|e| WalletError::StorageError(format!("Failed to unlock all outputs: {e}")))
+    }
+
     async fn close(&self) -> WalletResult<()> {
         // tokio-rusqlite automatically handles connection cleanup on drop
+        Ok(())
+    }
+
+    async fn key_manager_get_state(
+        &self,
+        branch: &str,
+        wallet_id: u32,
+    ) -> WalletResult<KeyManagerStateSql> {
+        let state = KeyManagerStateSql::get_state(branch, wallet_id, &self.connection).await?;
+        Ok(state)
+    }
+
+    async fn key_manager_commit_state(&self, state: &NewKeyManagerStateSql) -> WalletResult<()> {
+        state.commit(&self.connection).await?;
+        Ok(())
+    }
+
+    async fn key_manager_set_index(&self, id: i32, index: Vec<u8>) -> WalletResult<()> {
+        KeyManagerStateSql::set_index(id, index, &self.connection).await?;
+        Ok(())
+    }
+
+    async fn key_manager_get_imported_key(
+        &self,
+        key: &CompressedPublicKey,
+        wallet_id: u32,
+    ) -> WalletResult<ImportedKeySql> {
+        let key = ImportedKeySql::get_key(key, wallet_id, &self.connection).await?;
+        Ok(key)
+    }
+
+    async fn key_manager_commit_imported_key(&self, key: &NewImportedKeySql) -> WalletResult<()> {
+        key.commit(&self.connection).await?;
         Ok(())
     }
 }
@@ -1779,7 +1941,6 @@ impl EventStorage for SqliteStorage {
                 -- Ensure sequence numbers are unique per wallet
                 UNIQUE(wallet_id, sequence_number)
             );
-
             -- Indexes for efficient querying
             CREATE INDEX IF NOT EXISTS idx_events_wallet_id ON wallet_events(wallet_id);
             CREATE INDEX IF NOT EXISTS idx_events_event_type ON wallet_events(event_type);
@@ -2455,5 +2616,81 @@ impl SqliteStorage {
         };
 
         (where_clause, params)
+    }
+
+    #[tokio::test]
+    async fn test_key_manager_state_crud() {
+        let storage = SqliteStorage::new_in_memory().await.unwrap();
+        storage.initialize().await.unwrap();
+        let wallet_id = create_test_wallet(&storage).await;
+
+        // Create and save a new state
+        let new_state = NewKeyManagerStateSql::new(
+            KeyManagerState {
+                branch_seed: "test_branch".to_string(),
+                primary_key_index: 25,
+            },
+            wallet_id,
+        );
+        storage.key_manager_commit_state(&new_state).await.unwrap();
+
+        // Fetch the state and verify
+        let fetched_state = storage
+            .key_manager_get_state("test_branch", wallet_id)
+            .await
+            .unwrap();
+        assert_eq!(fetched_state.branch_seed, "test_branch");
+        assert_eq!(
+            fetched_state.primary_key_index,
+            vec![25, 0, 0, 0, 0, 0, 0, 0]
+        );
+
+        // Update the index
+        let new_index = vec![5, 6, 7, 8];
+        storage
+            .key_manager_set_index(fetched_state.id, new_index.clone())
+            .await
+            .unwrap();
+
+        // Fetch again to confirm update
+        let updated_state = storage
+            .key_manager_get_state("test_branch", wallet_id)
+            .await
+            .unwrap();
+        assert_eq!(updated_state.primary_key_index, new_index);
+    }
+
+    #[tokio::test]
+    async fn test_imported_keys_crud() {
+        let storage = SqliteStorage::new_in_memory().await.unwrap();
+        storage.initialize().await.unwrap();
+        let wallet_id = create_test_wallet(&storage).await;
+
+        // Create a test key pair
+        let private_key = PrivateKey::from_hex(
+            "6e43d7563adfc5a325864a3354ad645a2e83a86a39342448b54b255244203707",
+        )
+        .unwrap();
+        let public_key = CompressedPublicKey::from_secret_key(&private_key);
+
+        // Create and save a new imported key
+        let new_imported_key = NewImportedKeySql {
+            wallet_id,
+            private_key: private_key.to_vec(),
+            public_key: public_key.to_hex(),
+            timestamp: Utc::now().naive_utc(),
+        };
+        storage
+            .key_manager_commit_imported_key(&new_imported_key)
+            .await
+            .unwrap();
+
+        // Fetch the key and verify
+        let fetched_key = storage
+            .key_manager_get_imported_key(&public_key, wallet_id)
+            .await
+            .unwrap();
+        assert_eq!(fetched_key.private_key, private_key.to_vec());
+        assert_eq!(fetched_key.public_key, public_key.to_hex());
     }
 }

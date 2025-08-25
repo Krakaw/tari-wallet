@@ -157,9 +157,7 @@ fn create_test_output(
     };
 
     // Create metadata signature (mock)
-    let metadata_signature = Signature {
-        bytes: vec![0x06; 64],
-    };
+    let metadata_signature = Signature::default();
 
     // Create covenant
     let covenant = Covenant {

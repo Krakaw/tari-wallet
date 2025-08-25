@@ -261,9 +261,7 @@ mod tests {
             range_proof,
             Script::default(),
             CompressedPublicKey::new([0x01; 32]),
-            Signature {
-                bytes: vec![0x01; 64],
-            },
+            Signature::default(),
             Covenant::default(),
             encrypted_data,
             MicroMinotari::from(0),

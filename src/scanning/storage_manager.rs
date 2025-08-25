@@ -301,8 +301,12 @@ impl ScannerStorage {
         if wallets.is_empty() {
             if let Some(scan_ctx) = scan_context {
                 // Create default wallet automatically
-                let wallet =
-                    StoredWallet::view_only("default".to_string(), scan_ctx.view_key.clone(), 0);
+                let wallet = StoredWallet::view_only(
+                    "default".to_string(),
+                    CipherSeed::new(),
+                    scan_ctx.view_key.clone(),
+                    0,
+                );
                 let wallet_id = storage.save_wallet(&wallet).await?;
                 // Note: In library mode, success information should be logged by caller
                 Ok(Some(wallet_id))

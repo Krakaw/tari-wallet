@@ -17,6 +17,7 @@ use crate::{
         types::PrivateKey,
         wallet_output::OutputType,
         wallet_transaction::WalletState,
+        CompressedPublicKey, Script,
     },
     errors::WalletResult,
 };
@@ -27,6 +28,9 @@ use crate::scanning::BlockInfo;
 // Add rayon for parallel processing
 #[cfg(feature = "grpc")]
 use rayon::prelude::*;
+use tari_script::{Opcode, TariScript};
+use tari_utilities::hex::Hex;
+use tari_utilities::ByteArray;
 
 /// A block with wallet-focused processing capabilities
 ///
@@ -62,6 +66,8 @@ struct OutputProcessingResult {
     payment_id: PaymentId,
     transaction_status: TransactionStatus,
     is_mature: bool,
+    commitment_mask_private_key: PrivateKey,
+    script_key: Option<CompressedPublicKey>,
 }
 
 impl Block {
@@ -142,10 +148,21 @@ impl Block {
                 result.transaction_status,
                 TransactionDirection::Inbound,
                 result.is_mature,
+                Some(result.commitment_mask_private_key),
+                result.script_key,
             );
         }
 
         Ok(found_count)
+    }
+
+    fn extract_script_key(&self, script: &Script) -> Option<CompressedPublicKey> {
+        let tari_script = TariScript::from_bytes(&script.bytes).ok()?;
+        if let [Opcode::PushPubKey(pk)] = tari_script.as_slice() {
+            let compressed_pk = CompressedPublicKey::from_hex(&pk.to_hex()).ok()?;
+            return Some(compressed_pk);
+        }
+        None
     }
 
     /// Process a single output with optimized decryption strategy
@@ -163,12 +180,19 @@ impl Block {
             return None;
         }
 
+        let script_key = self.extract_script_key(&output.script);
+
         // Handle coinbase outputs
         if is_coinbase {
-            if let Some(result) = self.try_coinbase_output_optimized(output_index, output, view_key)
-            {
+            if let Some(result) = self.try_coinbase_output_optimized(
+                output_index,
+                output,
+                view_key,
+                script_key.clone(),
+            ) {
                 return Some(result);
             }
+            return None;
         }
 
         // Skip further processing if no encrypted data
@@ -177,16 +201,28 @@ impl Block {
         }
 
         // Try regular decryption first (most common case)
-        if let Some(result) = self.try_regular_decryption_optimized(output_index, output, view_key)
-        {
-            return Some(result);
+        if let Some(script_key) = script_key {
+            if let Some(result) = self.try_regular_decryption_optimized(
+                output_index,
+                output,
+                view_key,
+                script_key,
+                TransactionStatus::MinedConfirmed,
+                true,
+            ) {
+                return Some(result);
+            }
         }
 
         // Try one-sided decryption only if sender offset key is present
         if !output.sender_offset_public_key.as_bytes().is_empty() {
-            if let Some(result) =
-                self.try_one_sided_decryption_optimized(output_index, output, view_key)
-            {
+            if let Some(result) = self.try_one_sided_decryption_optimized(
+                output_index,
+                output,
+                view_key,
+                TransactionStatus::OneSidedConfirmed,
+                true,
+            ) {
                 return Some(result);
             }
         }
@@ -200,65 +236,72 @@ impl Block {
         output_index: usize,
         output: &TransactionOutput,
         view_key: &PrivateKey,
+        script_key: Option<CompressedPublicKey>,
     ) -> Option<OutputProcessingResult> {
         let coinbase_value = output.minimum_value_promise.as_u64();
         if coinbase_value == 0 {
             return None;
         }
 
-        // For coinbase outputs, verify ownership through encrypted data decryption
-        let mut is_ours = false;
+        let is_mature = self.height >= output.features.maturity;
+        let transaction_status = if is_mature {
+            TransactionStatus::CoinbaseConfirmed
+        } else {
+            TransactionStatus::CoinbaseUnconfirmed
+        };
 
-        if !output.encrypted_data.as_bytes().is_empty() {
-            // Try regular decryption for ownership verification first (faster)
-            is_ours = EncryptedData::decrypt_data(view_key, &output.commitment, &output.encrypted_data)
-                .is_ok()
-            // Only try one-sided decryption if regular failed and sender offset key exists
-            || (!output.sender_offset_public_key.as_bytes().is_empty() && EncryptedData::decrypt_one_sided_data(
-                    view_key,
-                    &output.commitment,
-                    &output.sender_offset_public_key,
-                    &output.encrypted_data,
-                )
-                .is_ok());
+        // Try regular decryption for ownership verification first (faster)
+        if let Some(sk) = script_key {
+            if let Some(result) = self.try_regular_decryption_optimized(
+                output_index,
+                output,
+                view_key,
+                sk,
+                transaction_status,
+                is_mature,
+            ) {
+                return Some(result);
+            }
         }
 
-        if is_ours {
-            // Check if coinbase is mature (can be spent)
-            let is_mature = self.height >= output.features.maturity;
-
-            return Some(OutputProcessingResult {
+        // Only try one-sided decryption if regular failed and sender offset key exists
+        if !output.sender_offset_public_key.as_bytes().is_empty() {
+            if let Some(result) = self.try_one_sided_decryption_optimized(
                 output_index,
-                value: coinbase_value,
-                payment_id: PaymentId::Empty, // Coinbase outputs typically have no payment ID
-                transaction_status: if is_mature {
-                    TransactionStatus::CoinbaseConfirmed
-                } else {
-                    TransactionStatus::CoinbaseUnconfirmed
-                },
+                output,
+                view_key,
+                transaction_status,
                 is_mature,
-            });
+            ) {
+                return Some(result);
+            }
         }
 
         None
     }
 
     /// Optimized regular encrypted data decryption
+    #[allow(clippy::too_many_arguments)]
     fn try_regular_decryption_optimized(
         &self,
         output_index: usize,
         output: &TransactionOutput,
         view_key: &PrivateKey,
+        script_key: CompressedPublicKey,
+        transaction_status: TransactionStatus,
+        is_mature: bool,
     ) -> Option<OutputProcessingResult> {
-        if let Ok((value, _mask, payment_id)) =
+        if let Ok((value, commitment_mask_private_key, payment_id)) =
             EncryptedData::decrypt_data(view_key, &output.commitment, &output.encrypted_data)
         {
             return Some(OutputProcessingResult {
                 output_index,
                 value: value.as_u64(),
                 payment_id,
-                transaction_status: TransactionStatus::MinedConfirmed,
-                is_mature: true, // Regular payments are always mature
+                transaction_status,
+                is_mature,
+                commitment_mask_private_key,
+                script_key: Some(script_key),
             });
         }
         None
@@ -270,19 +313,25 @@ impl Block {
         output_index: usize,
         output: &TransactionOutput,
         view_key: &PrivateKey,
+        transaction_status: TransactionStatus,
+        is_mature: bool,
     ) -> Option<OutputProcessingResult> {
-        if let Ok((value, _mask, payment_id)) = EncryptedData::decrypt_one_sided_data(
-            view_key,
-            &output.commitment,
-            &output.sender_offset_public_key,
-            &output.encrypted_data,
-        ) {
+        if let Ok((value, commitment_mask_private_key, payment_id)) =
+            EncryptedData::decrypt_one_sided_data(
+                view_key,
+                &output.commitment,
+                &output.sender_offset_public_key,
+                &output.encrypted_data,
+            )
+        {
             return Some(OutputProcessingResult {
                 output_index,
                 value: value.as_u64(),
                 payment_id,
-                transaction_status: TransactionStatus::OneSidedConfirmed,
-                is_mature: true, // One-sided payments are always mature
+                transaction_status,
+                is_mature,
+                commitment_mask_private_key,
+                script_key: None,
             });
         }
         None
@@ -512,6 +561,7 @@ mod tests {
             Default::default(),
             EncryptedData::default(),
             MicroMinotari::new(value),
+            tari_transaction_components::transaction_components::OutputFeatures::default(),
         )
     }
 
@@ -720,6 +770,8 @@ mod tests {
             TransactionStatus::MinedConfirmed,
             TransactionDirection::Inbound,
             true,
+            None,
+            None,
         );
 
         // Test 1: HTTP-style input (has output hash, zero commitment)
@@ -744,6 +796,8 @@ mod tests {
             TransactionStatus::MinedConfirmed,
             TransactionDirection::Inbound,
             true,
+            None,
+            None,
         );
 
         // Test 2: GRPC-style input (has commitment, zero output hash)
@@ -776,6 +830,8 @@ mod tests {
             TransactionStatus::MinedConfirmed,
             TransactionDirection::Inbound,
             true,
+            None,
+            None,
         );
         wallet_state.add_received_output(
             100,
@@ -787,6 +843,8 @@ mod tests {
             TransactionStatus::MinedConfirmed,
             TransactionDirection::Inbound,
             true,
+            None,
+            None,
         );
 
         // Create inputs that spend both outputs
@@ -930,6 +988,8 @@ mod tests {
             TransactionStatus::MinedConfirmed,
             TransactionDirection::Inbound,
             true,
+            None,
+            None,
         );
 
         // Also add a zero-value transaction that should be filtered out
@@ -944,6 +1004,8 @@ mod tests {
             TransactionStatus::MinedConfirmed,
             TransactionDirection::Inbound,
             true,
+            None,
+            None,
         );
 
         println!(
@@ -1041,6 +1103,8 @@ mod tests {
             TransactionStatus::MinedConfirmed,
             TransactionDirection::Inbound,
             true,
+            None,
+            None,
         );
 
         // Create a block with both outputs and inputs

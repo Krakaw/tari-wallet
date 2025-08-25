@@ -193,8 +193,11 @@ impl ExecutionStack {
     Default,
 )]
 pub struct Signature {
-    /// Signature bytes
-    pub bytes: Vec<u8>,
+    pub ephemeral_commitment: Vec<u8>,
+    pub ephemeral_pubkey: Vec<u8>,
+    pub u_a: Vec<u8>,
+    pub u_x: Vec<u8>,
+    pub u_y: Vec<u8>,
 }
 
 /// Simplified range proof for lightweight wallet operations
@@ -528,19 +531,6 @@ impl HexEncodable for Script {
 
 impl HexValidatable for Script {}
 
-impl HexEncodable for Signature {
-    fn to_hex(&self) -> String {
-        self.bytes.encode_hex()
-    }
-
-    fn from_hex(hex: &str) -> Result<Self, HexError> {
-        let bytes = hex::decode(hex).map_err(|e| HexError::InvalidHex(e.to_string()))?;
-        Ok(Self { bytes })
-    }
-}
-
-impl HexValidatable for Signature {}
-
 impl HexEncodable for RangeProof {
     fn to_hex(&self) -> String {
         self.bytes.encode_hex()
@@ -641,9 +631,7 @@ mod test {
         let input_data = ExecutionStack {
             items: vec![vec![70, 80, 90]],
         };
-        let metadata_signature = Signature {
-            bytes: vec![100, 110, 120],
-        };
+        let metadata_signature = Signature::default();
         let range_proof = Some(RangeProof {
             bytes: vec![130, 140, 150],
         });
@@ -740,9 +728,6 @@ mod test {
         let covenant = Covenant {
             bytes: vec![6, 7, 8, 9, 10],
         };
-        let signature = Signature {
-            bytes: vec![11, 12, 13, 14, 15],
-        };
         let range_proof = RangeProof {
             bytes: vec![16, 17, 18, 19, 20],
         };
@@ -753,7 +738,6 @@ mod test {
 
         assert_eq!(script.bytes, vec![1, 2, 3, 4, 5]);
         assert_eq!(covenant.bytes, vec![6, 7, 8, 9, 10]);
-        assert_eq!(signature.bytes, vec![11, 12, 13, 14, 15]);
         assert_eq!(range_proof.bytes, vec![16, 17, 18, 19, 20]);
         assert_eq!(execution_stack.items, vec![vec![21, 22], vec![23, 24, 25]]);
 
@@ -915,13 +899,6 @@ mod test {
         let decoded = Script::from_hex(&hex).unwrap();
         assert_eq!(script, decoded);
 
-        let signature = Signature {
-            bytes: vec![0xCA, 0xFE, 0xBA, 0xBE],
-        };
-        let hex = signature.to_hex();
-        let decoded = Signature::from_hex(&hex).unwrap();
-        assert_eq!(signature, decoded);
-
         let range_proof = RangeProof {
             bytes: vec![0x12, 0x34, 0x56, 0x78],
         };
@@ -948,7 +925,6 @@ mod test {
     fn test_hex_encoding_errors() {
         // Test invalid hex strings
         assert!(Script::from_hex("invalid_hex").is_err());
-        assert!(Signature::from_hex("ZZ").is_err());
         assert!(RangeProof::from_hex("").is_ok()); // Empty is valid
         assert!(Covenant::from_hex("deadbeef").is_ok()); // Valid hex
         assert!(ExecutionStack::from_hex("not_valid_borsh").is_err());
@@ -1002,7 +978,7 @@ mod test {
         assert!(default_execution_stack.items.is_empty());
 
         let default_signature = Signature::default();
-        assert!(default_signature.bytes.is_empty());
+        assert!(default_signature.u_a.is_empty());
 
         let default_range_proof = RangeProof::default();
         assert!(default_range_proof.bytes.is_empty());

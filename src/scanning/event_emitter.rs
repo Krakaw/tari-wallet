@@ -213,6 +213,13 @@ impl ScanEventEmitter {
             amount: Some(transaction.value),
             is_mine: true,
             key_index: None,
+            minimum_value_promise: output.minimum_value_promise.into(),
+            metadata_signature: output.metadata_signature.clone(),
+            covenant: output.covenant.clone(),
+            sender_offset_public_key: output.sender_offset_public_key.clone(),
+            commitment_mask_private_key: transaction.commitment_mask_private_key.clone(),
+            script_key: transaction.script_key.clone(),
+            output_features: output.output_features.clone(),
         };
 
         let block_info = BlockInfo::new(

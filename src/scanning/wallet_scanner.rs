@@ -100,8 +100,8 @@ fn create_stored_output_from_blockchain_data(
         value: transaction.value,
 
         // Spending keys (derived from entropy)
-        spending_key: hex::encode(spending_key.as_bytes()),
-        script_private_key: hex::encode(script_private_key.as_bytes()),
+        commitment_mask_key: hex::encode(spending_key.as_bytes()),
+        script_key: hex::encode(script_private_key.as_bytes()),
 
         // Script and covenant data
         script: blockchain_output.script.bytes.clone(),
@@ -124,23 +124,22 @@ fn create_stored_output_from_blockchain_data(
             .to_vec(),
         // Note: Signature only contains raw bytes field. The structured fields
         // below are not available in the current data structure, so we use zero values
-        metadata_signature_ephemeral_commitment: vec![0u8; 32], // Not available in Signature
-        metadata_signature_ephemeral_pubkey: vec![0u8; 32],     // Not available in Signature
-        metadata_signature_u_a: if blockchain_output.metadata_signature.bytes.len() >= 32 {
-            blockchain_output.metadata_signature.bytes[0..32].to_vec()
-        } else {
-            vec![0u8; 32]
-        },
-        metadata_signature_u_x: if blockchain_output.metadata_signature.bytes.len() >= 64 {
-            blockchain_output.metadata_signature.bytes[32..64].to_vec()
-        } else {
-            vec![0u8; 32]
-        },
-        metadata_signature_u_y: vec![0u8; 32], // Not available in Signature
+        metadata_signature_ephemeral_commitment: blockchain_output
+            .metadata_signature
+            .ephemeral_commitment
+            .clone(),
+        metadata_signature_ephemeral_pubkey: blockchain_output
+            .metadata_signature
+            .ephemeral_pubkey
+            .clone(),
+        metadata_signature_u_a: blockchain_output.metadata_signature.u_a.clone(),
+        metadata_signature_u_x: blockchain_output.metadata_signature.u_x.clone(),
+        metadata_signature_u_y: blockchain_output.metadata_signature.u_y.clone(),
 
         // Payment information
         encrypted_data: blockchain_output.encrypted_data.as_bytes().to_vec(),
         minimum_value_promise: blockchain_output.minimum_value_promise.as_u64(),
+        payment_id: transaction.payment_id.to_bytes(),
 
         // Range proof
         rangeproof: blockchain_output.proof.as_ref().map(|p| p.bytes.clone()),
@@ -207,7 +206,7 @@ pub fn extract_utxo_outputs_from_wallet_state(
 }
 
 /// Extract script input data and script lock height from script bytes
-fn extract_script_data(script_bytes: &[u8]) -> WalletResult<(Vec<u8>, u64)> {
+pub fn extract_script_data(script_bytes: &[u8]) -> WalletResult<(Vec<u8>, u64)> {
     // If script is empty, return empty data
     if script_bytes.is_empty() {
         return Ok((Vec::new(), 0));

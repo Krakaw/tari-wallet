@@ -30,11 +30,13 @@ use crate::{
     extraction::{extract_wallet_output, ExtractionConfig},
     scanning::{
         BlockInfo, BlockScanResult, BlockchainScanner, DefaultScanningLogic,
-        LegacyProgressCallback, ScanConfig, TipInfo, WalletScanConfig, WalletScanResult,
-        WalletScanner,
+        LegacyProgressCallback, ScanConfig, TipInfo, TransactionBroadcaster, WalletScanConfig,
+        WalletScanResult, WalletScanner,
     },
     wallet::Wallet,
 };
+#[cfg(feature = "grpc")]
+use tari_transaction_components::transaction_components::Transaction;
 
 #[cfg(feature = "grpc")]
 use crate::tari_rpc;
@@ -124,6 +126,8 @@ impl GrpcBlockchainScanner {
         grpc_output: &tari_rpc::TransactionOutput,
     ) -> WalletResult<TransactionOutput> {
         // Convert OutputFeatures
+
+        use crate::convert_output_features::convert_output_features;
         let features = grpc_output
             .features
             .as_ref()
@@ -198,7 +202,11 @@ impl GrpcBlockchainScanner {
             .metadata_signature
             .as_ref()
             .map(|sig| Signature {
-                bytes: sig.u_a.clone(),
+                ephemeral_commitment: sig.ephemeral_commitment.clone(),
+                ephemeral_pubkey: sig.ephemeral_pubkey.clone(),
+                u_a: sig.u_a.clone(),
+                u_x: sig.u_x.clone(),
+                u_y: sig.u_y.clone(),
             })
             .unwrap_or_default();
 
@@ -214,6 +222,12 @@ impl GrpcBlockchainScanner {
         // Convert Minimum Value Promise
         let minimum_value_promise = MicroMinotari::new(grpc_output.minimum_value_promise);
 
+        let output_features = grpc_output
+            .features
+            .clone()
+            .map(convert_output_features)
+            .unwrap_or_default();
+
         let output = TransactionOutput {
             version: grpc_output.version as u8,
             features,
@@ -225,6 +239,7 @@ impl GrpcBlockchainScanner {
             covenant,
             encrypted_data,
             minimum_value_promise,
+            output_features,
         };
 
         Ok(output)
@@ -979,6 +994,27 @@ impl BlockchainScanner for GrpcBlockchainScanner {
     async fn get_block_by_height(&mut self, height: u64) -> WalletResult<Option<BlockInfo>> {
         let blocks = self.get_blocks_by_heights(vec![height]).await?;
         Ok(blocks.into_iter().next())
+    }
+}
+
+#[cfg(feature = "grpc")]
+#[async_trait(?Send)]
+impl TransactionBroadcaster for GrpcBlockchainScanner {
+    async fn submit_transaction(&mut self, transaction: Transaction) -> WalletResult<i32> {
+        use crate::convert_transaction::convert_transaction;
+
+        let request: tari_rpc::SubmitTransactionRequest = tari_rpc::SubmitTransactionRequest {
+            transaction: Some(convert_transaction(transaction)),
+        };
+        let response = self
+            .client
+            .clone()
+            .submit_transaction(request)
+            .await
+            .map_err(|e| WalletError::GrpcError(e.to_string()))?
+            .into_inner();
+
+        Ok(response.result)
     }
 }
 

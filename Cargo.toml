@@ -24,9 +24,11 @@ thiserror = "1.0"
 zeroize = { version = "1.7", features = ["derive"] } # Secure memory clearing
 
 # === Tari Ecosystem Dependencies ===
-tari_crypto = { version = "0.22" }
+tari_common_types  = { git = "https://github.com/SWvheerden/tari/", rev = "3161c5f6e154ca963d6afe7132c2a85859ffa246" }
+tari_crypto = { version = "0.22.1", features = ["borsh"] }
 tari_utilities = { version = "0.8", features = ["std"] }
-tari_script = { version = "1.0.0-rc.5" }
+tari_script = { git = "https://github.com/SWvheerden/tari/", rev = "3161c5f6e154ca963d6afe7132c2a85859ffa246" }
+tari_transaction_components = { git = "https://github.com/SWvheerden/tari/", rev = "3161c5f6e154ca963d6afe7132c2a85859ffa246" }
 
 # === Cryptographic Primitives ===
 chacha20poly1305 = "0.10" # AEAD encryption
@@ -50,6 +52,7 @@ crc32fast = "1.4"                                            # CRC32 checksums
 primitive-types = { version = "0.12", features = ["serde"] } # U256, H256, etc.
 lazy_static = "1.4"                                          # Static variable initialization
 chrono = { version = "0.4", features = ["serde"] }           # Date and time handling
+semver = { version = "1.0", features = ["serde"] }
 
 # === WebAssembly Support ===
 wasm-bindgen = "0.2"
@@ -158,7 +161,7 @@ required-features = ["grpc"]
 
 [[bin]]
 name = "wallet"
-required-features = ["storage"]
+required-features = ["storage", "grpc"]
 
 [[bin]]
 name = "signing"

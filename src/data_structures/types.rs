@@ -10,9 +10,11 @@ use curve25519_dalek::{
 use hex::ToHex;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use tari_crypto::ristretto::RistrettoSecretKey;
 use zeroize::Zeroize;
 
 use crate::hex_utils::{HexEncodable, HexError, HexValidatable};
+use tari_utilities::ByteArray;
 
 /// Custom serde module for Scalar
 mod scalar_serde {
@@ -273,6 +275,22 @@ impl<'a> Mul<&'a PrivateKey> for &PrivateKey {
     }
 }
 
+impl TryFrom<&PrivateKey> for RistrettoSecretKey {
+    type Error = tari_utilities::ByteArrayError;
+
+    fn try_from(key: &PrivateKey) -> Result<Self, Self::Error> {
+        RistrettoSecretKey::from_canonical_bytes(&key.as_bytes())
+    }
+}
+
+impl TryFrom<&RistrettoSecretKey> for PrivateKey {
+    type Error = String;
+
+    fn try_from(key: &RistrettoSecretKey) -> Result<Self, Self::Error> {
+        PrivateKey::from_canonical_bytes(key.as_bytes())
+    }
+}
+
 /// Micro Minotari amount (smallest unit)
 #[derive(
     Debug,
@@ -444,6 +462,15 @@ impl CompressedPublicKey {
         Ok(Self::new(key_bytes))
     }
 
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != 32 {
+            return Err("Compressed public key must be 32 bytes".to_string());
+        }
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(bytes);
+        Ok(Self::new(key_bytes))
+    }
+
     /// Decompress to RistrettoPoint
     pub fn decompress(&self) -> Option<RistrettoPoint> {
         self.0.decompress()
@@ -475,6 +502,22 @@ impl HexValidatable for CompressedPublicKey {}
 impl fmt::Display for CompressedPublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_hex())
+    }
+}
+
+impl TryFrom<&CompressedPublicKey> for tari_common_types::types::CompressedPublicKey {
+    type Error = tari_utilities::ByteArrayError;
+
+    fn try_from(key: &CompressedPublicKey) -> Result<Self, Self::Error> {
+        tari_common_types::types::CompressedPublicKey::from_canonical_bytes(&key.as_bytes())
+    }
+}
+
+impl TryFrom<&tari_common_types::types::CompressedPublicKey> for CompressedPublicKey {
+    type Error = String;
+
+    fn try_from(key: &tari_common_types::types::CompressedPublicKey) -> Result<Self, Self::Error> {
+        CompressedPublicKey::from_canonical_bytes(key.as_bytes())
     }
 }
 
