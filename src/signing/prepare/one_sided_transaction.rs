@@ -2,6 +2,7 @@ use crate::{
     key_manager::TransactionKeyManager,
     models::{
         marshal_output_pair::{MarshalOutputPair, OutputPair},
+        transaction_metadata::TransactionMetadata,
         types::{
             get_supported_version, OneSidedTransactionInfo, PaymentRecipient,
             PrepareOneSidedTransactionForSigningResult,
@@ -27,7 +28,6 @@ use tari_transaction_components::{
     transaction_components::{
         covenants::Covenant,
         memo_field::{MemoField, TxType},
-        transaction_metadata::TransactionMetadata,
         EncryptedData, OutputFeatures, TransactionOutput, TransactionOutputVersion, WalletOutput,
     },
 };

@@ -24,11 +24,11 @@ thiserror = "1.0"
 zeroize = { version = "1.7", features = ["derive"] } # Secure memory clearing
 
 # === Tari Ecosystem Dependencies ===
-tari_common_types  = { git = "https://github.com/SWvheerden/tari/", rev = "14aab2f17b08ce76a6e55d98ce12540e94e03b78" }
+tari_common_types  = { git = "https://github.com/SWvheerden/tari/", rev = "3161c5f6e154ca963d6afe7132c2a85859ffa246" }
 tari_crypto = { version = "0.22.1", features = ["borsh"] }
 tari_utilities = { version = "0.8", features = ["std"] }
-tari_script = { git = "https://github.com/SWvheerden/tari/", rev = "14aab2f17b08ce76a6e55d98ce12540e94e03b78" }
-tari_transaction_components = { git = "https://github.com/SWvheerden/tari/", rev = "14aab2f17b08ce76a6e55d98ce12540e94e03b78" }
+tari_script = { git = "https://github.com/SWvheerden/tari/", rev = "3161c5f6e154ca963d6afe7132c2a85859ffa246" }
+tari_transaction_components = { git = "https://github.com/SWvheerden/tari/", rev = "3161c5f6e154ca963d6afe7132c2a85859ffa246" }
 
 # === Cryptographic Primitives ===
 chacha20poly1305 = "0.10" # AEAD encryption

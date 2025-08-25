@@ -3,13 +3,13 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tari_common_types::{tari_address::TariAddress, transaction::TxId, types::FixedHash};
 use tari_transaction_components::{
     tari_amount::MicroMinotari,
-    transaction_components::{
-        memo_field::MemoField, transaction_metadata::TransactionMetadata, OutputFeatures,
-        Transaction, WalletOutput,
-    },
+    transaction_components::{memo_field::MemoField, OutputFeatures, Transaction, WalletOutput},
 };
 
-use crate::{models::marshal_output_pair::MarshalOutputPair, SerializationError, WalletError};
+use crate::{
+    models::{marshal_output_pair::MarshalOutputPair, transaction_metadata::TransactionMetadata},
+    SerializationError, WalletError,
+};
 
 const SUPPORTED_VERSION: &str = "1.0.0";
 

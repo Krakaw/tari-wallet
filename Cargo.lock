@@ -1878,8 +1878,8 @@ dependencies = [
 
 [[package]]
 name = "minotari_ledger_wallet_common"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/SWvheerden/tari/?rev=14aab2f17b08ce76a6e55d98ce12540e94e03b78#14aab2f17b08ce76a6e55d98ce12540e94e03b78"
+version = "5.0.0-pre.4"
+source = "git+https://github.com/SWvheerden/tari/?rev=3161c5f6e154ca963d6afe7132c2a85859ffa246#3161c5f6e154ca963d6afe7132c2a85859ffa246"
 dependencies = [
  "bs58 0.5.1",
 ]
@@ -3159,8 +3159,8 @@ dependencies = [
 
 [[package]]
 name = "tari_common"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/SWvheerden/tari/?rev=14aab2f17b08ce76a6e55d98ce12540e94e03b78#14aab2f17b08ce76a6e55d98ce12540e94e03b78"
+version = "5.0.0-pre.4"
+source = "git+https://github.com/SWvheerden/tari/?rev=3161c5f6e154ca963d6afe7132c2a85859ffa246#3161c5f6e154ca963d6afe7132c2a85859ffa246"
 dependencies = [
  "anyhow",
  "cargo_toml",
@@ -3182,8 +3182,8 @@ dependencies = [
 
 [[package]]
 name = "tari_common_types"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/SWvheerden/tari/?rev=14aab2f17b08ce76a6e55d98ce12540e94e03b78#14aab2f17b08ce76a6e55d98ce12540e94e03b78"
+version = "5.0.0-pre.4"
+source = "git+https://github.com/SWvheerden/tari/?rev=3161c5f6e154ca963d6afe7132c2a85859ffa246#3161c5f6e154ca963d6afe7132c2a85859ffa246"
 dependencies = [
  "argon2 0.4.1",
  "base64 0.21.7",
@@ -3203,6 +3203,7 @@ dependencies = [
  "primitive-types",
  "rand",
  "serde",
+ "serde_json",
  "strum",
  "strum_macros",
  "subtle",
@@ -3213,7 +3214,6 @@ dependencies = [
  "tari_utilities",
  "thiserror 1.0.69",
  "utoipa",
- "wasm-bindgen",
  "zeroize",
 ]
 
@@ -3242,13 +3242,13 @@ dependencies = [
 
 [[package]]
 name = "tari_features"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/SWvheerden/tari/?rev=14aab2f17b08ce76a6e55d98ce12540e94e03b78#14aab2f17b08ce76a6e55d98ce12540e94e03b78"
+version = "5.0.0-pre.4"
+source = "git+https://github.com/SWvheerden/tari/?rev=3161c5f6e154ca963d6afe7132c2a85859ffa246#3161c5f6e154ca963d6afe7132c2a85859ffa246"
 
 [[package]]
 name = "tari_hashing"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/SWvheerden/tari/?rev=14aab2f17b08ce76a6e55d98ce12540e94e03b78#14aab2f17b08ce76a6e55d98ce12540e94e03b78"
+version = "5.0.0-pre.4"
+source = "git+https://github.com/SWvheerden/tari/?rev=3161c5f6e154ca963d6afe7132c2a85859ffa246#3161c5f6e154ca963d6afe7132c2a85859ffa246"
 dependencies = [
  "blake2",
  "borsh",
@@ -3258,8 +3258,8 @@ dependencies = [
 
 [[package]]
 name = "tari_jellyfish"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/SWvheerden/tari/?rev=14aab2f17b08ce76a6e55d98ce12540e94e03b78#14aab2f17b08ce76a6e55d98ce12540e94e03b78"
+version = "5.0.0-pre.4"
+source = "git+https://github.com/SWvheerden/tari/?rev=3161c5f6e154ca963d6afe7132c2a85859ffa246#3161c5f6e154ca963d6afe7132c2a85859ffa246"
 dependencies = [
  "borsh",
  "digest",
@@ -3272,8 +3272,8 @@ dependencies = [
 
 [[package]]
 name = "tari_max_size"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/SWvheerden/tari/?rev=14aab2f17b08ce76a6e55d98ce12540e94e03b78#14aab2f17b08ce76a6e55d98ce12540e94e03b78"
+version = "5.0.0-pre.4"
+source = "git+https://github.com/SWvheerden/tari/?rev=3161c5f6e154ca963d6afe7132c2a85859ffa246#3161c5f6e154ca963d6afe7132c2a85859ffa246"
 dependencies = [
  "borsh",
  "serde",
@@ -3283,8 +3283,8 @@ dependencies = [
 
 [[package]]
 name = "tari_script"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/SWvheerden/tari/?rev=14aab2f17b08ce76a6e55d98ce12540e94e03b78#14aab2f17b08ce76a6e55d98ce12540e94e03b78"
+version = "5.0.0-pre.4"
+source = "git+https://github.com/SWvheerden/tari/?rev=3161c5f6e154ca963d6afe7132c2a85859ffa246#3161c5f6e154ca963d6afe7132c2a85859ffa246"
 dependencies = [
  "blake2",
  "borsh",
@@ -3301,8 +3301,8 @@ dependencies = [
 
 [[package]]
 name = "tari_service_framework"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/SWvheerden/tari/?rev=14aab2f17b08ce76a6e55d98ce12540e94e03b78#14aab2f17b08ce76a6e55d98ce12540e94e03b78"
+version = "5.0.0-pre.4"
+source = "git+https://github.com/SWvheerden/tari/?rev=3161c5f6e154ca963d6afe7132c2a85859ffa246#3161c5f6e154ca963d6afe7132c2a85859ffa246"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3316,16 +3316,16 @@ dependencies = [
 
 [[package]]
 name = "tari_shutdown"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/SWvheerden/tari/?rev=14aab2f17b08ce76a6e55d98ce12540e94e03b78#14aab2f17b08ce76a6e55d98ce12540e94e03b78"
+version = "5.0.0-pre.4"
+source = "git+https://github.com/SWvheerden/tari/?rev=3161c5f6e154ca963d6afe7132c2a85859ffa246#3161c5f6e154ca963d6afe7132c2a85859ffa246"
 dependencies = [
  "futures",
 ]
 
 [[package]]
 name = "tari_sidechain"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/SWvheerden/tari/?rev=14aab2f17b08ce76a6e55d98ce12540e94e03b78#14aab2f17b08ce76a6e55d98ce12540e94e03b78"
+version = "5.0.0-pre.4"
+source = "git+https://github.com/SWvheerden/tari/?rev=3161c5f6e154ca963d6afe7132c2a85859ffa246#3161c5f6e154ca963d6afe7132c2a85859ffa246"
 dependencies = [
  "borsh",
  "hex",
@@ -3341,8 +3341,8 @@ dependencies = [
 
 [[package]]
 name = "tari_transaction_components"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/SWvheerden/tari/?rev=14aab2f17b08ce76a6e55d98ce12540e94e03b78#14aab2f17b08ce76a6e55d98ce12540e94e03b78"
+version = "5.0.0-pre.4"
+source = "git+https://github.com/SWvheerden/tari/?rev=3161c5f6e154ca963d6afe7132c2a85859ffa246#3161c5f6e154ca963d6afe7132c2a85859ffa246"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3378,7 +3378,6 @@ dependencies = [
  "tari_utilities",
  "thiserror 1.0.69",
  "tokio",
- "wasm-bindgen",
  "zeroize",
 ]
 

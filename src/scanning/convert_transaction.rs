@@ -1,7 +1,7 @@
 use borsh::BorshSerialize;
 use tari_common_types::{
     payment_reference::generate_payment_reference,
-    types::{BlockHash, Signature},
+    types::{BlockHash, CompressedSignature},
 };
 use tari_crypto::tari_utilities::ByteArray;
 use tari_transaction_components::{
@@ -20,7 +20,7 @@ fn convert_sidechain_feature_data(
     unimplemented!()
 }
 
-fn convert_signature(signature: Signature) -> tari_rpc::Signature {
+fn convert_signature(signature: CompressedSignature) -> tari_rpc::Signature {
     tari_rpc::Signature {
         public_nonce: signature.get_compressed_public_nonce().to_vec(),
         signature: signature.get_signature().to_vec(),

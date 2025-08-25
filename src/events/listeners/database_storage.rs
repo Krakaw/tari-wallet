@@ -126,7 +126,7 @@ impl DatabaseStorageListener {
             SqliteStorage::new(database_path).await?
         };
 
-        storage.initialize().await?;
+        WalletStorage::initialize(&storage).await?;
 
         Ok(Self {
             database: Arc::new(storage),
